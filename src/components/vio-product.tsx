@@ -4,13 +4,15 @@ import { Vio, primaryImageUrl } from "../../vio-sdk";
 import ProductSelect from "./product-select";
 
 /**
- * Vio Product Card — VEV-NATIVO + configurable. Dibuja SU PROPIA UI y llama al
- * CORE por debajo (Vio.commerceFor / Vio.cart). Da libertad creativa al editor de
- * Vev por 3 vías:
- *   1. props    — layout, botón, toggles, descuento, annonse, color de acento.
- *   2. editableCSS — reestilizar selectores desde el panel de diseño de Vev.
- *   3. slot overlay — arrastrar contenido Vev propio ENCIMA de la imagen (children).
- * La lógica (pricing, carrito, multi-sponsor) sigue única en el core.
+ * Vio Product Card — Vev-native + configurable. Renders its OWN UI and calls the
+ * CORE underneath (Vio.commerceFor / Vio.cart). Gives the Vev editor creative
+ * freedom three ways:
+ *   1. props       — layout, button, toggles, discount, annonse, accent color.
+ *   2. editableCSS — restyle selectors from Vev's design panel.
+ *   3. overlay slot — drop custom Vev content ON TOP of the image (children).
+ * Business logic (pricing, cart, multi-sponsor) stays single-sourced in the core.
+ *
+ * Defaults reproduce the plain editorial card exactly — every extra option is opt-in.
  */
 
 const DEFAULT_API_KEY = "vg-demo_api_key_57a3038c06434330";
@@ -39,12 +41,10 @@ const CARD_CSS = `
 .vio-native-card:hover .vnc-image img { opacity: 0.92; }
 .vio-native-card .vnc-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* Slot overlay: contenido Vev del editor encima de la imagen. Transparente al
-   click salvo donde hay contenido real (Vev envuelve cada hijo). */
+/* Editor overlay slot: transparent to clicks except where real content sits. */
 .vio-native-card .vnc-slot { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
 .vio-native-card .vnc-slot > * { pointer-events: auto; }
 
-/* Badge de descuento (esquina) + etiqueta annonse. */
 .vio-native-card .vnc-badge {
   position: absolute; top: 10px; left: 10px; z-index: 3;
   background: var(--vnc-accent, #0a0a0a); color: #fff;
@@ -57,7 +57,6 @@ const CARD_CSS = `
   padding: 3px 7px; border-radius: 3px;
 }
 
-/* Botón añadir — icono flotante. */
 .vio-native-card .vnc-add {
   position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px;
   border-radius: 50%; background: rgba(255, 255, 255, 0.96); border: none;
@@ -74,7 +73,6 @@ const CARD_CSS = `
 .vio-native-card .vnc-count { font-size: 15px; font-weight: 700; line-height: 1; }
 @keyframes vio-add-pop { 0% { transform: scale(1); } 35% { transform: scale(1.32); } 60% { transform: scale(0.9); } 100% { transform: scale(1); } }
 
-/* Botón de texto (pill) + barra full-width. */
 .vio-native-card .vnc-btn-text {
   border: none; cursor: pointer; background: var(--vnc-accent, #0a0a0a); color: #fff;
   font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
@@ -99,7 +97,6 @@ const CARD_CSS = `
   color: var(--vio-color-text-tertiary, #999); font-weight: 500; margin-top: auto;
 }
 
-/* Layout overlay: meta sobre la imagen. */
 .vio-native-card.l-overlay .vnc-overlay-meta {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 16px;
   background: linear-gradient(to top, rgba(0,0,0,0.72), rgba(0,0,0,0)); color: #fff;
@@ -131,7 +128,7 @@ const CheckIcon = () => (
   </svg>
 );
 
-/** Descuento a mostrar: manual (texto libre) o auto (desde compare-at si existe). */
+/** Discount to show: manual (free text) or auto (from a compare-at price if present). */
 function resolveDiscount(p: any, mode: string, manual: string): string | null {
   if (mode === "manual") return manual?.trim() || null;
   if (mode === "auto" && p?.price) {
@@ -163,7 +160,6 @@ type Props = {
   discountText?: string;
   annonse?: boolean;
   annonseText?: string;
-  children?: React.ReactNode; // slot overlay del editor
 };
 
 export default function VioProductCard({
@@ -181,7 +177,6 @@ export default function VioProductCard({
   discountText = "-25 %",
   annonse = false,
   annonseText = "Annonse",
-  children,
 }: Props) {
   const productId = product?.productId;
   const sponsorId = product?.sponsorId ?? 1;
@@ -193,7 +188,7 @@ export default function VioProductCard({
     injectStyles();
   }, []);
 
-  // Datos vía CORE (autosuficiente: init-if-needed + reintento).
+  // Data via CORE (self-sufficient: init-if-needed + retry).
   useEffect(() => {
     if (!productId) return;
     let cancelled = false;
@@ -227,7 +222,7 @@ export default function VioProductCard({
     };
   }, [productId, sponsorId]);
 
-  // Cantidad en carrito (core → UI).
+  // Reflect cart quantity (core -> UI).
   useEffect(() => {
     const update = () => {
       if (!productId) return setQty(0);
@@ -354,9 +349,6 @@ export default function VioProductCard({
         ) : null}
 
         {isOverlay && !isImageOnly ? <div className="vnc-overlay-meta">{metaBlock}</div> : null}
-
-        {/* Slot overlay del editor (contenido Vev arrastrado encima). */}
-        <div className="vnc-slot">{children}</div>
       </div>
 
       {!isImageOnly && !isOverlay ? <div className="vnc-meta">{metaBlock}</div> : null}
@@ -372,24 +364,22 @@ export default function VioProductCard({
 
 registerVevComponent(VioProductCard, {
   name: "Vio Product Card",
-  type: "both",
-  children: { name: "Overlay imagen" },
   size: { height: "auto", width: 300 },
   editableCSS: [
     { selector: ".vio-native-card", title: "Card", properties: ["background", "border-radius", "padding", "box-shadow", "gap"] },
-    { selector: ".vio-native-card .vnc-image", title: "Imagen", properties: ["border-radius", "aspect-ratio", "background-color"] },
-    { selector: ".vio-native-card .vnc-add", title: "Botón (icono)", properties: ["background", "color", "border-radius", "box-shadow", "width", "height"] },
-    { selector: ".vio-native-card .vnc-btn-text", title: "Botón (texto)", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
-    { selector: ".vio-native-card .vnc-badge", title: "Badge descuento", properties: ["background", "color", "border-radius", "font-size", "padding"] },
-    { selector: ".vio-native-card .vnc-brand", title: "Marca", properties: ["color", "font-size", "letter-spacing", "font-weight"] },
-    { selector: ".vio-native-card .vnc-name", title: "Nombre", properties: ["color", "font-size", "font-weight", "font-family", "line-height"] },
-    { selector: ".vio-native-card .vnc-price", title: "Precio", properties: ["color", "font-size", "font-weight"] },
+    { selector: ".vio-native-card .vnc-image", title: "Image", properties: ["border-radius", "aspect-ratio", "background-color"] },
+    { selector: ".vio-native-card .vnc-add", title: "Button (icon)", properties: ["background", "color", "border-radius", "box-shadow", "width", "height"] },
+    { selector: ".vio-native-card .vnc-btn-text", title: "Button (text)", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
+    { selector: ".vio-native-card .vnc-badge", title: "Discount badge", properties: ["background", "color", "border-radius", "font-size", "padding"] },
+    { selector: ".vio-native-card .vnc-brand", title: "Brand", properties: ["color", "font-size", "letter-spacing", "font-weight"] },
+    { selector: ".vio-native-card .vnc-name", title: "Name", properties: ["color", "font-size", "font-weight", "font-family", "line-height"] },
+    { selector: ".vio-native-card .vnc-price", title: "Price", properties: ["color", "font-size", "font-weight"] },
     { selector: ".vio-native-card .vnc-retailer", title: "Retailer", properties: ["color", "font-size", "letter-spacing"] },
   ],
   props: [
     {
       name: "product",
-      title: "Producto",
+      title: "Product",
       type: "object",
       component: ProductSelect as any,
       fields: [
@@ -405,63 +395,63 @@ registerVevComponent(VioProductCard, {
       options: {
         display: "dropdown",
         items: [
-          { value: "standard", label: "Estándar (imagen + info)" },
-          { value: "image-only", label: "Solo imagen" },
-          { value: "overlay", label: "Info sobre la imagen" },
+          { value: "standard", label: "Standard (image + info)" },
+          { value: "image-only", label: "Image only" },
+          { value: "overlay", label: "Info over image" },
           { value: "horizontal", label: "Horizontal" },
         ],
       },
     } as any,
     {
       name: "buttonStyle",
-      title: "Botón",
+      title: "Button",
       type: "select",
       initialValue: "icon",
       options: {
         display: "dropdown",
         items: [
-          { value: "icon", label: "Icono (+)" },
-          { value: "text", label: "Texto (pill)" },
-          { value: "bar", label: "Barra full-width" },
-          { value: "hidden", label: "Sin botón" },
+          { value: "icon", label: "Icon (+)" },
+          { value: "text", label: "Text (pill)" },
+          { value: "bar", label: "Full-width bar" },
+          { value: "hidden", label: "No button" },
         ],
       },
     } as any,
-    { name: "buttonLabel", title: "Texto del botón", type: "string", initialValue: "Kjøp" },
+    { name: "buttonLabel", title: "Button label", type: "string", initialValue: "Kjøp" },
     {
       name: "buttonAction",
-      title: "Acción del botón",
+      title: "Button action",
       type: "select",
       initialValue: "add",
       options: {
         display: "dropdown",
         items: [
-          { value: "add", label: "Añadir al carrito" },
-          { value: "detail", label: "Abrir detalle" },
+          { value: "add", label: "Add to cart" },
+          { value: "detail", label: "Open detail" },
         ],
       },
     } as any,
-    { name: "accentColor", title: "Color de acento", type: "string", initialValue: "" },
-    { name: "showBrand", title: "Mostrar marca", type: "boolean", initialValue: true },
-    { name: "showName", title: "Mostrar nombre", type: "boolean", initialValue: true },
-    { name: "showPrice", title: "Mostrar precio", type: "boolean", initialValue: true },
-    { name: "showRetailer", title: "Mostrar retailer", type: "boolean", initialValue: true },
+    { name: "accentColor", title: "Accent color", type: "string", initialValue: "" },
+    { name: "showBrand", title: "Show brand", type: "boolean", initialValue: true },
+    { name: "showName", title: "Show name", type: "boolean", initialValue: true },
+    { name: "showPrice", title: "Show price", type: "boolean", initialValue: true },
+    { name: "showRetailer", title: "Show retailer", type: "boolean", initialValue: true },
     {
       name: "discountMode",
-      title: "Badge de descuento",
+      title: "Discount badge",
       type: "select",
       initialValue: "off",
       options: {
         display: "dropdown",
         items: [
           { value: "off", label: "Off" },
-          { value: "auto", label: "Auto (desde oferta)" },
-          { value: "manual", label: "Manual (texto)" },
+          { value: "auto", label: "Auto (from sale price)" },
+          { value: "manual", label: "Manual (text)" },
         ],
       },
     } as any,
-    { name: "discountText", title: "Texto del descuento (manual)", type: "string", initialValue: "-25 %" },
-    { name: "annonse", title: "Etiqueta 'Annonse'", type: "boolean", initialValue: false },
-    { name: "annonseText", title: "Texto annonse", type: "string", initialValue: "Annonse" },
+    { name: "discountText", title: "Discount text (manual)", type: "string", initialValue: "-25 %" },
+    { name: "annonse", title: "'Annonse' label", type: "boolean", initialValue: false },
+    { name: "annonseText", title: "Annonse text", type: "string", initialValue: "Annonse" },
   ],
 });
