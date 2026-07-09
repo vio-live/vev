@@ -26,6 +26,9 @@ const DEFAULT_STRIPE_PK =
 
 type Status = "connecting" | "connected" | "error" | "disconnected";
 
+// Panel-saved API key persists here (per browser), overriding the prop default.
+const STORAGE_KEY = "vio.apiKey";
+
 type Props = {
   apiKey?: string;
   apiBase?: string;
@@ -54,7 +57,11 @@ export default function VioConfig({
   const resolvedBase = apiBase || DEFAULT_API_BASE;
   const resolvedGql = graphQLBase || DEFAULT_GQL_BASE;
   const resolvedStripe = stripePublishableKey || DEFAULT_STRIPE_PK;
-  const resolvedKey = apiKey || DEFAULT_API_KEY;
+  // Key precedence: a key saved from the panel (localStorage) wins over the prop
+  // default, so "Save" persists across reloads. The prop stays the shipped default.
+  const storedKey =
+    typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  const resolvedKey = storedKey || apiKey || DEFAULT_API_KEY;
 
   // Connection panel state.
   const [apiKeyInput, setApiKeyInput] = useState(resolvedKey);
@@ -89,10 +96,25 @@ export default function VioConfig({
     [resolvedBase, resolvedGql, resolvedStripe]
   );
 
-  const disconnect = useCallback(() => {
+  // Save: persist the typed key, then (re)connect with it.
+  const onSave = useCallback(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, apiKeyInput.trim());
+    } catch {
+      /* noop */
+    }
+    void connect(apiKeyInput.trim());
+  }, [apiKeyInput, connect]);
+
+  // Disconnect: drop the saved key and clear the cached bootstrap.
+  const onDisconnect = useCallback(() => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* noop */
+    }
     setStatus("disconnected");
     setStatusMsg("");
-    // Soft disconnect: clear the cached bootstrap so a later Save re-fetches.
     try {
       Vio.init({
         apiKey: "",
@@ -260,7 +282,7 @@ export default function VioConfig({
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button
           type="button"
-          onClick={() => void connect(apiKeyInput)}
+          onClick={onSave}
           style={{
             flex: 1,
             padding: "9px 12px",
@@ -277,7 +299,7 @@ export default function VioConfig({
         </button>
         <button
           type="button"
-          onClick={disconnect}
+          onClick={onDisconnect}
           style={{
             padding: "9px 12px",
             fontSize: 13,
