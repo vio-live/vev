@@ -65,7 +65,7 @@ function injectStyles() {
 type Item = { productId: number; sponsorId: number };
 
 type Props = {
-  products?: Item[];
+  products?: { items?: Item[] };
   kicker?: string;
   heading?: string;
   disclaimer?: string;
@@ -89,7 +89,7 @@ export default function VioProductCarousel(props: Props) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [list, setList] = useState<any[]>([]);
 
-  const items = Array.isArray(products) ? products : [];
+  const items = Array.isArray(products?.items) ? products!.items! : [];
   const ids = items.map((i) => Number(i.productId)).filter(Boolean);
   const sponsorId = items[0]?.sponsorId ?? 1;
   const idsKey = ids.join(",");
@@ -179,11 +179,17 @@ registerVevComponent(VioProductCarousel, {
     {
       name: "products",
       title: "Products",
-      type: "array",
+      type: "object",
       component: ProductMultiSelect as any,
-      of: [
-        { name: "productId", type: "number" },
-        { name: "sponsorId", type: "number" },
+      fields: [
+        {
+          name: "items",
+          type: "array",
+          of: [
+            { name: "productId", type: "number" },
+            { name: "sponsorId", type: "number" },
+          ],
+        },
       ],
     } as any,
     { name: "kicker", title: "Kicker", type: "string", initialValue: "" },

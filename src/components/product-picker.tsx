@@ -314,12 +314,14 @@ export default function ProductSelect({
 
 // ---- Multi-select editor ----------------------------------------------------
 
+// The value is an OBJECT `{ items: Item[] }` (not a bare array): Vev's array-typed
+// props don't play well with a custom `component`, but object props do.
 export function ProductMultiSelect({
   value,
   onChange,
 }: {
-  value?: Item[];
-  onChange: (v: Item[]) => void;
+  value?: { items?: Item[] };
+  onChange: (v: { items: Item[] }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
@@ -327,14 +329,14 @@ export function ProductMultiSelect({
     loadCatalog().then(setCatalog).catch(() => {});
   }, []);
 
-  const items = Array.isArray(value) ? value : [];
+  const items = Array.isArray(value?.items) ? value!.items! : [];
   const selectedIds = new Set<number>(items.map((i) => Number(i.productId)));
 
   const toggle = (id: number) => {
     if (selectedIds.has(id)) {
-      onChange(items.filter((i) => Number(i.productId) !== id));
+      onChange({ items: items.filter((i) => Number(i.productId) !== id) });
     } else {
-      onChange([...items, { productId: id, sponsorId: SPONSOR_ID }]);
+      onChange({ items: [...items, { productId: id, sponsorId: SPONSOR_ID }] });
     }
   };
 
