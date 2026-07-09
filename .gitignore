@@ -1,0 +1,4 @@
+node_modules
+.vev
+*.log
+.DS_Store

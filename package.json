@@ -1,0 +1,16 @@
+{
+  "name": "vio-vev",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "login": "vev login",
+    "start": "vev start",
+    "deploy": "vev deploy"
+  },
+  "dependencies": {
+    "@vev/react": "latest",
+    "@vev/silke": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  }
+}
