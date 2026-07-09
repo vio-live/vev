@@ -6683,6 +6683,7 @@ var VioProductDetail = class extends i4 {
       if (Number.isNaN(sponsorIdNum) || sponsorIdNum <= 0) return;
       this.productId = ev.detail.productId;
       this.sponsorId = sponsorIdNum;
+      console.log("[VioDetail] product-click \u2192", { productId: this.productId, sponsorId: this.sponsorId });
       this.show();
       void this.fetchProduct();
     };
@@ -7141,6 +7142,13 @@ var VioProductDetail = class extends i4 {
         image_size: "large"
       });
       this.product = products[0] ?? null;
+      console.log("[VioDetail] fetched \u2192", {
+        count: products.length,
+        hasProduct: !!this.product,
+        options: this.product?.options,
+        variants: this.product?.variants?.length,
+        images: this.product?.images?.length
+      });
       if (this.product) {
         const initial = {};
         for (const opt of this.product.options) {
@@ -7158,6 +7166,7 @@ var VioProductDetail = class extends i4 {
       }
     } catch (err) {
       this.fetchError = err instanceof Error ? err.message : String(err);
+      console.warn("[VioDetail] fetch/render error \u2192", this.fetchError, err);
     } finally {
       this.isLoading = false;
     }
