@@ -109,10 +109,10 @@ const CARD_CSS = `
 function injectStyles() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = CARD_CSS;
-  document.head.appendChild(el);
+  const styleEl = document.createElement("style");
+  styleEl.id = STYLE_ID;
+  styleEl.textContent = CARD_CSS;
+  document.head.appendChild(styleEl);
 }
 
 const BagIcon = () => (

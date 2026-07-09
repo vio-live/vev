@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { SilkeBox, SilkeButton, SilkeTextSmall } from "@vev/silke";
+import { SilkeBox, SilkeTextSmall } from "@vev/silke";
 import { Vio } from "../../vio-sdk";
+import { ensureVioInit } from "./vio-helpers";
 
 /**
- * Editor de selección de producto (como el de Alan): lista el catálogo del canal
- * y deja elegir un producto visualmente en vez de teclear el id.
- * Usa el SDK (Vio) para listar vía la query `Channel { Products(...) }`.
+ * ProductSelect — custom editor for the `product` prop. Lists the channel catalog
+ * so the editor picks a product visually instead of typing an id. Runs a single
+ * shared catalog request (module-level promise) reused by every picker instance.
  */
 
-const DEMO_API_KEY = "vg-demo_api_key_57a3038c06434330";
-const API_BASE = "https://api-staging.vio.live";
-const GQL_BASE = "https://graph-ql-dev.vio.live";
+// The demo catalog lives under sponsor 1. When this grows to multiple sponsors,
+// lift this into a prop / bootstrap-driven selector.
 const SPONSOR_ID = 1;
 
 const PRODUCTS_QUERY = `
@@ -36,15 +36,21 @@ const PRODUCTS_QUERY = `
   }
 `;
 
-// Cache compartido: una sola llamada a la lista, reutilizada por todos los
-// pickers (evita disparos en paralelo que hacían flaquear el backend → 500).
-let productsPromise: Promise<any[]> | null = null;
-function loadProducts(): Promise<any[]> {
-  if (productsPromise) return productsPromise;
-  productsPromise = (async () => {
-    if (!Vio.isInitialized) {
-      Vio.init({ apiKey: DEMO_API_KEY, apiBase: API_BASE, graphQLBase: GQL_BASE });
-    }
+type CatalogProduct = {
+  id: number | string;
+  brand?: string;
+  title?: string;
+  price?: { amount?: number; currency_code?: string };
+  images?: Array<{ url?: string }>;
+};
+
+// Shared catalog request — one fetch reused by all pickers. Firing it per instance
+// hammered the backend (parallel requests → 500s), so it is deduped here.
+let catalogPromise: Promise<CatalogProduct[]> | null = null;
+function loadCatalog(): Promise<CatalogProduct[]> {
+  if (catalogPromise) return catalogPromise;
+  catalogPromise = (async () => {
+    ensureVioInit();
     await Vio.bootstrap();
     const commerce = Vio.commerceFor(SPONSOR_ID);
     const data = await commerce.raw.request(PRODUCTS_QUERY, {
@@ -52,36 +58,39 @@ function loadProducts(): Promise<any[]> {
       imageSize: "large",
       useCache: true,
     });
-    const list = data?.Channel?.Products ?? [];
-    console.log("[Vio] ProductSelect → productos listados:", list.length);
-    return list;
-  })().catch((e: any) => {
-    productsPromise = null; // permite reintentar en el próximo montaje
-    throw e;
+    return (data?.Channel?.Products ?? []) as CatalogProduct[];
+  })().catch((err: unknown) => {
+    catalogPromise = null; // allow a retry on the next mount
+    throw err;
   });
-  return productsPromise;
+  return catalogPromise;
 }
 
-export default function ProductSelect({ value, onChange }: any) {
-  const [products, setProducts] = useState<any[]>([]);
+type ProductSelectValue = { productId?: number; sponsorId?: number };
+
+type ProductSelectProps = {
+  value?: ProductSelectValue;
+  onChange: (value: ProductSelectValue) => void;
+};
+
+export default function ProductSelect({ value, onChange }: ProductSelectProps) {
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    loadProducts()
+    loadCatalog()
       .then((list) => {
-        if (!cancelled) {
-          setProducts(list);
-          setLoading(false);
-        }
+        if (cancelled) return;
+        setProducts(list);
+        setLoading(false);
       })
-      .catch((e: any) => {
-        console.warn("[Vio] ProductSelect error", e);
-        if (!cancelled) {
-          setError(e?.message ?? "No se pudo listar el catálogo");
-          setLoading(false);
-        }
+      .catch((err: any) => {
+        if (cancelled) return;
+        console.warn("[Vio] ProductSelect", err);
+        setError(err?.message ?? "Could not load the catalog");
+        setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -90,13 +99,13 @@ export default function ProductSelect({ value, onChange }: any) {
 
   const selectedId = value?.productId;
 
-  if (loading) return <SilkeTextSmall>Cargando productos…</SilkeTextSmall>;
+  if (loading) return <SilkeTextSmall>Loading products…</SilkeTextSmall>;
   if (error) return <SilkeTextSmall style={{ color: "#e5484d" }}>{error}</SilkeTextSmall>;
 
   return (
     <SilkeBox column gap="s">
       {products.map((p) => {
-        const isSel = Number(selectedId) === Number(p.id);
+        const isSelected = Number(selectedId) === Number(p.id);
         return (
           <div
             key={p.id}
@@ -108,17 +117,32 @@ export default function ProductSelect({ value, onChange }: any) {
               padding: 8,
               borderRadius: 6,
               cursor: "pointer",
-              border: isSel ? "2px solid #0a0a0a" : "1px solid #ddd",
-              background: isSel ? "rgba(0,0,0,0.04)" : "transparent",
+              border: isSelected ? "2px solid #0a0a0a" : "1px solid #ddd",
+              background: isSelected ? "rgba(0,0,0,0.04)" : "transparent",
             }}
           >
             <img
               src={p.images?.[0]?.url}
               alt=""
-              style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, background: "#f2f2f2", flexShrink: 0 }}
+              style={{
+                width: 40,
+                height: 40,
+                objectFit: "cover",
+                borderRadius: 4,
+                background: "#f2f2f2",
+                flexShrink: 0,
+              }}
             />
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
                 {p.title}
               </div>
               <div style={{ fontSize: 12, opacity: 0.6 }}>
