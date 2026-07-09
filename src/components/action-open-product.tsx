@@ -1,6 +1,6 @@
 import React from "react";
 import { registerVevComponent } from "@vev/react";
-import ProductSelect from "./product-select";
+import ProductSelect from "./product-picker";
 import { openProductInfo } from "./vio-helpers";
 
 /**

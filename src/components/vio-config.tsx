@@ -29,11 +29,67 @@ type Status = "connecting" | "connected" | "error" | "disconnected";
 // Panel-saved API key persists here (per browser), overriding the prop default.
 const STORAGE_KEY = "vio.apiKey";
 
+const CONFIG_STYLE_ID = "vio-config-styles";
+function injectConfigStyles() {
+  if (typeof document === "undefined" || document.getElementById(CONFIG_STYLE_ID)) return;
+  const el = document.createElement("style");
+  el.id = CONFIG_STYLE_ID;
+  el.textContent = `
+    @keyframes vio-fab-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.09); } }
+    .vio-fab-pulse { animation: vio-fab-pulse 1.8s ease-in-out infinite; }
+  `;
+  document.head.appendChild(el);
+}
+
+// Corner → fixed offsets for the cart button.
+function cartPositionStyle(position: string): React.CSSProperties {
+  const v = position.includes("top") ? { top: 24 } : { bottom: 24 };
+  const h = position.includes("left") ? { left: 24 } : { right: 24 };
+  return { ...v, ...h };
+}
+
+function CartIcon({ kind }: { kind: string }) {
+  if (kind === "cart") {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
+        <circle cx="9" cy="21" r="1" />
+        <circle cx="20" cy="21" r="1" />
+        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+      </svg>
+    );
+  }
+  if (kind === "basket") {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
+        <path d="M5 11l2-7h10l2 7" />
+        <path d="M3 11h18l-1.5 8a2 2 0 0 1-2 1.7H6.5a2 2 0 0 1-2-1.7z" />
+        <line x1="9" y1="15" x2="9" y2="17" />
+        <line x1="15" y1="15" x2="15" y2="17" />
+      </svg>
+    );
+  }
+  // bag (default)
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
+      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+}
+
 type Props = {
   apiKey?: string;
   apiBase?: string;
   graphQLBase?: string;
   stripePublishableKey?: string;
+  // Cart button (floating action button).
+  cartButton?: boolean;
+  cartPosition?: string; // bottom-right | bottom-left | top-right | top-left
+  cartIcon?: string; // bag | cart | basket
+  cartColor?: string;
+  cartEffect?: string; // none | scale | pulse
+  cartSize?: number;
 };
 
 export default function VioConfig({
@@ -41,6 +97,12 @@ export default function VioConfig({
   apiBase,
   graphQLBase,
   stripePublishableKey,
+  cartButton = true,
+  cartPosition = "bottom-right",
+  cartIcon = "bag",
+  cartColor,
+  cartEffect = "scale",
+  cartSize = 56,
 }: Props) {
   const { disabled } = useEditorState(); // true in the editor, false on the published page
   const cartRef = useRef<any>(null);
@@ -128,8 +190,9 @@ export default function VioConfig({
     }
   }, [resolvedBase, resolvedGql, resolvedStripe]);
 
-  // Claim overlay ownership (idempotent via globalThis).
+  // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
   useEffect(() => {
+    injectConfigStyles();
     const g = globalThis as any;
     const myId = idRef.current;
     if (!g.__VIO_OVERLAY_OWNER__) g.__VIO_OVERLAY_OWNER__ = myId;
@@ -317,22 +380,24 @@ export default function VioConfig({
     </div>
   );
 
+  const fabScaleHover = cartEffect === "scale" && fabHover;
   const overlays = (
     <>
+      {cartButton ? (
       <button
         type="button"
         aria-label="Handlekurv"
+        className={cartEffect === "pulse" ? "vio-fab-pulse" : undefined}
         onClick={() => cartRef.current?.show?.()}
         onMouseEnter={() => setFabHover(true)}
         onMouseLeave={() => setFabHover(false)}
         style={{
           position: "fixed",
-          right: 24,
-          bottom: 24,
-          width: 56,
-          height: 56,
+          ...cartPositionStyle(cartPosition),
+          width: cartSize,
+          height: cartSize,
           borderRadius: 9999,
-          background: "#0a0a0a",
+          background: cartColor || "#0a0a0a",
           color: "#fff",
           border: "none",
           cursor: "pointer",
@@ -340,16 +405,12 @@ export default function VioConfig({
           alignItems: "center",
           justifyContent: "center",
           boxShadow: fabHover ? "0 8px 24px rgba(0,0,0,0.28)" : "0 4px 16px rgba(0,0,0,0.22)",
-          transform: fabHover ? "scale(1.08)" : "scale(1)",
+          transform: fabScaleHover ? "scale(1.08)" : "scale(1)",
           transition: "transform 0.14s ease, box-shadow 0.14s ease",
           zIndex: 2147483000,
         }}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
-          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-          <line x1="3" y1="6" x2="21" y2="6" />
-          <path d="M16 10a4 4 0 0 1-8 0" />
-        </svg>
+        <CartIcon kind={cartIcon} />
         {count > 0 && (
           <span
             style={{
@@ -372,6 +433,7 @@ export default function VioConfig({
           </span>
         )}
       </button>
+      ) : null}
       <VioCart ref={cartRef} onCheckoutOpen={onCheckoutOpen} />
       <VioCheckout ref={checkoutRef} />
       {/* Product detail: auto-opens on a product card click (vio:product-click). */}
@@ -398,5 +460,51 @@ registerVevComponent(VioConfig, {
     { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
     { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },
     { name: "stripePublishableKey", title: "Stripe PK", type: "string", initialValue: DEFAULT_STRIPE_PK },
+    { name: "cartButton", title: "Cart button", type: "boolean", initialValue: true },
+    {
+      name: "cartPosition",
+      title: "Cart position",
+      type: "select",
+      initialValue: "bottom-right",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "bottom-right", label: "Bottom right" },
+          { value: "bottom-left", label: "Bottom left" },
+          { value: "top-right", label: "Top right" },
+          { value: "top-left", label: "Top left" },
+        ],
+      },
+    } as any,
+    {
+      name: "cartIcon",
+      title: "Cart icon",
+      type: "select",
+      initialValue: "bag",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "bag", label: "Bag" },
+          { value: "cart", label: "Cart" },
+          { value: "basket", label: "Basket" },
+        ],
+      },
+    } as any,
+    {
+      name: "cartEffect",
+      title: "Cart effect",
+      type: "select",
+      initialValue: "scale",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "none", label: "None" },
+          { value: "scale", label: "Scale on hover" },
+          { value: "pulse", label: "Pulse" },
+        ],
+      },
+    } as any,
+    { name: "cartColor", title: "Cart color", type: "string", initialValue: "" },
+    { name: "cartSize", title: "Cart size (px)", type: "number", initialValue: 56 },
   ],
 });

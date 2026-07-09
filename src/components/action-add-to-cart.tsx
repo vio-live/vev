@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { registerVevComponent } from "@vev/react";
 import { Vio } from "../../vio-sdk";
-import ProductSelect from "./product-select";
+import ProductSelect from "./product-picker";
 import { fetchVioProduct, openCart, openProductInfo } from "./vio-helpers";
 
 /**
