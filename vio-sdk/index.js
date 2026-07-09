@@ -7134,42 +7134,53 @@ var VioProductDetail = class extends i4 {
     }
     this.isLoading = true;
     this.fetchError = "";
-    try {
-      const commerce = Vio.commerceFor(this.sponsorId);
-      const products = await commerce.channel.product.getByIds({
-        product_ids: [productIdNum],
-        currency: this.currency,
-        image_size: "large"
-      });
-      this.product = products[0] ?? null;
-      console.log("[VioDetail] fetched \u2192", {
-        count: products.length,
-        hasProduct: !!this.product,
-        options: this.product?.options,
-        variants: this.product?.variants?.length,
-        images: this.product?.images?.length
-      });
-      if (this.product) {
-        const initial = {};
-        for (const opt of this.product.options) {
-          const values = normalizeValues(opt.values);
-          if (values.length > 0) initial[opt.name] = values[0];
-        }
-        this.selectedOptions = initial;
-        void Vio.checkout.prepareApplePayFor(this.unitPrice * this.quantity, this.currency).then((handle) => {
-          this.applePayHandle = handle;
-          this.applePayOk = handle.available;
-        }).catch(() => {
-          this.applePayHandle = null;
-          this.applePayOk = false;
+    let products = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const commerce = Vio.commerceFor(this.sponsorId);
+        products = await commerce.channel.product.getByIds({
+          product_ids: [productIdNum],
+          currency: this.currency,
+          image_size: "large"
         });
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
-    } catch (err) {
-      this.fetchError = err instanceof Error ? err.message : String(err);
-      console.warn("[VioDetail] fetch/render error \u2192", this.fetchError, err);
-    } finally {
-      this.isLoading = false;
     }
+    if (lastError) {
+      this.fetchError = lastError instanceof Error ? lastError.message : String(lastError);
+      console.warn("[VioDetail] fetch failed after retries \u2192", this.fetchError);
+      this.isLoading = false;
+      return;
+    }
+    this.product = products?.[0] ?? null;
+    console.log("[VioDetail] fetched \u2192", {
+      count: products?.length ?? 0,
+      hasProduct: !!this.product,
+      options: this.product?.options?.length,
+      variants: this.product?.variants?.length,
+      images: this.product?.images?.length
+    });
+    if (this.product) {
+      const initial = {};
+      for (const opt of this.product.options ?? []) {
+        const values = normalizeValues(opt.values);
+        if (values.length > 0) initial[opt.name] = values[0];
+      }
+      this.selectedOptions = initial;
+      void Vio.checkout.prepareApplePayFor(this.unitPrice * this.quantity, this.currency).then((handle) => {
+        this.applePayHandle = handle;
+        this.applePayOk = handle.available;
+      }).catch(() => {
+        this.applePayHandle = null;
+        this.applePayOk = false;
+      });
+    }
+    this.isLoading = false;
   }
   /** Resolve the active variant from the selected option values. */
   selectedVariant() {
