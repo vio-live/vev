@@ -62,7 +62,7 @@ const CARD_CSS = `
   border-radius: 50%; background: rgba(255, 255, 255, 0.96); border: none;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
   color: #0a0a0a; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
-  transition: transform 0.14s ease, background 0.14s ease, color 0.14s ease; padding: 0; z-index: 3;
+  transition: transform 0.14s ease, background 0.14s ease, color 0.14s ease; padding: 0; z-index: 5;
 }
 .vio-native-card .vnc-add:hover { background: #fff; transform: scale(1.08); }
 .vio-native-card .vnc-add:active { transform: scale(0.95); }
@@ -79,7 +79,7 @@ const CARD_CSS = `
   transition: opacity 0.15s ease;
 }
 .vio-native-card .vnc-btn-text:hover { opacity: 0.88; }
-.vio-native-card .vnc-btn-pill { position: absolute; right: 10px; bottom: 10px; z-index: 3; padding: 10px 16px; border-radius: 999px; }
+.vio-native-card .vnc-btn-pill { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 10px 16px; border-radius: 999px; }
 .vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .vio-native-card .vnc-meta { padding-top: 14px; display: flex; flex-direction: column; flex: 1; }
@@ -151,6 +151,7 @@ type Props = {
   buttonStyle?: string; // icon | text | bar | hidden
   buttonLabel?: string;
   buttonAction?: string; // add | detail
+  imageClickAction?: string; // detail | add  (variants always force detail)
   accentColor?: string;
   showBrand?: boolean;
   showName?: boolean;
@@ -168,6 +169,7 @@ export default function VioProductCard({
   buttonStyle = "icon",
   buttonLabel = "Kjøp",
   buttonAction = "add",
+  imageClickAction = "detail",
   accentColor,
   showBrand = true,
   showName = true,
@@ -301,6 +303,16 @@ export default function VioProductCard({
     buttonAction === "detail" ? openDetail() : doAdd();
   };
 
+  // Click on the image → product info or add to cart. Products with variants
+  // ALWAYS open the detail (the buyer must pick a variant).
+  const onImageClick = () => {
+    if (hasVariants || imageClickAction !== "add") {
+      openDetail();
+    } else {
+      doAdd();
+    }
+  };
+
   const metaBlock = (
     <>
       {showBrand && brand ? <div className="vnc-brand">{brand}</div> : null}
@@ -311,21 +323,20 @@ export default function VioProductCard({
   );
 
   return (
-    <div
-      className={`vio-native-card l-${layout}`}
-      style={accentStyle}
-      role="button"
-      tabIndex={0}
-      aria-label={`${brand} ${name} ${price}`}
-      onClick={openDetail}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openDetail();
-        }
-      }}
-    >
-      <div className="vnc-image">
+    <div className={`vio-native-card l-${layout}`} style={accentStyle}>
+      <div
+        className="vnc-image"
+        role="button"
+        tabIndex={0}
+        aria-label={`${brand} ${name} ${price}`}
+        onClick={onImageClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onImageClick();
+          }
+        }}
+      >
         {img ? <img src={img} alt={name || brand} loading="lazy" /> : null}
 
         {discount ? <span className="vnc-badge">{discount}</span> : null}
@@ -428,6 +439,19 @@ registerVevComponent(VioProductCard, {
         items: [
           { value: "add", label: "Add to cart" },
           { value: "detail", label: "Open detail" },
+        ],
+      },
+    } as any,
+    {
+      name: "imageClickAction",
+      title: "Image click",
+      type: "select",
+      initialValue: "detail",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "detail", label: "Product info" },
+          { value: "add", label: "Add to cart" },
         ],
       },
     } as any,
