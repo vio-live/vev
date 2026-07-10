@@ -105,23 +105,37 @@ const PRODUCTS_QUERY = `
   }
 `;
 
-// Shared catalog request — one fetch reused by all pickers (parallel requests
-// hammered the backend → 500s), deduped via a module-level promise.
+// Shared catalog request — lists every product tied to the sponsor's commerce
+// apiKey (the same source the product card uses). One fetch, reused by all
+// pickers (parallel requests hammered the backend → 500s), deduped via a
+// module-level promise, with retry for the intermittent "Authentication failed".
 let catalogPromise: Promise<CatalogProduct[]> | null = null;
 export function loadCatalog(): Promise<CatalogProduct[]> {
   if (catalogPromise) return catalogPromise;
   catalogPromise = (async () => {
-    ensureVioInit();
-    await Vio.bootstrap();
-    const commerce = Vio.commerceFor(SPONSOR_ID);
-    const data = await commerce.raw.request(PRODUCTS_QUERY, {
-      currency: "NOK",
-      imageSize: "large",
-      useCache: true,
-    });
-    return (data?.Channel?.Products ?? []) as CatalogProduct[];
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        ensureVioInit();
+        await Vio.bootstrap();
+        const commerce = Vio.commerceFor(SPONSOR_ID);
+        const data = await commerce.raw.request(PRODUCTS_QUERY, {
+          currency: "NOK",
+          imageSize: "large",
+          useCache: true,
+        });
+        const list = (data?.Channel?.Products ?? []) as CatalogProduct[];
+        console.log("[Vio] loadCatalog →", list.length, "products");
+        return list;
+      } catch (err: any) {
+        lastError = err;
+        console.warn("[Vio] loadCatalog retry", attempt, err?.message ?? err);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    throw lastError;
   })().catch((err: unknown) => {
-    catalogPromise = null; // allow a retry on the next call
+    catalogPromise = null; // allow a fresh retry on the next call
     throw err;
   });
   return catalogPromise;
