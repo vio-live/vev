@@ -314,14 +314,22 @@ export default function ProductSelect({
 
 // ---- Multi-select editor ----------------------------------------------------
 
-// The value is an OBJECT `{ items: Item[] }` (not a bare array): Vev's array-typed
-// props don't play well with a custom `component`, but object props do.
+// The value is a FLAT object `{ ids: "id1,id2,…" }` — a single string field, the
+// same flat shape the single picker uses (which works). Object props with a
+// nested array field crash Vev's schema renderer, so ids are stored as CSV.
+export function parseIds(csv?: string): number[] {
+  return (csv ?? "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
 export function ProductMultiSelect({
   value,
   onChange,
 }: {
-  value?: { items?: Item[] };
-  onChange: (v: { items: Item[] }) => void;
+  value?: { ids?: string };
+  onChange: (v: { ids: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
@@ -329,19 +337,16 @@ export function ProductMultiSelect({
     loadCatalog().then(setCatalog).catch(() => {});
   }, []);
 
-  const items = Array.isArray(value?.items) ? value!.items! : [];
-  const selectedIds = new Set<number>(items.map((i) => Number(i.productId)));
+  const idList = parseIds(value?.ids);
+  const selectedIds = new Set<number>(idList);
 
   const toggle = (id: number) => {
-    if (selectedIds.has(id)) {
-      onChange({ items: items.filter((i) => Number(i.productId) !== id) });
-    } else {
-      onChange({ items: [...items, { productId: id, sponsorId: SPONSOR_ID }] });
-    }
+    const next = selectedIds.has(id) ? idList.filter((x) => x !== id) : [...idList, id];
+    onChange({ ids: next.join(",") });
   };
 
-  const selectedProducts = items
-    .map((i) => catalog.find((c) => Number(c.id) === Number(i.productId)))
+  const selectedProducts = idList
+    .map((id) => catalog.find((c) => Number(c.id) === id))
     .filter(Boolean) as CatalogProduct[];
 
   return (
@@ -360,7 +365,7 @@ export function ProductMultiSelect({
         </div>
       ) : null}
       <button type="button" style={triggerStyle()} onClick={() => setOpen(true)}>
-        {items.length > 0 ? `Edit products (${items.length})` : "Select products"}
+        {idList.length > 0 ? `Edit products (${idList.length})` : "Select products"}
       </button>
       <CatalogModal
         open={open}

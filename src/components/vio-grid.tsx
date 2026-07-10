@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { registerVevComponent } from "@vev/react";
-import { ProductMultiSelect } from "./product-picker";
+import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { fetchVioProducts } from "./vio-helpers";
+import { fetchVioProducts, SPONSOR_ID } from "./vio-helpers";
 
 /**
  * Vio Product Grid — a responsive grid of product cards. The editor picks the
@@ -33,7 +33,7 @@ function injectStyles() {
 type Item = { productId: number; sponsorId: number };
 
 type Props = {
-  products?: { items?: Item[] };
+  products?: { ids?: string };
   kicker?: string;
   heading?: string;
   columns?: number;
@@ -45,9 +45,8 @@ export default function VioProductGrid(props: Props) {
   const { products, kicker, heading, columns = 3, gap = 20 } = props;
 
   const [list, setList] = useState<any[]>([]);
-  const items = Array.isArray(products?.items) ? products!.items! : [];
-  const ids = items.map((i) => Number(i.productId)).filter(Boolean);
-  const sponsorId = items[0]?.sponsorId ?? 1;
+  const ids = parseIds(products?.ids);
+  const sponsorId = SPONSOR_ID;
   const idsKey = ids.join(",");
 
   useEffect(() => {
@@ -112,16 +111,7 @@ registerVevComponent(VioProductGrid, {
       title: "Products",
       type: "object",
       component: ProductMultiSelect as any,
-      fields: [
-        {
-          name: "items",
-          type: "array",
-          of: [
-            { name: "productId", type: "number" },
-            { name: "sponsorId", type: "number" },
-          ],
-        },
-      ],
+      fields: [{ name: "ids", type: "string" }],
     } as any,
     { name: "kicker", title: "Kicker", type: "string", initialValue: "" },
     { name: "heading", title: "Heading", type: "string", initialValue: "" },
