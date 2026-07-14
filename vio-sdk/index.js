@@ -6922,6 +6922,13 @@ var VioProductDetail = class extends i4 {
       background: var(--vio-color-text, #0a0a0a);
       color: var(--vio-color-text-on-primary, #fff);
     }
+    .option-pill.unavailable {
+      opacity: 0.4;
+      cursor: not-allowed;
+      text-decoration: line-through;
+      background: repeating-linear-gradient(-45deg, #fafafa, #fafafa 5px, #f0f0f0 5px, #f0f0f0 10px);
+    }
+    .option-pill.unavailable:hover { border-color: var(--vio-color-border, #e5e5e5); }
 
     /* Qty + CTA row */
     .qty-cta-row {
@@ -7182,18 +7189,45 @@ var VioProductDetail = class extends i4 {
     }
     this.isLoading = false;
   }
-  /** Resolve the active variant from the selected option values. */
+  /** Option values a variant represents — variant titles join them with " / "
+   * (or "|"). Exact parts, lowercased, so matching is combination-accurate
+   * (avoids "M" matching "Medium"). */
+  variantOptionValues(v2) {
+    return (v2.title ?? "").split(/\s*[/|]\s*/).map((s4) => s4.trim().toLowerCase()).filter(Boolean);
+  }
+  /** Does a variant satisfy every currently-selected option value (exact part match)? */
+  variantMatchesSelection(v2, selection) {
+    const wanted = Object.values(selection).map((s4) => s4.trim().toLowerCase());
+    if (wanted.length === 0) return true;
+    const parts = new Set(this.variantOptionValues(v2));
+    return wanted.every((w2) => parts.has(w2));
+  }
+  /** Resolve the active variant from the selected combination. Prefers an EXACT
+   * full-combination match, then a partial match, then the first variant. */
   selectedVariant() {
     if (!this.product || this.product.variants.length === 0) return null;
-    const vals = Object.values(this.selectedOptions);
-    if (vals.length === 0) return this.product.variants[0] ?? null;
-    const found = this.product.variants.find((v2) => {
-      if (!v2.title) return false;
-      return vals.every(
-        (val) => v2.title.toLowerCase().includes(val.toLowerCase())
-      );
+    const sel = this.selectedOptions;
+    const wanted = Object.values(sel).map((s4) => s4.trim().toLowerCase());
+    if (wanted.length === 0) return this.product.variants[0] ?? null;
+    const exact = this.product.variants.find((v2) => {
+      const parts = new Set(this.variantOptionValues(v2));
+      return parts.size === wanted.length && wanted.every((w2) => parts.has(w2));
     });
-    return found ?? this.product.variants[0] ?? null;
+    if (exact) return exact;
+    const partial = this.product.variants.find((v2) => this.variantMatchesSelection(v2, sel));
+    return partial ?? this.product.variants[0] ?? null;
+  }
+  /** True if picking `value` for `optionName` (with the rest of the current
+   * selection) still yields an in-stock variant. When no variant reports stock
+   * (missing data), never disables — lets the backend be the source of truth. */
+  isValueAvailable(optionName, value) {
+    if (!this.product) return true;
+    const anyStock = this.product.variants.some((v2) => (v2.quantity ?? 0) > 0);
+    if (!anyStock) return true;
+    const trial = { ...this.selectedOptions, [optionName]: value };
+    return this.product.variants.some(
+      (v2) => this.variantMatchesSelection(v2, trial) && (v2.quantity ?? 0) > 0
+    );
   }
   get unitPrice() {
     const v2 = this.selectedVariant();
@@ -7484,17 +7518,20 @@ var VioProductDetail = class extends i4 {
         <div class="option-group">
           <div class="option-label">${opt.name}</div>
           <div class="option-values">
-            ${values.map(
-        (val) => b2`
+            ${values.map((val) => {
+        const available = this.isValueAvailable(opt.name, val);
+        return b2`
                 <button
-                  class="option-pill"
+                  class="option-pill ${available ? "" : "unavailable"}"
                   @click=${() => this.selectOption(opt.name, val)}
                   aria-pressed=${this.selectedOptions[opt.name] === val}
+                  ?disabled=${!available}
+                  title=${available ? "" : "Utsolgt"}
                 >
                   ${val}
                 </button>
-              `
-      )}
+              `;
+      })}
           </div>
         </div>
       `;
