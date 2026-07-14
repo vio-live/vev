@@ -1,33 +1,36 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { SilkeModal, SilkeButton, SilkeBox, SilkeText, SilkeLoader } from "@vev/silke";
 import { loadCatalog, SPONSOR_ID, type CatalogProduct } from "./vio-helpers";
 
 /**
- * Modal product picker — a richer replacement for the inline list. Opens a
- * full-screen catalog with big thumbnails + search, for a better preview when
- * choosing products. Two editors share it:
- *   - ProductSelect      → single product   (value: { productId, sponsorId })
- *   - ProductMultiSelect  → many products    (value: Array<{ productId, sponsorId }>)
- * Both are used as a prop `component` in registerVevComponent.
+ * Modal product picker — lists the commerce catalog (the products tied to the
+ * sponsor's commerce apiKey) so the editor picks products visually. Uses Vev's
+ * native SilkeModal (a raw createPortal to document.body crashes the editor).
+ *   - ProductSelect      → single product  (value: { productId, sponsorId })
+ *   - ProductMultiSelect → many products    (value: { ids: "1,2,3" })
  */
 
 type Item = { productId: number; sponsorId: number };
+
+/** Parse the comma-separated product-id string used by carousel/grid. */
+export function parseIds(ids?: string): number[] {
+  return (ids ?? "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
 
 function priceLabel(p: CatalogProduct): string {
   if (!p.price?.amount) return "";
   return `${p.price.amount} ${p.price.currency_code ?? ""}`.trim();
 }
 
-// ---- Catalog modal (shared) -------------------------------------------------
-
 function CatalogModal({
-  open,
   multi,
   selectedIds,
   onToggle,
   onClose,
 }: {
-  open: boolean;
   multi: boolean;
   selectedIds: Set<number>;
   onToggle: (id: number) => void;
@@ -39,10 +42,7 @@ function CatalogModal({
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     loadCatalog()
       .then((list) => {
         if (!cancelled) {
@@ -59,16 +59,7 @@ function CatalogModal({
     return () => {
       cancelled = true;
     };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -78,186 +69,128 @@ function CatalogModal({
     );
   }, [products, query]);
 
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 2147483600,
-        background: "rgba(0,0,0,0.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      }}
+  return (
+    <SilkeModal
+      title={multi ? "Select products" : "Select a product"}
+      size="large"
+      onClose={onClose}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(880px, 100%)",
-          maxHeight: "86vh",
-          background: "#fff",
-          color: "#0a0a0a",
-          borderRadius: 12,
-          boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderBottom: "1px solid #eee" }}>
-          <strong style={{ fontSize: 15 }}>{multi ? "Select products" : "Select a product"}</strong>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search brand, name or id…"
+      <SilkeBox column gap="m" style={{ minWidth: 640 }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search brand, name or id…"
+          style={{
+            width: "100%",
+            padding: "9px 12px",
+            fontSize: 13,
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+        />
+
+        {loading ? (
+          <SilkeBox style={{ padding: 40, justifyContent: "center" }}>
+            <SilkeLoader />
+          </SilkeBox>
+        ) : error ? (
+          <SilkeText style={{ color: "#e5484d", padding: 20 }}>{error}</SilkeText>
+        ) : filtered.length === 0 ? (
+          <SilkeText style={{ opacity: 0.6, padding: 20 }}>No products found</SilkeText>
+        ) : (
+          <div
             style={{
-              flex: 1,
-              padding: "8px 12px",
-              fontSize: 13,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              outline: "none",
-              background: "#fafafa",
-            }}
-          />
-          <span style={{ fontSize: 12, opacity: 0.6, whiteSpace: "nowrap" }}>{selectedIds.size} selected</span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: "8px 14px",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "#fff",
-              background: "#0a0a0a",
-              border: "none",
-              borderRadius: 8,
-              cursor: "pointer",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+              gap: 12,
+              maxHeight: "56vh",
+              overflowY: "auto",
             }}
           >
-            {multi ? "Done" : "Close"}
-          </button>
-        </div>
-
-        <div style={{ overflowY: "auto", padding: 18 }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", opacity: 0.6 }}>Loading products…</div>
-          ) : error ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#e5484d" }}>{error}</div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", opacity: 0.6 }}>No products found</div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-                gap: 14,
-              }}
-            >
-              {filtered.map((p) => {
-                const id = Number(p.id);
-                const selected = selectedIds.has(id);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onToggle(id)}
+            {filtered.map((p) => {
+              const id = Number(p.id);
+              const selected = selectedIds.has(id);
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => onToggle(id)}
+                  style={{
+                    cursor: "pointer",
+                    padding: 8,
+                    borderRadius: 10,
+                    border: selected ? "2px solid #0a63f4" : "1px solid #e5e5e5",
+                    background: selected ? "rgba(10,99,244,0.06)" : "transparent",
+                  }}
+                >
+                  <div
                     style={{
-                      textAlign: "left",
-                      padding: 8,
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      background: selected ? "rgba(10,10,10,0.05)" : "#fff",
-                      border: selected ? "2px solid #0a0a0a" : "1px solid #e5e5e5",
                       position: "relative",
+                      aspectRatio: "1 / 1",
+                      borderRadius: 6,
+                      overflow: "hidden",
+                      background: "#f2f2f2",
+                      marginBottom: 8,
                     }}
                   >
-                    <div
-                      style={{
-                        position: "relative",
-                        aspectRatio: "1 / 1",
-                        borderRadius: 6,
-                        overflow: "hidden",
-                        background: "#f2f2f2",
-                        marginBottom: 8,
-                      }}
-                    >
-                      {p.images?.[0]?.url ? (
-                        <img
-                          src={p.images[0].url}
-                          alt=""
-                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                        />
-                      ) : null}
-                      {selected ? (
-                        <span
-                          style={{
-                            position: "absolute",
-                            top: 6,
-                            right: 6,
-                            width: 22,
-                            height: 22,
-                            borderRadius: "50%",
-                            background: "#0a0a0a",
-                            color: "#fff",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 13,
-                          }}
-                        >
-                          ✓
-                        </span>
-                      ) : null}
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.55, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      {p.brand}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 500,
-                        lineHeight: 1.25,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {p.title}
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{priceLabel(p)}</div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
+                    {p.images?.[0]?.url ? (
+                      <img
+                        src={p.images[0].url}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      />
+                    ) : null}
+                    {selected ? (
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: 6,
+                          right: 6,
+                          width: 22,
+                          height: 22,
+                          borderRadius: "50%",
+                          background: "#0a63f4",
+                          color: "#fff",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 13,
+                        }}
+                      >
+                        ✓
+                      </span>
+                    ) : null}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.55, textTransform: "uppercase" }}>{p.brand}</div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      lineHeight: 1.25,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.title}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{priceLabel(p)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <SilkeBox gap="s" style={{ justifyContent: "flex-end" }}>
+          <SilkeText style={{ opacity: 0.6, alignSelf: "center" }}>
+            {selectedIds.size} selected
+          </SilkeText>
+          <SilkeButton label={multi ? "Done" : "Close"} kind="primary" onClick={onClose} />
+        </SilkeBox>
+      </SilkeBox>
+    </SilkeModal>
   );
-}
-
-// ---- Trigger button (inline, in the properties panel) -----------------------
-
-function triggerStyle(): React.CSSProperties {
-  return {
-    width: "100%",
-    padding: "10px 12px",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#fff",
-    background: "#0a0a0a",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-  };
 }
 
 // ---- Single-select editor ---------------------------------------------------
@@ -267,7 +200,7 @@ export default function ProductSelect({
   onChange,
 }: {
   value?: Item;
-  onChange: (v: Item) => void;
+  onChange: (v: Item | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
@@ -275,55 +208,46 @@ export default function ProductSelect({
     loadCatalog().then(setCatalog).catch(() => {});
   }, []);
 
-  const current = value?.productId != null ? catalog.find((c) => Number(c.id) === Number(value!.productId)) : undefined;
+  const current =
+    value?.productId != null ? catalog.find((c) => Number(c.id) === Number(value!.productId)) : undefined;
   const selectedIds = new Set<number>(value?.productId != null ? [Number(value.productId)] : []);
 
   return (
-    <div>
+    <SilkeBox column gap="s">
       {current ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <img
-            src={current.images?.[0]?.url}
-            alt=""
-            style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6, background: "#f2f2f2" }}
-          />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {current.title}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.6 }}>{priceLabel(current)} · #{current.id}</div>
-          </div>
-        </div>
+        <SilkeText overflow>{current.title}</SilkeText>
+      ) : (
+        <SilkeText style={{ opacity: 0.6 }}>No product selected</SilkeText>
+      )}
+      <SilkeBox gap="xs">
+        <SilkeButton
+          label={current ? "Change product" : "Select a product"}
+          size="s"
+          kind="secondary"
+          onClick={() => setOpen(true)}
+        />
+        {value ? <SilkeButton icon="undo" size="s" kind="ghost" onClick={() => onChange(null)} /> : null}
+      </SilkeBox>
+      {open ? (
+        <CatalogModal
+          multi={false}
+          selectedIds={selectedIds}
+          onToggle={(id) => {
+            onChange({ productId: id, sponsorId: SPONSOR_ID });
+            setOpen(false);
+          }}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
-      <button type="button" style={triggerStyle()} onClick={() => setOpen(true)}>
-        {current ? "Change product" : "Select a product"}
-      </button>
-      <CatalogModal
-        open={open}
-        multi={false}
-        selectedIds={selectedIds}
-        onToggle={(id) => {
-          onChange({ productId: id, sponsorId: SPONSOR_ID });
-          setOpen(false);
-        }}
-        onClose={() => setOpen(false)}
-      />
-    </div>
+    </SilkeBox>
   );
 }
 
 // ---- Multi-select editor ----------------------------------------------------
 
-// The value is a FLAT object `{ ids: "id1,id2,…" }` — a single string field, the
-// same flat shape the single picker uses (which works). Object props with a
-// nested array field crash Vev's schema renderer, so ids are stored as CSV.
-export function parseIds(csv?: string): number[] {
-  return (csv ?? "")
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
-}
-
+// Value is an OBJECT with a comma-separated id string `{ ids: "1,2,3" }`. A plain
+// string field always serialises cleanly (Vev array props crash with a custom
+// component; nested arrays are flaky). Sponsor is the demo sponsor.
 export function ProductMultiSelect({
   value,
   onChange,
@@ -332,48 +256,34 @@ export function ProductMultiSelect({
   onChange: (v: { ids: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
-  useEffect(() => {
-    loadCatalog().then(setCatalog).catch(() => {});
-  }, []);
 
-  const idList = parseIds(value?.ids);
-  const selectedIds = new Set<number>(idList);
+  const ids = parseIds(value?.ids);
+  const selectedIds = new Set<number>(ids);
 
   const toggle = (id: number) => {
-    const next = selectedIds.has(id) ? idList.filter((x) => x !== id) : [...idList, id];
+    const next = selectedIds.has(id) ? ids.filter((x) => x !== id) : [...ids, id];
     onChange({ ids: next.join(",") });
   };
 
-  const selectedProducts = idList
-    .map((id) => catalog.find((c) => Number(c.id) === id))
-    .filter(Boolean) as CatalogProduct[];
-
   return (
-    <div>
-      {selectedProducts.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-          {selectedProducts.map((p) => (
-            <img
-              key={p.id}
-              src={p.images?.[0]?.url}
-              alt=""
-              title={p.title}
-              style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 5, background: "#f2f2f2" }}
-            />
-          ))}
-        </div>
-      ) : null}
-      <button type="button" style={triggerStyle()} onClick={() => setOpen(true)}>
-        {idList.length > 0 ? `Edit products (${idList.length})` : "Select products"}
-      </button>
-      <CatalogModal
-        open={open}
-        multi
-        selectedIds={selectedIds}
-        onToggle={toggle}
-        onClose={() => setOpen(false)}
+    <SilkeBox column gap="s">
+      <SilkeText style={{ opacity: 0.6 }}>
+        {ids.length > 0 ? `${ids.length} product${ids.length === 1 ? "" : "s"} selected` : "No products selected"}
+      </SilkeText>
+      <SilkeButton
+        label={ids.length > 0 ? "Edit products" : "Select products"}
+        size="s"
+        kind="secondary"
+        onClick={() => setOpen(true)}
       />
-    </div>
+      {open ? (
+        <CatalogModal
+          multi
+          selectedIds={selectedIds}
+          onToggle={toggle}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </SilkeBox>
   );
 }
