@@ -4044,18 +4044,24 @@ var CartManager = class extends EventTarget {
     this.cartsBySponsor = this.loadFromStorage();
   }
   // MARK: - Mutations
-  /** Add a Product DTO to a sponsor's cart. Bumps quantity if already present. */
+  /** Add a Product DTO to a sponsor's cart. Bumps quantity if already present.
+   * When a variantId is given, the line uses the VARIANT's price / image / title
+   * (not the product base), so different combinations are priced correctly. */
   addProduct(opts) {
-    const unitPrice = opts.product.price.amount_incl_taxes ?? opts.product.price.amount;
+    const variant = opts.variantId != null ? opts.product.variants?.find((v2) => v2.id === opts.variantId) : void 0;
+    const price = variant?.price ?? opts.product.price;
+    const unitPrice = price.amount ?? price.amount_incl_taxes ?? 0;
+    const imageUrl = variant?.images?.[0]?.url ?? primaryImageUrl(opts.product) ?? "";
+    const name = variant?.title ? `${opts.product.title} \u2014 ${variant.title}` : opts.product.title;
     return this.addManual({
       productId: opts.product.id,
       sponsorId: opts.sponsorId,
       sponsorName: opts.sponsorName,
       brand: opts.product.brand ?? "",
-      name: opts.product.title,
+      name,
       unitPrice,
-      currency: opts.product.price.currency_code,
-      imageUrl: primaryImageUrl(opts.product) ?? "",
+      currency: price.currency_code,
+      imageUrl,
       quantity: opts.quantity,
       variantId: opts.variantId
     });
@@ -7195,25 +7201,30 @@ var VioProductDetail = class extends i4 {
   variantOptionValues(v2) {
     return (v2.title ?? "").split(/\s*[/|]\s*/).map((s4) => s4.trim().toLowerCase()).filter(Boolean);
   }
-  /** Does a variant satisfy every currently-selected option value (exact part match)? */
+  /** Does a variant part represent this option value? Whole-token match, so the
+   * value "30" matches the part "30 ml" but "M" does NOT match "Medium". */
+  partMatchesValue(part, value) {
+    if (part === value) return true;
+    return part.split(/\s+/).includes(value);
+  }
+  /** Does a variant satisfy every currently-selected option value? */
   variantMatchesSelection(v2, selection) {
     const wanted = Object.values(selection).map((s4) => s4.trim().toLowerCase());
     if (wanted.length === 0) return true;
-    const parts = new Set(this.variantOptionValues(v2));
-    return wanted.every((w2) => parts.has(w2));
+    const parts = this.variantOptionValues(v2);
+    return wanted.every((w2) => parts.some((part) => this.partMatchesValue(part, w2)));
   }
-  /** Resolve the active variant from the selected combination. Prefers an EXACT
-   * full-combination match, then a partial match, then the first variant. */
+  /** Resolve the active variant from the selected combination. Prefers a FULL
+   * match (all options accounted for), then a partial match, then the first. */
   selectedVariant() {
     if (!this.product || this.product.variants.length === 0) return null;
     const sel = this.selectedOptions;
     const wanted = Object.values(sel).map((s4) => s4.trim().toLowerCase());
     if (wanted.length === 0) return this.product.variants[0] ?? null;
-    const exact = this.product.variants.find((v2) => {
-      const parts = new Set(this.variantOptionValues(v2));
-      return parts.size === wanted.length && wanted.every((w2) => parts.has(w2));
-    });
-    if (exact) return exact;
+    const full = this.product.variants.find(
+      (v2) => this.variantOptionValues(v2).length === wanted.length && this.variantMatchesSelection(v2, sel)
+    );
+    if (full) return full;
     const partial = this.product.variants.find((v2) => this.variantMatchesSelection(v2, sel));
     return partial ?? this.product.variants[0] ?? null;
   }
@@ -7232,12 +7243,12 @@ var VioProductDetail = class extends i4 {
   get unitPrice() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
-    return price?.amount_incl_taxes ?? price?.amount ?? 0;
+    return price?.amount ?? price?.amount_incl_taxes ?? 0;
   }
   get compareAt() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
-    return price?.compare_at_incl_taxes ?? price?.compare_at ?? null;
+    return price?.compare_at ?? price?.compare_at_incl_taxes ?? null;
   }
   get availableQuantity() {
     const v2 = this.selectedVariant();
