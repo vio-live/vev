@@ -110,6 +110,7 @@ const CARD_CSS = `
 /* Skeleton while a product loads. */
 .vio-native-card .vnc-skel { background: #ececec; border-radius: 4px; animation: vio-skel 1.2s ease-in-out infinite; }
 @keyframes vio-skel { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+.vio-native-card .vnc-unavailable { color: #b0b0b0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 `;
 
 export function injectCardStyles(): void {
@@ -239,7 +240,11 @@ export function ProductCardView({
   const img = p ? primaryImageUrl(p) ?? "" : "";
   const brand = p?.brand ?? "";
   const name = p?.title ?? "";
-  const price = p?.price ? `${p.price.amount} ${p.price.currency_code ?? ""}` : "";
+  // Products with options show a "from" price (uses the correct product base
+  // price, not the per-variant prices which the feed may ship mislabeled).
+  const price = p?.price
+    ? `${p.options_enabled ? "Fra " : ""}${p.price.amount} ${p.price.currency_code ?? ""}`
+    : "";
   const retailer = p?.supplier?.name ?? p?.brand ?? "";
   const hasVariants = Boolean(p?.options_enabled);
   const inCart = qty > 0;
@@ -299,6 +304,37 @@ export function ProductCardView({
       {showRetailer && retailer ? <div className="vnc-retailer">{retailer}</div> : null}
     </>
   );
+
+  const showMeta = !isImageOnly && !isOverlay;
+
+  // Loading — skeleton in the card's shape.
+  if (loading) {
+    return (
+      <div className={`vio-native-card l-${layout}`} style={accentStyle} aria-busy="true">
+        <div className="vnc-image">
+          <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
+        </div>
+        {showMeta ? (
+          <div className="vnc-meta">
+            <div className="vnc-skel" style={{ height: 10, width: "40%", marginBottom: 8 }} />
+            <div className="vnc-skel" style={{ height: 16, width: "85%", marginBottom: 10 }} />
+            <div className="vnc-skel" style={{ height: 16, width: "30%" }} />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  // Fetch failed / product not found — discreet placeholder (never a blank hole).
+  if (productId != null && !p) {
+    return (
+      <div className={`vio-native-card l-${layout}`} style={accentStyle}>
+        <div className="vnc-image vnc-unavailable" role="img" aria-label="Kunne ikke laste produkt">
+          <span>Utilgjengelig</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`vio-native-card l-${layout}`} style={accentStyle}>

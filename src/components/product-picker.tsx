@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SilkeModal, SilkeButton, SilkeBox, SilkeText, SilkeLoader } from "@vev/silke";
-import { loadCatalog, SPONSOR_ID, type CatalogProduct } from "./vio-helpers";
+import { loadCatalog, SPONSOR_ID, type CatalogProduct, type Item } from "./vio-helpers";
 
 /**
  * Modal product picker — lists the commerce catalog (the products tied to the
@@ -9,8 +9,6 @@ import { loadCatalog, SPONSOR_ID, type CatalogProduct } from "./vio-helpers";
  *   - ProductSelect      → single product  (value: { productId, sponsorId })
  *   - ProductMultiSelect → many products    (value: { ids: "1,2,3" })
  */
-
-type Item = { productId: number; sponsorId: number };
 
 /** Parse the comma-separated product-id string used by carousel/grid. */
 export function parseIds(ids?: string): number[] {

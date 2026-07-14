@@ -30,8 +30,6 @@ function injectStyles() {
   document.head.appendChild(el);
 }
 
-type Item = { productId: number; sponsorId: number };
-
 type Props = {
   products?: { ids?: string };
   kicker?: string;
