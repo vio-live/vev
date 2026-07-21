@@ -4050,7 +4050,7 @@ var CartManager = class extends EventTarget {
   addProduct(opts) {
     const variant = opts.variantId != null ? opts.product.variants?.find((v2) => v2.id === opts.variantId) : void 0;
     const price = variant?.price ?? opts.product.price;
-    const unitPrice = price.amount ?? price.amount_incl_taxes ?? 0;
+    const unitPrice = price.amount_incl_taxes ?? price.amount ?? 0;
     const imageUrl = variant?.images?.[0]?.url ?? primaryImageUrl(opts.product) ?? "";
     const name = variant?.title ? `${opts.product.title} \u2014 ${variant.title}` : opts.product.title;
     return this.addManual({
@@ -7235,12 +7235,12 @@ var VioProductDetail = class extends i4 {
   get unitPrice() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
-    return price?.amount ?? price?.amount_incl_taxes ?? 0;
+    return price?.amount_incl_taxes ?? price?.amount ?? 0;
   }
   get compareAt() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
-    return price?.compare_at ?? price?.compare_at_incl_taxes ?? null;
+    return price?.compare_at_incl_taxes ?? price?.compare_at ?? null;
   }
   get availableQuantity() {
     const v2 = this.selectedVariant();
