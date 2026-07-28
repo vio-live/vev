@@ -4,6 +4,7 @@ import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { fetchVioProducts, SPONSOR_ID } from "./vio-helpers";
+import { productToItem, trackViewItemList } from "./analytics";
 
 /**
  * Vio Product Grid — a responsive grid of product cards. The editor picks the
@@ -58,7 +59,9 @@ export default function VioProductGrid(props: Props) {
     }
     let cancelled = false;
     fetchVioProducts(ids, sponsorId).then((prods) => {
-      if (!cancelled) setList(prods);
+      if (cancelled) return;
+      setList(prods);
+      trackViewItemList(prods.map((p) => productToItem(p)), heading || kicker || "Vio Grid");
     });
     return () => {
       cancelled = true;

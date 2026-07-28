@@ -2,6 +2,7 @@ import React from "react";
 import { registerVevComponent } from "@vev/react";
 import ProductSelect from "./product-picker";
 import { openProductInfo } from "./vio-helpers";
+import { trackViewItem } from "./analytics";
 
 /**
  * Vio · Open Product Info — an ACTION addon. Attach it to ANY element and pick a
@@ -21,6 +22,7 @@ export default function VioOpenProduct({ product, className, children }: Props) 
 
   const onClick = () => {
     if (productId == null) return;
+    trackViewItem({ productId }); // detail opens → product view (id only here)
     openProductInfo(Number(productId), Number(sponsorId));
   };
 

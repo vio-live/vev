@@ -3,6 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { Vio } from "../../vio-sdk";
 import ProductSelect from "./product-picker";
 import { fetchVioProduct, openCart, openProductInfo } from "./vio-helpers";
+import { productToItem, trackAddToCart, trackViewItem } from "./analytics";
 
 /**
  * Vio · Add to Cart — an ACTION addon. Attach it to ANY element (image, shape,
@@ -38,12 +39,14 @@ export default function VioAddToCart({ product, openCartOnAdd = true, className,
   const onClick = () => {
     if (productId == null) return;
     if (p?.options_enabled) {
+      trackViewItem(productToItem(p)); // variants → detail opens (product view)
       openProductInfo(Number(productId), Number(sponsorId)); // variants → pick in detail
       return;
     }
     if (!p) return;
     try {
       Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1 });
+      trackAddToCart(productToItem(p, { quantity: 1 }));
       if (openCartOnAdd) openCart();
     } catch (e: any) {
       console.warn("[Vio] add-to-cart addon", e);

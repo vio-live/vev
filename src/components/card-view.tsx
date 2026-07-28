@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { Vio, primaryImageUrl } from "../../vio-sdk";
 import { fetchVioProduct, openCart } from "./vio-helpers";
+import {
+  productToItem,
+  trackAddToCart,
+  trackSelectItem,
+  trackViewItem,
+  trackViewItemList,
+} from "./analytics";
 
 /**
  * Reusable Vio product card — presentation + interaction, shared by the single
@@ -255,6 +262,11 @@ export function ProductCardView({
 
   const openDetail = () => {
     if (productId == null) return;
+    // Funnel: a shoppable card was clicked (select_item), and the detail it opens
+    // counts as a product view (view_item).
+    const item = p ? productToItem(p) : { productId, name, brand };
+    trackSelectItem(item);
+    trackViewItem(item);
     document.dispatchEvent(
       new CustomEvent("vio:product-click", {
         detail: {
@@ -278,6 +290,7 @@ export function ProductCardView({
     }
     try {
       Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1 });
+      trackAddToCart(productToItem(p, { quantity: 1 }));
       setPop(true);
       setTimeout(() => setPop(false), 420);
       openCart();
@@ -422,6 +435,13 @@ export function VioProductCardSelf({
 }) {
   const { product, loading } = useVioProduct(productId, sponsorId);
   const qty = useCartQty(productId, sponsorId);
+
+  // Impression (view_item_list of one) — fired here so a standalone card counts,
+  // without double-firing when the same view renders inside a carousel / grid
+  // (those fire the list impression at the container).
+  useEffect(() => {
+    if (product) trackViewItemList([productToItem(product)], product?.title);
+  }, [product]);
   return (
     <ProductCardView
       productId={productId}

@@ -4,6 +4,7 @@ import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { fetchVioProducts, SPONSOR_ID } from "./vio-helpers";
+import { productToItem, trackViewItemList } from "./analytics";
 
 /**
  * Vio Product Carousel — a horizontal, scroll-snapped row of product cards (like
@@ -102,7 +103,9 @@ export default function VioProductCarousel(props: Props) {
     }
     let cancelled = false;
     fetchVioProducts(ids, sponsorId).then((prods) => {
-      if (!cancelled) setList(prods);
+      if (cancelled) return;
+      setList(prods);
+      trackViewItemList(prods.map((p) => productToItem(p)), heading || kicker || "Vio Carousel");
     });
     return () => {
       cancelled = true;

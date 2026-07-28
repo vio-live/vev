@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { registerVevComponent, useEditorState } from "@vev/react";
 import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
+import { configureAnalytics, initVioAnalytics } from "./analytics";
+import AnalyticsInspector from "./analytics-inspector";
 
 /**
  * Vio Configuration — the ONLY setup block. Wraps the real vio-web-sdk:
@@ -90,6 +92,9 @@ type Props = {
   cartColor?: string;
   cartEffect?: string; // none | scale | pulse
   cartSize?: number;
+  // Analytics.
+  analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
+  analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
 };
 
 export default function VioConfig({
@@ -103,6 +108,8 @@ export default function VioConfig({
   cartColor,
   cartEffect = "scale",
   cartSize = 56,
+  analytics = true,
+  analyticsDebug = false,
 }: Props) {
   const { disabled } = useEditorState(); // true in the editor, false on the published page
   const cartRef = useRef<any>(null);
@@ -225,6 +232,21 @@ export default function VioConfig({
     document.addEventListener("vio:open-cart", openCart);
     return () => document.removeEventListener("vio:open-cart", openCart);
   }, [isOwner]);
+
+  // Analytics: enable on the published page (and in the editor when debugging, so
+  // the inspector is demoable live). Install the global funnel listeners once.
+  useEffect(() => {
+    if (!isOwner) return;
+    configureAnalytics({
+      enabled: analytics && (!disabled || analyticsDebug),
+      debug: analyticsDebug,
+    });
+  }, [isOwner, analytics, analyticsDebug, disabled]);
+
+  useEffect(() => {
+    if (!isOwner || !analytics) return;
+    return initVioAnalytics();
+  }, [isOwner, analytics]);
 
   // Cart / detail → Klarna → open checkout in EXPRESS mode (like the demo):
   // the event carries { sponsorId, paymentMethod:'klarna', express:true }. Express
@@ -388,7 +410,7 @@ export default function VioConfig({
         type="button"
         aria-label="Handlekurv"
         className={cartEffect === "pulse" ? "vio-fab-pulse" : undefined}
-        onClick={() => cartRef.current?.show?.()}
+        onClick={() => document.dispatchEvent(new CustomEvent("vio:open-cart"))}
         onMouseEnter={() => setFabHover(true)}
         onMouseLeave={() => setFabHover(false)}
         style={{
@@ -441,6 +463,7 @@ export default function VioConfig({
         onCheckoutOpen={onCheckoutOpen}
         onAddedToCart={() => cartRef.current?.show?.()}
       />
+      {analytics && analyticsDebug ? <AnalyticsInspector /> : null}
     </>
   );
 
@@ -506,5 +529,7 @@ registerVevComponent(VioConfig, {
     } as any,
     { name: "cartColor", title: "Cart color", type: "string", initialValue: "" },
     { name: "cartSize", title: "Cart size (px)", type: "number", initialValue: 56 },
+    { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
+    { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
   ],
 });
