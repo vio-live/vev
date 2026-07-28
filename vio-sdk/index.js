@@ -4702,6 +4702,171 @@ var KLARNA_SHIPPING_OPTIONS = [
     preselected: false
   }
 ];
+
+var CREATE_PAYMENT_KLARNA_NATIVE_MUTATION = `
+mutation CreatePaymentKlarnaNative($checkoutId: String!, $countryCode: String, $currency: String, $locale: String, $returnUrl: String, $intent: String, $customer: KlarnaNativeCustomerInput, $billingAddress: KlarnaNativeAddressInput, $shippingAddress: KlarnaNativeAddressInput, $autoCapture: Boolean) {
+  Payment {
+    CreatePaymentKlarnaNative(checkout_id: $checkoutId, country_code: $countryCode, currency: $currency, locale: $locale, return_url: $returnUrl, intent: $intent, customer: $customer, billing_address: $billingAddress, shipping_address: $shippingAddress, auto_capture: $autoCapture) {
+      client_token
+      session_id
+      purchase_country
+      purchase_currency
+      cart_id
+      checkout_id
+      payment_method_categories {
+        identifier
+        name
+        asset_urls {
+          descriptive
+          standard
+        }
+      }
+    }
+  }
+}
+`;
+
+var CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION = `
+mutation ConfirmPaymentKlarnaNative($checkoutId: String!, $authorizationToken: String!, $autoCapture: Boolean, $billingAddress: KlarnaNativeAddressInput, $shippingAddress: KlarnaNativeAddressInput, $customer: KlarnaNativeCustomerInput) {
+  Payment {
+    ConfirmPaymentKlarnaNative(checkout_id: $checkoutId, authorization_token: $authorizationToken, auto_capture: $autoCapture, billing_address: $billingAddress, shipping_address: $shippingAddress, customer: $customer) {
+      order_id
+      checkout_id
+      fraud_status
+      order {
+        order_id
+        status
+        purchase_country
+        purchase_currency
+        locale
+        billing_address {
+          given_name
+          family_name
+          email
+          street_address
+          postal_code
+          city
+          country
+        }
+        shipping_address {
+          given_name
+          family_name
+          email
+          street_address
+          postal_code
+          city
+          country
+        }
+        order_amount
+        order_tax_amount
+        total_line_items_price
+        order_lines {
+          type
+          name
+          quantity
+          unit_price
+          tax_rate
+          total_amount
+          total_discount_amount
+          total_tax_amount
+          merchant_data
+        }
+        merchant_urls {
+          terms
+          checkout
+          confirmation
+          push
+        }
+        html_snippet
+        started_at
+        last_modified_at
+        options {
+          allow_separate_shipping_address
+          date_of_birth_mandatory
+          require_validate_callback_success
+          phone_mandatory
+          auto_capture
+        }
+        shipping_options {
+          id
+          name
+          price
+          tax_amount
+          tax_rate
+          preselected
+        }
+        merchant_data
+        selected_shipping_option {
+          id
+          name
+          price
+          tax_amount
+          tax_rate
+          preselected
+        }
+      }
+    }
+  }
+}
+`;
+
+function buildKlarnaCustomer(address) {
+  if (!address) return null;
+  return {
+    dob: address.dob || address.date_of_birth || null,
+    email: address.email || null,
+    organization_registration_id: address.organization_registration_id || address.org_id || null,
+    phone: address.phone || address.telephone || null,
+    type: address.type || "person"
+  };
+}
+
+function buildKlarnaAddress(address) {
+  if (!address) return null;
+  return {
+    city: address.city || null,
+    country: address.country || address.countryCode || "NO",
+    email: address.email || null,
+    family_name: address.familyName || address.family_name || address.last_name || address.lastName || null,
+    given_name: address.givenName || address.given_name || address.first_name || address.firstName || null,
+    phone: address.phone || null,
+    postal_code: address.postalCode || address.postal_code || address.zip || null,
+    region: address.region || address.state || null,
+    street_address: address.streetAddress || address.street_address || address.address1 || address.street || null,
+    street_address2: address.streetAddress2 || address.street_address2 || address.address2 || null
+  };
+}
+
+async function executeKlarnaGraphQL(query, variables, sponsorId) {
+  const cfg = Configuration.get();
+  const endpoint = cfg.graphQLBase || "https://graph-ql-dev.vio.live";
+  
+  let commerceKey = cfg.apiKey;
+  if (sponsorId && typeof Vio !== "undefined" && typeof Vio.findSponsor === "function") {
+    const sponsor = Vio.findSponsor(sponsorId);
+    if (sponsor?.commerce?.apiKey) {
+      commerceKey = sponsor.commerce.apiKey;
+    }
+  }
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": cfg.apiKey,
+      "Authorization": commerceKey
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.errors) {
+    const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
+    throw new Error(errMsg);
+  }
+  return json;
+}
+
 var CheckoutManager = class extends EventTarget {
   constructor(cartManager) {
     super();
@@ -4997,25 +5162,36 @@ var CheckoutManager = class extends EventTarget {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
     const cfg = Configuration.get();
     const { ctx, shippingOptions } = opts?.withShipping ? this.buildKlarnaInstantContext(opts.shippingId) : { ctx: this.buildKlarnaPendingContext(), shippingOptions: void 0 };
-    const res = await fetch(`${cfg.apiBase}/v2/commerce/klarna/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": cfg.apiKey },
-      body: JSON.stringify({
-        currency: ctx.currency,
-        purchaseCountry: "NO",
-        locale: "nb-NO",
-        orderAmount: ctx.orderAmount,
-        orderLines: ctx.orderLines,
-        ...shippingOptions ? { shippingOptions } : {}
-      })
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.clientToken) {
-      throw new Error(json?.error ?? `Klarna session failed (HTTP ${res.status})`);
+    
+    const checkoutId = ctx.checkoutId || this.state.checkoutId || String(ctx.sponsorId || this.state.sponsorId || 4);
+    const address = this.state.address;
+    const variables = {
+      checkoutId,
+      countryCode: "NO",
+      currency: ctx.currency || "NOK",
+      locale: "nb-NO",
+      returnUrl: typeof window !== "undefined" ? window.location.href : null,
+      intent: "buy",
+      customer: buildKlarnaCustomer(address),
+      billingAddress: buildKlarnaAddress(address),
+      shippingAddress: buildKlarnaAddress(address),
+      autoCapture: true
+    };
+
+    const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx.sponsorId || this.state.sponsorId);
+    const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
+    if (!nativeRes || !nativeRes.client_token) {
+      throw new Error("Klarna session creation failed: missing client_token");
     }
+
+    if (nativeRes.checkout_id) {
+      ctx.checkoutId = nativeRes.checkout_id;
+      this.state.checkoutId = nativeRes.checkout_id;
+    }
+
     const widget = await createKlarnaPaymentsWidget({
-      clientToken: json.clientToken,
-      categories: json.paymentMethodCategories ?? [],
+      clientToken: nativeRes.client_token,
+      categories: nativeRes.payment_method_categories ?? [],
       container
     });
     await widget.load();
@@ -5090,24 +5266,32 @@ var CheckoutManager = class extends EventTarget {
     let clientToken;
     let categories;
     try {
-      const res = await fetch(`${cfg.apiBase}/v2/commerce/klarna/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": cfg.apiKey },
-        body: JSON.stringify({
-          currency: ctx.currency,
-          purchaseCountry: "NO",
-          locale: "nb-NO",
-          orderAmount: ctx.orderAmount,
-          orderLines: ctx.orderLines,
-          shippingOptions
-        })
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.clientToken) {
-        throw new Error(json?.error ?? `Klarna session failed (HTTP ${res.status})`);
+      const checkoutId = ctx.checkoutId || this.state.checkoutId || String(ctx.sponsorId || this.state.sponsorId || 4);
+      const address = this.state.address;
+      const variables = {
+        checkoutId,
+        countryCode: "NO",
+        currency: ctx.currency || "NOK",
+        locale: "nb-NO",
+        returnUrl: typeof window !== "undefined" ? window.location.href : null,
+        intent: "buy",
+        customer: buildKlarnaCustomer(address),
+        billingAddress: buildKlarnaAddress(address),
+        shippingAddress: buildKlarnaAddress(address),
+        autoCapture: true
+      };
+
+      const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx.sponsorId || this.state.sponsorId);
+      const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
+      if (!nativeRes || !nativeRes.client_token) {
+        throw new Error("Klarna instant session failed: missing client_token");
       }
-      clientToken = json.clientToken;
-      categories = json.paymentMethodCategories ?? [];
+      if (nativeRes.checkout_id) {
+        ctx.checkoutId = nativeRes.checkout_id;
+        this.state.checkoutId = nativeRes.checkout_id;
+      }
+      clientToken = nativeRes.client_token;
+      categories = nativeRes.payment_method_categories ?? [];
     } catch (err) {
       this.dispatchEvent(
         new CustomEvent("payment-error", {
@@ -5217,29 +5401,31 @@ var CheckoutManager = class extends EventTarget {
     }
     const cfg = Configuration.get();
     try {
-      const res = await fetch(`${cfg.apiBase}/v2/commerce/klarna/orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": cfg.apiKey },
-        body: JSON.stringify({
-          authorizationToken,
-          purchaseCountry: "NO",
-          currency: ctx.currency,
-          locale: "nb-NO",
-          orderAmount: ctx.orderAmount,
-          orderLines: ctx.orderLines
-        })
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? `Klarna order failed (HTTP ${res.status})`);
+      const checkoutId = ctx?.checkoutId || this.state?.checkoutId || String(ctx?.sponsorId || this.state?.sponsorId || 4);
+      const address = this.state?.address;
+      const variables = {
+        checkoutId,
+        authorizationToken,
+        autoCapture: true,
+        billingAddress: buildKlarnaAddress(address),
+        shippingAddress: buildKlarnaAddress(address),
+        customer: buildKlarnaCustomer(address)
+      };
+
+      const json = await executeKlarnaGraphQL(CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx?.sponsorId || this.state?.sponsorId);
+      const confirmRes = json?.data?.Payment?.ConfirmPaymentKlarnaNative;
+      if (!confirmRes) {
+        throw new Error("Klarna order confirmation failed: missing response data");
+      }
+
+      const orderData = confirmRes.order || confirmRes;
       const state = this.state ?? { sponsorId: ctx.sponsorId, subtotal: ctx.orderAmount, currency: ctx.currency };
       this.dispatchEvent(
         new CustomEvent("payment-complete", {
           detail: {
             method: "klarna",
             state,
-            // chargedTotal in MAJOR units (incl. shipping for express) for the
-            // confirmation screen. ctx.orderAmount is minor (øre) → /100.
-            result: { ...result, order: json, chargedTotal: ctx.orderAmount / 100 }
+            result: { ...result, order: orderData, chargedTotal: ctx.orderAmount / 100 }
           }
         })
       );

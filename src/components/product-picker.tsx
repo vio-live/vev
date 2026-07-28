@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SilkeModal, SilkeButton, SilkeBox, SilkeText, SilkeLoader } from "@vev/silke";
-import { loadCatalog, SPONSOR_ID, type CatalogProduct, type Item } from "./vio-helpers";
+import { loadCatalog, getActiveSponsorId, type CatalogProduct, type Item } from "./vio-helpers";
 
 /**
  * Modal product picker — lists the commerce catalog (the products tied to the
@@ -231,7 +231,7 @@ export default function ProductSelect({
           multi={false}
           selectedIds={selectedIds}
           onToggle={(id) => {
-            onChange({ productId: id, sponsorId: SPONSOR_ID });
+            onChange({ productId: id, sponsorId: getActiveSponsorId() });
             setOpen(false);
           }}
           onClose={() => setOpen(false)}
