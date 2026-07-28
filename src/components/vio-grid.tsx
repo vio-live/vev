@@ -3,7 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { fetchVioProducts, SPONSOR_ID } from "./vio-helpers";
+import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
 
 /**
  * Vio Product Grid — a responsive grid of product cards. The editor picks the
@@ -43,12 +43,17 @@ export default function VioProductGrid(props: Props) {
   const { products, kicker, heading, columns = 3, gap = 20 } = props;
 
   const [list, setList] = useState<any[]>([]);
+  const [activeSponsor, setActiveSponsor] = useState(getActiveSponsorId());
   const ids = parseIds(products?.ids);
-  const sponsorId = SPONSOR_ID;
   const idsKey = ids.join(",");
 
   useEffect(() => {
     injectStyles();
+    const handleSponsorChange = (e: Event) => {
+      setActiveSponsor((e as CustomEvent).detail);
+    };
+    window.addEventListener("vio:sponsor-changed", handleSponsorChange);
+    return () => window.removeEventListener("vio:sponsor-changed", handleSponsorChange);
   }, []);
 
   useEffect(() => {
@@ -57,14 +62,14 @@ export default function VioProductGrid(props: Props) {
       return;
     }
     let cancelled = false;
-    fetchVioProducts(ids, sponsorId).then((prods) => {
+    fetchVioProducts(ids, activeSponsor).then((prods) => {
       if (!cancelled) setList(prods);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, sponsorId]);
+  }, [idsKey, activeSponsor]);
 
   const cardConfig = pickCardConfig(props);
   const cols = Math.max(1, Number(columns) || 3);
@@ -92,7 +97,7 @@ export default function VioProductGrid(props: Props) {
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap }}
       >
         {list.map((p, idx) => (
-          <ProductCardFromDTO key={p?.id ?? idx} product={p} sponsorId={sponsorId} config={cardConfig} />
+          <ProductCardFromDTO key={p?.id ?? idx} product={p} sponsorId={activeSponsor} config={cardConfig} />
         ))}
       </div>
     </div>

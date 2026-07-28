@@ -3,7 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { fetchVioProducts, SPONSOR_ID } from "./vio-helpers";
+import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
 
 /**
  * Vio Product Carousel — a horizontal, scroll-snapped row of product cards (like
@@ -87,12 +87,17 @@ export default function VioProductCarousel(props: Props) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [list, setList] = useState<any[]>([]);
 
+  const [activeSponsor, setActiveSponsor] = useState(getActiveSponsorId());
   const ids = parseIds(products?.ids);
-  const sponsorId = SPONSOR_ID;
   const idsKey = ids.join(",");
 
   useEffect(() => {
     injectStyles();
+    const handleSponsorChange = (e: Event) => {
+      setActiveSponsor((e as CustomEvent).detail);
+    };
+    window.addEventListener("vio:sponsor-changed", handleSponsorChange);
+    return () => window.removeEventListener("vio:sponsor-changed", handleSponsorChange);
   }, []);
 
   useEffect(() => {
@@ -101,14 +106,14 @@ export default function VioProductCarousel(props: Props) {
       return;
     }
     let cancelled = false;
-    fetchVioProducts(ids, sponsorId).then((prods) => {
+    fetchVioProducts(ids, activeSponsor).then((prods) => {
       if (!cancelled) setList(prods);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, sponsorId]);
+  }, [idsKey, activeSponsor]);
 
   const cardConfig = pickCardConfig(props);
   const perView = Math.max(1, Number(visible) || 4);
@@ -151,7 +156,7 @@ export default function VioProductCarousel(props: Props) {
         <div className="vio-carousel-track" ref={trackRef} style={{ gap }}>
           {list.map((p, idx) => (
             <div key={p?.id ?? idx} className="vio-carousel-item" style={{ width: itemWidth }}>
-              <ProductCardFromDTO product={p} sponsorId={sponsorId} config={cardConfig} />
+              <ProductCardFromDTO product={p} sponsorId={activeSponsor} config={cardConfig} />
             </div>
           ))}
         </div>

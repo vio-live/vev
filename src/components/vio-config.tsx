@@ -1,7 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { registerVevComponent, useEditorState } from "@vev/react";
+import { SilkeBox, SilkeButton } from "@vev/silke";
 import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
+import {
+  clearPersistedApiKey,
+  DEFAULT_API_BASE,
+  DEFAULT_API_KEY,
+  DEFAULT_GQL_BASE,
+  persistApiKey,
+  resolveApiKey,
+  setRuntimeApiKey,
+  resetCatalogCache,
+  persistSponsorId,
+} from "./vio-helpers";
 
 /**
  * Vio Configuration — the ONLY setup block. Wraps the real vio-web-sdk:
@@ -13,21 +25,15 @@ import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
  * Place ONE of these + your product blocks/addons.
  */
 
-// Ready-to-go defaults: URLs + Vio API key (host) + Stripe publishable key are
-// pre-filled so dropping the block needs zero config. The COMMERCE key is NOT
-// hardcoded — it is dynamic, resolved by bootstrap (sponsor.commerce.apiKey).
-const DEFAULT_API_KEY = "vg-demo_api_key_57a3038c06434330";
-const DEFAULT_API_BASE = "https://api-staging.vio.live";
-const DEFAULT_GQL_BASE = "https://graph-ql-dev.vio.live";
+// Ready-to-go defaults: URLs + Stripe publishable key are pre-filled so dropping
+// the block needs zero config. The host API key comes from the Vev prop / panel
+// (dynamic). The commerce key is resolved by bootstrap (sponsor.commerce.apiKey).
 // Stripe PUBLISHABLE key (public, safe in the bundle). Enables card + Apple Pay.
 // Apple Pay also requires registering the article domain in this Stripe account.
 const DEFAULT_STRIPE_PK =
   "pk_test_51TMTbsECwcLH8wcPAkKSPs0GtSap2rLexnYFQ2PP8j07RLNCO9It5r4SR0RbU5jJ5gxtd7GMCJ5HlK9K77dQLhCr00DdDSr23y";
 
 type Status = "connecting" | "connected" | "error" | "disconnected";
-
-// Panel-saved API key persists here (per browser), overriding the prop default.
-const STORAGE_KEY = "vio.apiKey";
 
 const CONFIG_STYLE_ID = "vio-config-styles";
 function injectConfigStyles() {
@@ -83,6 +89,7 @@ type Props = {
   apiBase?: string;
   graphQLBase?: string;
   stripePublishableKey?: string;
+  sponsorId?: number;
   // Cart button (floating action button).
   cartButton?: boolean;
   cartPosition?: string; // bottom-right | bottom-left | top-right | top-left
@@ -97,6 +104,7 @@ export default function VioConfig({
   apiBase,
   graphQLBase,
   stripePublishableKey,
+  sponsorId,
   cartButton = true,
   cartPosition = "bottom-right",
   cartIcon = "bag",
@@ -119,27 +127,33 @@ export default function VioConfig({
   const resolvedBase = apiBase || DEFAULT_API_BASE;
   const resolvedGql = graphQLBase || DEFAULT_GQL_BASE;
   const resolvedStripe = stripePublishableKey || DEFAULT_STRIPE_PK;
-  // Key precedence: a key saved from the panel (localStorage) wins over the prop
-  // default, so "Save" persists across reloads. The prop stays the shipped default.
-  const storedKey =
-    typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-  const resolvedKey = storedKey || apiKey || DEFAULT_API_KEY;
+  const resolvedKey = resolveApiKey(apiKey);
 
   // Connection panel state.
-  const [apiKeyInput, setApiKeyInput] = useState(resolvedKey);
   const [status, setStatus] = useState<Status>("connecting");
   const [statusMsg, setStatusMsg] = useState("");
+  const [primarySponsorId, setPrimarySponsorId] = useState<number | null>(() => {
+    return (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ || null;
+  });
 
   const connect = useCallback(
     async (key: string) => {
       if (!key) {
         setStatus("disconnected");
         setStatusMsg("");
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem("vio.sponsors");
+          localStorage.removeItem("vio.sponsorId");
+        }
+        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
+        setPrimarySponsorId(null);
+        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
         return;
       }
       setStatus("connecting");
       setStatusMsg("");
       try {
+        setRuntimeApiKey(key);
         Vio.init({
           apiKey: key,
           environment: "development",
@@ -148,47 +162,37 @@ export default function VioConfig({
           stripePublishableKey: resolvedStripe,
         });
         const boot = await Vio.bootstrap();
+        
+        const b = boot as any;
+        const primary = b.primarySponsor;
+        const secondaries = b.secondarySponsors || [];
+        const sponsorList = [
+          { id: primary.id, name: primary.name, isPrimary: true },
+          ...secondaries.map((s: any) => ({ id: s.id, name: s.name, isPrimary: false }))
+        ];
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("vio.sponsors", JSON.stringify(sponsorList));
+        }
+        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = primary.id;
+        setPrimarySponsorId(primary.id);
+        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: sponsorList }));
+
         setStatus("connected");
-        setStatusMsg((boot as any)?.primarySponsor?.name ?? "");
+        setStatusMsg(primary?.name ?? "");
       } catch (e: any) {
         setStatus("error");
         setStatusMsg(e?.message ?? "Connection failed");
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem("vio.sponsors");
+          localStorage.removeItem("vio.sponsorId");
+        }
+        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
+        setPrimarySponsorId(null);
+        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
       }
     },
     [resolvedBase, resolvedGql, resolvedStripe]
   );
-
-  // Save: persist the typed key, then (re)connect with it.
-  const onSave = useCallback(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, apiKeyInput.trim());
-    } catch {
-      /* noop */
-    }
-    void connect(apiKeyInput.trim());
-  }, [apiKeyInput, connect]);
-
-  // Disconnect: drop the saved key and clear the cached bootstrap.
-  const onDisconnect = useCallback(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      /* noop */
-    }
-    setStatus("disconnected");
-    setStatusMsg("");
-    try {
-      Vio.init({
-        apiKey: "",
-        environment: "development",
-        apiBase: resolvedBase,
-        graphQLBase: resolvedGql,
-        stripePublishableKey: resolvedStripe,
-      });
-    } catch {
-      /* noop */
-    }
-  }, [resolvedBase, resolvedGql, resolvedStripe]);
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
   useEffect(() => {
@@ -205,9 +209,17 @@ export default function VioConfig({
   // Connect on mount and whenever the prop key changes (owner only).
   useEffect(() => {
     if (!isOwner) return;
-    setApiKeyInput(resolvedKey);
     void connect(resolvedKey);
   }, [isOwner, resolvedKey, connect]);
+
+  // Set the dynamic runtime sponsor ID and notify listeners
+  const resolvedSponsorId = sponsorId || primarySponsorId || 4;
+  useEffect(() => {
+    (globalThis as any).__VIO_SPONSOR_ID__ = resolvedSponsorId;
+    persistSponsorId(resolvedSponsorId);
+    resetCatalogCache();
+    window.dispatchEvent(new CustomEvent("vio:sponsor-changed", { detail: resolvedSponsorId }));
+  }, [resolvedSponsorId]);
 
   // Cart badge count.
   useEffect(() => {
@@ -283,9 +295,12 @@ export default function VioConfig({
         borderRadius: 10,
         padding: 14,
         boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
+        pointerEvents: "none",
+        position: "relative",
+        zIndex: 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span
           style={{
             width: 9,
@@ -311,71 +326,8 @@ export default function VioConfig({
           </span>
         ) : null}
       </div>
-
-      <label
-        style={{
-          display: "block",
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          opacity: 0.55,
-          marginBottom: 4,
-        }}
-      >
-        Vio API key
-      </label>
-      <input
-        value={apiKeyInput}
-        onChange={(e) => setApiKeyInput(e.target.value)}
-        placeholder="vg-demo_api_key_…"
-        spellCheck={false}
-        style={{
-          boxSizing: "border-box",
-          width: "100%",
-          padding: "8px 10px",
-          fontSize: 13,
-          fontFamily: "ui-monospace, Menlo, monospace",
-          border: "1px solid #ddd",
-          borderRadius: 6,
-          outline: "none",
-          background: "#fafafa",
-        }}
-      />
-
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button
-          type="button"
-          onClick={onSave}
-          style={{
-            flex: 1,
-            padding: "9px 12px",
-            fontSize: 13,
-            fontWeight: 600,
-            color: "#fff",
-            background: "#0a0a0a",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={onDisconnect}
-          style={{
-            padding: "9px 12px",
-            fontSize: 13,
-            fontWeight: 600,
-            color: "#dc2626",
-            background: "#fff",
-            border: "1px solid #eab8b8",
-            borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          Disconnect
-        </button>
+      <div style={{ fontSize: 11, color: "#666", lineHeight: 1.4 }}>
+        Configure the Vio API Key and options in the Properties panel on the right.
       </div>
     </div>
   );
@@ -447,8 +399,160 @@ export default function VioConfig({
   return (
     <>
       {disabled ? panel : null}
-      {createPortal(overlays, document.body)}
+      {!disabled ? createPortal(overlays, document.body) : null}
     </>
+  );
+}
+
+type ApiKeyEditorProps = {
+  value?: string;
+  onChange: (value: string) => void;
+};
+
+export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
+  const [localKey, setLocalKey] = useState(value || "");
+
+  useEffect(() => {
+    setLocalKey(value || "");
+  }, [value]);
+
+  const handleSave = () => {
+    const key = localKey.trim();
+    persistApiKey(key);
+    setRuntimeApiKey(key);
+    onChange(key);
+  };
+
+  const handleClear = () => {
+    clearPersistedApiKey();
+    setRuntimeApiKey("");
+    setLocalKey("");
+    onChange("");
+  };
+
+  return (
+    <SilkeBox column gap="s" style={{ width: "100%" }}>
+      <input
+        value={localKey}
+        onChange={(e: any) => setLocalKey(e.target.value)}
+        placeholder="vg-demo_api_key_…"
+        spellCheck={false}
+        style={{
+          boxSizing: "border-box",
+          width: "100%",
+          padding: "8px 10px",
+          fontSize: 13,
+          fontFamily: "ui-monospace, Menlo, monospace",
+          color: "#0a0a0a",
+          border: "1px solid #ddd",
+          borderRadius: 6,
+          outline: "none",
+          background: "#fafafa",
+        }}
+      />
+      <SilkeBox gap="xs" style={{ width: "100%" }}>
+        <SilkeButton
+          label="Save & Connect"
+          size="s"
+          kind="primary"
+          onClick={handleSave}
+          style={{ flex: 1 }}
+        />
+        {value ? (
+          <SilkeButton
+            label="Disconnect"
+            size="s"
+            kind="secondary"
+            onClick={handleClear}
+          />
+        ) : null}
+      </SilkeBox>
+    </SilkeBox>
+  );
+}
+
+type SponsorSelectorProps = {
+  value?: number;
+  onChange: (value: number) => void;
+};
+
+type SponsorItem = {
+  id: number;
+  name: string;
+  isPrimary: boolean;
+};
+
+export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
+  const [sponsors, setSponsors] = useState<SponsorItem[]>([]);
+
+  useEffect(() => {
+    const listStr = typeof localStorage !== "undefined" ? localStorage.getItem("vio.sponsors") : null;
+    if (listStr) {
+      try {
+        setSponsors(JSON.parse(listStr));
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    console.log("1")
+
+    const handleSponsorsUpdate = (e: any) => {
+    console.log("2")
+      const detail = e.detail || [];
+      setSponsors(detail);
+    };
+    window.addEventListener("vio:sponsors-updated", handleSponsorsUpdate);
+    return () => {
+      window.removeEventListener("vio:sponsors-updated", handleSponsorsUpdate);
+    };
+  }, []);
+
+  // Auto-select primary sponsor by default if no value is set
+  useEffect(() => {
+      console.log("1 Auto-select primary sponsor by default if no value is set")
+    if (!value && sponsors.length > 0) {
+      console.log("2 Auto-select primary sponsor by default if no value is set")
+      const primary = sponsors.find((s: any) => s.isPrimary);
+      if (primary) {
+        onChange(primary.id);
+      }
+    }
+  }, [value, sponsors, onChange]);
+
+  if (sponsors.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: "#777", fontStyle: "italic", padding: "4px 0" }}>
+        Connect API Key to select sponsor
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={value || ""}
+      onChange={(e: any) => onChange(Number(e.target.value))}
+      style={{
+        boxSizing: "border-box",
+        width: "100%",
+        padding: "8px 10px",
+        fontSize: 13,
+        border: "1px solid #ddd",
+        borderRadius: 6,
+        background: "#fafafa",
+        outline: "none",
+        color: "#0a0a0a",
+      }}
+    >
+      <option value="" disabled>Select a sponsor...</option>
+      {sponsors.map((s: any) => (
+        <option key={s.id} value={s.id}>
+          {s.name} {s.isPrimary ? "(Primary)" : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -456,7 +560,19 @@ registerVevComponent(VioConfig, {
   name: "Vio Config (SDK)",
   size: { width: 320, height: "auto" },
   props: [
-    { name: "apiKey", title: "Vio API Key", type: "string", initialValue: DEFAULT_API_KEY },
+    {
+      name: "apiKey",
+      title: "Vio API Key",
+      type: "string",
+      initialValue: DEFAULT_API_KEY,
+      component: VioApiKeyEditor as any,
+    },
+    {
+      name: "sponsorId",
+      title: "Active Sponsor",
+      type: "number",
+      component: VioSponsorSelector as any,
+    },
     { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
     { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },
     { name: "stripePublishableKey", title: "Stripe PK", type: "string", initialValue: DEFAULT_STRIPE_PK },
