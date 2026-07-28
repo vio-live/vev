@@ -1,3 +1,28 @@
+import {
+  createCart as gqlCreateCart,
+  addItem as gqlAddItem,
+  deleteItem as gqlDeleteItem,
+  updateItem as gqlUpdateItem,
+  getCart as gqlGetCart,
+  getLineItemsBySupplier as gqlGetLineItemsBySupplier,
+  updateShippingsBySupplier as gqlUpdateShippingsBySupplier,
+  createCheckout as gqlCreateCheckout,
+  updateCheckout as gqlUpdateCheckout,
+  getCheckout as gqlGetCheckout,
+  getAvailablePaymentMethods as gqlGetAvailablePaymentMethods,
+  CREATE_CART_MUTATION,
+  ADD_ITEM_MUTATION,
+  DELETE_ITEM_MUTATION,
+  UPDATE_ITEM_MUTATION,
+  GET_CART_QUERY,
+  GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
+  UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
+  CREATE_CHECKOUT_MUTATION,
+  UPDATE_CHECKOUT_MUTATION,
+  GET_CHECKOUT_QUERY,
+  GET_AVAILABLE_PAYMENT_METHODS_QUERY
+} from "./cart-queries.js";
+
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __decorateClass = (decorators, target, key, kind) => {
@@ -4033,6 +4058,35 @@ function primaryImageUrl(product) {
   return product.images[0]?.url;
 }
 
+function getCartGraphQLOptions(sponsorId) {
+  const cfg = Configuration.isInitialized ? Configuration.get() : {
+    apiBase: "https://api-dev.vio.live",
+    graphQLBase: "https://graph-ql-dev.vio.live"
+  };
+  let commerceKey = cfg.apiKey;
+  if (sponsorId && typeof Vio !== "undefined" && typeof Vio.findSponsor === "function") {
+    const sponsor = Vio.findSponsor(sponsorId);
+    if (sponsor?.commerce?.apiKey) {
+      commerceKey = sponsor.commerce.apiKey;
+    }
+  }
+  return {
+    endpoint: cfg.graphQLBase || "https://graph-ql-dev.vio.live",
+    apiKey: cfg.apiKey,
+    commerceKey
+  };
+}
+
+function getCustomerSessionId() {
+  if (typeof localStorage === "undefined") return "cs_session_default";
+  let id = localStorage.getItem("vio.customer_session_id.v1");
+  if (!id) {
+    id = "cs_" + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+    localStorage.setItem("vio.customer_session_id.v1", id);
+  }
+  return id;
+}
+
 // src/core/cart/cart-manager.ts
 var STORAGE_KEY = "vio.cart.v1";
 function lineId() {
@@ -4043,6 +4097,64 @@ var CartManager = class extends EventTarget {
     super();
     this.cartsBySponsor = this.loadFromStorage();
   }
+
+  async ensureCartId(sponsorId, currency = "NOK", shippingCountry = 'NO') {
+    let cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart) {
+      cart = {
+        sponsorId,
+        items: [],
+        currency
+      };
+      this.cartsBySponsor.set(sponsorId, cart);
+    }
+    if (!cart.cartId) {
+      const opts = getCartGraphQLOptions(sponsorId);
+      const customerSessionId = getCustomerSessionId();
+      try {
+        const backendCart = await gqlCreateCart(customerSessionId, currency, shippingCountry, opts);
+        if (backendCart?.cart_id) {
+          cart.cartId = backendCart.cart_id;
+          this.updateFromBackendCart(sponsorId, backendCart);
+        }
+      } catch (err) {
+        console.warn("[CartManager] createCart failed:", err);
+      }
+    }
+    return cart.cartId;
+  }
+
+  updateFromBackendCart(sponsorId, backendCart) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart) return;
+    if (backendCart.cart_id) cart.cartId = backendCart.cart_id;
+    if (backendCart.currency) cart.currency = backendCart.currency;
+    if (backendCart.shipping_country) cart.shippingCountry = backendCart.shipping_country;
+    if (backendCart.subtotal != null) cart.subtotal = backendCart.subtotal;
+    if (backendCart.shipping != null) cart.shipping = backendCart.shipping;
+    if (backendCart.available_shipping_countries) cart.availableShippingCountries = backendCart.available_shipping_countries;
+
+    if (Array.isArray(backendCart.line_items)) {
+      cart.items = backendCart.line_items.map((li) => ({
+        id: li.id,
+        cartItemId: li.id,
+        productId: li.product_id,
+        sponsorId,
+        variantId: li.variant_id,
+        brand: li.brand || "",
+        name: li.title ? (li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title) : "",
+        unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? 0,
+        currency: li.price?.currency_code || backendCart.currency,
+        imageUrl: li.image?.url || "",
+        quantity: li.quantity,
+        shipping: li.shipping,
+        availableShippings: li.available_shippings
+      }));
+    }
+    this.persist();
+    this.emit();
+  }
+
   // MARK: - Mutations
   /** Add a Product DTO to a sponsor's cart. Bumps quantity if already present.
    * When a variantId is given, the line uses the VARIANT's price / image / title
@@ -4086,56 +4198,134 @@ var CartManager = class extends EventTarget {
     );
     if (existing) {
       existing.quantity += qty;
-      this.persist();
-      this.emit();
-      return existing;
+    } else {
+      const item = {
+        id: lineId(),
+        productId: opts.productId,
+        sponsorId: opts.sponsorId,
+        variantId: opts.variantId,
+        brand: opts.brand,
+        name: opts.name,
+        unitPrice: opts.unitPrice,
+        currency: opts.currency,
+        imageUrl: opts.imageUrl,
+        quantity: qty
+      };
+      cart.items.push(item);
     }
-    const item = {
-      id: lineId(),
-      productId: opts.productId,
-      sponsorId: opts.sponsorId,
-      variantId: opts.variantId,
-      brand: opts.brand,
-      name: opts.name,
-      unitPrice: opts.unitPrice,
-      currency: opts.currency,
-      imageUrl: opts.imageUrl,
-      quantity: qty
-    };
-    cart.items.push(item);
     this.persist();
     this.emit();
-    return item;
+
+    const addedItem = existing || cart.items[cart.items.length - 1];
+
+    // Async sync with GraphQL backend
+    (async () => {
+      try {
+        const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || "NOK");
+        if (cartId) {
+          const gqlOpts = getCartGraphQLOptions(opts.sponsorId);
+          const lineItemsInput = [
+            {
+              product_id: Number(opts.productId || 0),
+              quantity: qty,
+              variant_id: opts.variantId ? Number(opts.variantId) : null
+            }
+          ];
+          const resCart = await gqlAddItem(cartId, lineItemsInput, gqlOpts);
+          if (resCart && Array.isArray(resCart.line_items)) {
+            this.updateFromBackendCart(opts.sponsorId, resCart);
+          }
+        }
+      } catch (err) {
+        console.warn("[CartManager] GraphQL AddItem failed:", err);
+      }
+    })();
+
+    return addedItem;
   }
+
   updateQuantity(lineItemId, sponsorId, quantity) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
-    const item = cart.items.find((i5) => i5.id === lineItemId);
+    const item = cart.items.find((i5) => i5.id === lineItemId || i5.cartItemId === lineItemId);
     if (!item) return;
+    const targetItemId = item.cartItemId || item.id;
     if (quantity <= 0) {
-      cart.items = cart.items.filter((i5) => i5.id !== lineItemId);
+      cart.items = cart.items.filter((i5) => i5 !== item);
     } else {
       item.quantity = quantity;
     }
     if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
     this.persist();
     this.emit();
+
+    if (cart && cart.cartId) {
+      const gqlOpts = getCartGraphQLOptions(sponsorId);
+      (async () => {
+        try {
+          let resCart;
+          if (quantity <= 0) {
+            resCart = await gqlDeleteItem(cart.cartId, targetItemId, gqlOpts);
+          } else {
+            resCart = await gqlUpdateItem(cart.cartId, targetItemId, null, quantity, gqlOpts);
+          }
+          if (resCart && Array.isArray(resCart.line_items)) {
+            this.updateFromBackendCart(sponsorId, resCart);
+          }
+        } catch (err) {
+          console.warn("[CartManager] GraphQL Update/DeleteItem failed:", err);
+        }
+      })();
+    }
   }
+
   removeItem(lineItemId, sponsorId) {
     this.updateQuantity(lineItemId, sponsorId, 0);
   }
+
   clearSponsorCart(sponsorId) {
     if (this.cartsBySponsor.delete(sponsorId)) {
       this.persist();
       this.emit();
     }
   }
+
   clearAllCarts() {
     if (this.cartsBySponsor.size === 0) return;
     this.cartsBySponsor.clear();
     this.persist();
     this.emit();
   }
+
+  async fetchCartFromBackend(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart?.cartId) return null;
+    const gqlOpts = getCartGraphQLOptions(sponsorId);
+    const resCart = await gqlGetCart(cart.cartId, gqlOpts);
+    if (resCart) {
+      this.updateFromBackendCart(sponsorId, resCart);
+    }
+    return resCart;
+  }
+
+  async fetchLineItemsBySupplier(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart?.cartId) return null;
+    const gqlOpts = getCartGraphQLOptions(sponsorId);
+    return await gqlGetLineItemsBySupplier(cart.cartId, gqlOpts);
+  }
+
+  async updateShippingsBySupplier(sponsorId, data) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart?.cartId) return null;
+    const gqlOpts = getCartGraphQLOptions(sponsorId);
+    const resCart = await gqlUpdateShippingsBySupplier(cart.cartId, data, gqlOpts);
+    if (resCart && Array.isArray(resCart.line_items)) {
+      this.updateFromBackendCart(sponsorId, resCart);
+    }
+    return resCart;
+  }
+
   // MARK: - Read accessors
   getAllCarts() {
     return new Map(this.cartsBySponsor);
@@ -4837,6 +5027,22 @@ function buildKlarnaAddress(address) {
   };
 }
 
+function resolveHttpsReturnUrl(overrideUrl) {
+  let url = overrideUrl;
+  if (!url && typeof window !== "undefined" && window.location) {
+    url = window.location.href;
+  }
+  if (!url || typeof url !== "string" || url.startsWith("about:") || url.startsWith("file:")) {
+    return "https://vev.design/checkout/confirmation";
+  }
+  if (url.startsWith("http://")) {
+    url = "https://" + url.slice(7);
+  } else if (!url.startsWith("https://")) {
+    url = "https://" + url.replace(/^[a-zA-Z]+:\/\//, "");
+  }
+  return url;
+}
+
 async function executeKlarnaGraphQL(query, variables, sponsorId) {
   const cfg = Configuration.get();
   const endpoint = cfg.graphQLBase || "https://graph-ql-dev.vio.live";
@@ -4895,6 +5101,72 @@ var CheckoutManager = class extends EventTarget {
     this.klarnaAvailableCache = null;
     this.emit();
   }
+  async createCheckout(sponsorId) {
+    const cart = this.cartManager.getCart(sponsorId);
+    let cartId = cart?.cartId;
+    if (!cartId) {
+      cartId = await this.cartManager.ensureCartId(sponsorId, cart?.currency || "NOK");
+      if (!cartId) {
+        throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${sponsorId}`);
+      }
+    }
+    const opts = getCartGraphQLOptions(sponsorId);
+    const checkout = await gqlCreateCheckout(cartId, opts);
+    if (checkout?.id) {
+      this.state = {
+        ...(this.state || {}),
+        sponsorId,
+        checkoutId: checkout.id,
+        checkout
+      };
+      this.emit();
+      try {
+        const updated = await gqlUpdateCheckout({
+          checkoutId: checkout.id,
+          buyerAcceptsPurchaseConditions: true,
+          buyerAcceptsTermsConditions: true
+        }, opts);
+        if (updated?.id) {
+          this.state.checkout = updated;
+          this.emit();
+          return updated;
+        }
+      } catch (err) {
+        console.warn("[CheckoutManager] Failed to auto-accept terms & purchase conditions:", err);
+      }
+    }
+    return checkout;
+  }
+
+  async updateCheckout(variables, sponsorId) {
+    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
+    const fullVars = {
+      buyerAcceptsPurchaseConditions: true,
+      buyerAcceptsTermsConditions: true,
+      ...variables
+    };
+    const updated = await gqlUpdateCheckout(fullVars, opts);
+    if (updated?.id) {
+      this.state = {
+        ...(this.state || {}),
+        checkoutId: updated.id,
+        checkout: updated
+      };
+      this.emit();
+    }
+    return updated;
+  }
+
+  async getCheckout(checkoutId, sponsorId) {
+    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
+    return await gqlGetCheckout(checkoutId, opts);
+  }
+
+  async getAvailablePaymentMethods(sponsorId) {
+    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
+    return await gqlGetAvailablePaymentMethods(opts);
+  }
+
   setAddress(address) {
     if (!this.state) return;
     this.state = { ...this.state, address };
@@ -5163,14 +5435,28 @@ var CheckoutManager = class extends EventTarget {
     const cfg = Configuration.get();
     const { ctx, shippingOptions } = opts?.withShipping ? this.buildKlarnaInstantContext(opts.shippingId) : { ctx: this.buildKlarnaPendingContext(), shippingOptions: void 0 };
     
-    const checkoutId = ctx.checkoutId || this.state.checkoutId || String(ctx.sponsorId || this.state.sponsorId || 4);
-    const address = this.state.address;
+    const sponsorId = ctx.sponsorId || this.state?.sponsorId || 4;
+    let checkoutId = ctx.checkoutId || this.state?.checkoutId;
+    try {
+      const checkoutRes = await this.createCheckout(sponsorId);
+      if (checkoutRes?.id) {
+        checkoutId = checkoutRes.id;
+        ctx.checkoutId = checkoutRes.id;
+      }
+    } catch (err) {
+      console.warn("[CheckoutManager] CreateCheckout before Klarna init failed:", err);
+    }
+    if (!checkoutId) {
+      checkoutId = String(sponsorId);
+    }
+
+    const address = this.state?.address;
     const variables = {
       checkoutId,
       countryCode: "NO",
       currency: ctx.currency || "NOK",
       locale: "nb-NO",
-      returnUrl: typeof window !== "undefined" ? window.location.href : null,
+      returnUrl: resolveHttpsReturnUrl(),
       intent: "buy",
       customer: buildKlarnaCustomer(address),
       billingAddress: buildKlarnaAddress(address),
@@ -5178,7 +5464,7 @@ var CheckoutManager = class extends EventTarget {
       autoCapture: true
     };
 
-    const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx.sponsorId || this.state.sponsorId);
+    const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
     const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
     if (!nativeRes || !nativeRes.client_token) {
       throw new Error("Klarna session creation failed: missing client_token");
@@ -5188,9 +5474,18 @@ var CheckoutManager = class extends EventTarget {
       ctx.checkoutId = nativeRes.checkout_id;
       this.state.checkoutId = nativeRes.checkout_id;
     }
+    if (nativeRes.session_id) {
+      ctx.sessionId = nativeRes.session_id;
+      this.state.sessionId = nativeRes.session_id;
+    }
+    if (nativeRes.client_token) {
+      ctx.clientToken = nativeRes.client_token;
+      this.state.clientToken = nativeRes.client_token;
+    }
 
     const widget = await createKlarnaPaymentsWidget({
       clientToken: nativeRes.client_token,
+      sessionId: nativeRes.session_id,
       categories: nativeRes.payment_method_categories ?? [],
       container
     });
@@ -5266,14 +5561,28 @@ var CheckoutManager = class extends EventTarget {
     let clientToken;
     let categories;
     try {
-      const checkoutId = ctx.checkoutId || this.state.checkoutId || String(ctx.sponsorId || this.state.sponsorId || 4);
-      const address = this.state.address;
+      const sponsorId = ctx.sponsorId || this.state?.sponsorId || 4;
+      let checkoutId = ctx.checkoutId || this.state?.checkoutId;
+      try {
+        const checkoutRes = await this.createCheckout(sponsorId);
+        if (checkoutRes?.id) {
+          checkoutId = checkoutRes.id;
+          ctx.checkoutId = checkoutRes.id;
+        }
+      } catch (err) {
+        console.warn("[CheckoutManager] CreateCheckout before Klarna instant failed:", err);
+      }
+      if (!checkoutId) {
+        checkoutId = String(sponsorId);
+      }
+
+      const address = this.state?.address;
       const variables = {
         checkoutId,
         countryCode: "NO",
         currency: ctx.currency || "NOK",
         locale: "nb-NO",
-        returnUrl: typeof window !== "undefined" ? window.location.href : null,
+        returnUrl: resolveHttpsReturnUrl(),
         intent: "buy",
         customer: buildKlarnaCustomer(address),
         billingAddress: buildKlarnaAddress(address),
@@ -5281,7 +5590,7 @@ var CheckoutManager = class extends EventTarget {
         autoCapture: true
       };
 
-      const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx.sponsorId || this.state.sponsorId);
+      const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
       const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
       if (!nativeRes || !nativeRes.client_token) {
         throw new Error("Klarna instant session failed: missing client_token");
@@ -5289,6 +5598,14 @@ var CheckoutManager = class extends EventTarget {
       if (nativeRes.checkout_id) {
         ctx.checkoutId = nativeRes.checkout_id;
         this.state.checkoutId = nativeRes.checkout_id;
+      }
+      if (nativeRes.session_id) {
+        ctx.sessionId = nativeRes.session_id;
+        this.state.sessionId = nativeRes.session_id;
+      }
+      if (nativeRes.client_token) {
+        ctx.clientToken = nativeRes.client_token;
+        this.state.clientToken = nativeRes.client_token;
       }
       clientToken = nativeRes.client_token;
       categories = nativeRes.payment_method_categories ?? [];
@@ -5305,7 +5622,7 @@ var CheckoutManager = class extends EventTarget {
     container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
     document.body.appendChild(container);
     try {
-      const widget = await createKlarnaPaymentsWidget({ clientToken, categories, container });
+      const widget = await createKlarnaPaymentsWidget({ clientToken, sessionId: ctx.sessionId, categories, container });
       await widget.load();
       const token = await widget.authorize();
       await this.completeKlarnaOrder(token, ctx, { authorizationToken: token });
@@ -7792,6 +8109,7 @@ var VioCart = class extends i4 {
     this.itemCount = 0;
     this.applePayAvailable = false;
     this.confirmedOrder = null;
+    this.availableMethods = [];
     /** Pre-resolved Apple Pay handle; `show()` fires the sheet synchronously. */
     this.applePayHandle = null;
     /** Cart total Apple Pay was last prepared for (avoids redundant prep). */
@@ -7800,6 +8118,7 @@ var VioCart = class extends i4 {
       const detail = e7.detail;
       this.carts = detail.cartsBySponsor;
       this.itemCount = detail.itemCount;
+      this.loadAvailablePaymentMethods();
     };
   }
   static {
@@ -8052,6 +8371,26 @@ var VioCart = class extends i4 {
       letter-spacing: -0.02em;
       line-height: 1;
     }
+    .stripe-btn {
+      width: 100%;
+      padding: 15px;
+      margin-bottom: 10px;
+      background: #635bff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: var(--vio-font-sans, -apple-system, sans-serif);
+      transition: background 0.15s;
+    }
+    .stripe-btn:hover { background: #5248ff; }
+    .stripe-btn .stripe-logo { height: 20px; width: auto; display: inline-block; filter: brightness(0) invert(1); }
 
     /* In-drawer confirmation after Apple Pay (nothing else is shown). */
     .confirm {
@@ -8126,6 +8465,7 @@ var VioCart = class extends i4 {
     this.carts = Vio.cart.getAllCarts();
     this.itemCount = Vio.cart.itemCount;
     Vio.cart.addEventListener("change", this.boundOnCartChange);
+    void this.loadAvailablePaymentMethods();
   }
   disconnectedCallback() {
     Vio.cart.removeEventListener("change", this.boundOnCartChange);
@@ -8136,6 +8476,36 @@ var VioCart = class extends i4 {
   }
   show() {
     this.open = true;
+    void this.loadAvailablePaymentMethods();
+  }
+  async loadAvailablePaymentMethods() {
+    console.log("[VioCart] loadAvailablePaymentMethods INIT");
+    const firstSponsorId = [...this.carts.keys()][0] ?? (globalThis.__VIO_SPONSOR_ID__ ?? 4);
+    try {
+      console.log("[VioCart] loadAvailablePaymentMethods inside");
+      const methods = await Vio.checkout.getAvailablePaymentMethods(firstSponsorId);
+      console.log("[VioCart] loadAvailablePaymentMethods methods", methods);
+      if (Array.isArray(methods)) {
+        this.availableMethods = methods.map(m => m.name);
+      } else {
+        this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+      }
+    } catch (err) {
+      console.warn("[VioCart] Failed to load payment methods:", err);
+      this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+    }
+  }
+  onStripe() {
+    if (this.itemCount === 0) return;
+    const firstSponsorId = [...this.carts.keys()][0];
+    if (firstSponsorId === void 0) return;
+    this.dispatchEvent(
+      new CustomEvent("vio:checkout-open", {
+        bubbles: true,
+        composed: true,
+        detail: { sponsorId: firstSponsorId, paymentMethod: "stripe", express: false }
+      })
+    );
   }
   updated(changed) {
     if (changed.has("open") && this.open) {
@@ -8340,25 +8710,43 @@ var VioCart = class extends i4 {
                         Apple Pay
                       </button>
                     ` : ""}
-                <button
-                  class="klarna-btn"
-                  @click=${this.onKlarnaExpress}
-                  aria-label="Betal med Klarna"
-                >
-                  Kjøp med
-                  <img
-                    class="klarna-logo"
-                    src="https://x.klarnacdn.net/payment-method/assets/badges/generic/klarna.svg"
-                    alt="Klarna"
-                  />
-                </button>
-                <button
-                  class="vipps-btn"
-                  @click=${this.onVipps}
-                  aria-label="Betal med Vipps"
-                >
-                  <span class="vipps-logo">vipps</span>
-                </button>
+                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "stripe")) ? b2`
+                      <button
+                        class="stripe-btn"
+                        @click=${this.onStripe}
+                        aria-label="Betal med Stripe"
+                      >
+                        <img
+                          class="stripe-logo"
+                          src="vio-sdk/assets/stripe-blurple.svg"
+                          alt="Stripe"
+                          style="height: 20px; display: block;"
+                        />
+                      </button>
+                    ` : ""}
+                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "klarna")) ? b2`
+                      <button
+                        class="klarna-btn"
+                        @click=${this.onKlarnaExpress}
+                        aria-label="Betal med Klarna"
+                      >
+                        Kjøp med
+                        <img
+                          class="klarna-logo"
+                          src="https://x.klarnacdn.net/payment-method/assets/badges/generic/klarna.svg"
+                          alt="Klarna"
+                        />
+                      </button>
+                    ` : ""}
+                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "vipps")) ? b2`
+                      <button
+                        class="vipps-btn"
+                        @click=${this.onVipps}
+                        aria-label="Betal med Vipps"
+                      >
+                        <span class="vipps-logo">vipps</span>
+                      </button>
+                    ` : ""}
               </div>
             `}
       </aside>
@@ -8415,6 +8803,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioCart.prototype, "confirmedOrder", 2);
+__decorateClass([
+  r5()
+], VioCart.prototype, "availableMethods", 2);
 
 // src/ui/components/vio-checkout.ts
 var VioCheckout = class extends i4 {
@@ -8433,6 +8824,7 @@ var VioCheckout = class extends i4 {
     this.confirmedMethod = null;
     this.paymentError = null;
     this.confirmedOrder = null;
+    this.availableMethods = [];
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
     this.klarnaMountedAmount = null;
@@ -8457,6 +8849,7 @@ var VioCheckout = class extends i4 {
       if (this.checkoutState) {
         this.refreshApplePay();
         this.refreshKlarna();
+        this.loadAvailablePaymentMethods();
       } else {
         this.applePayAvailable = false;
         this.klarnaAvailable = false;
@@ -8465,6 +8858,7 @@ var VioCheckout = class extends i4 {
         this.confirmedOrder = null;
         this.paymentError = null;
         this.express = false;
+        this.availableMethods = [];
         this.unmountKlarna();
       }
     };
@@ -8955,6 +9349,7 @@ var VioCheckout = class extends i4 {
     if (this.checkoutState) {
       void this.refreshApplePay();
       void this.refreshKlarna();
+      void this.loadAvailablePaymentMethods();
     }
   }
   disconnectedCallback() {
@@ -8974,6 +9369,25 @@ var VioCheckout = class extends i4 {
   }
   show() {
     this.open = true;
+  }
+  async loadAvailablePaymentMethods() {
+    console.log("loadAvailablePaymentMethods INIT")
+    if (!this.checkoutState) return;
+    try {
+      console.log("loadAvailablePaymentMethods inside")
+      const sponsorId = this.checkoutState.sponsorId;
+      const methods = await Vio.checkout.getAvailablePaymentMethods(sponsorId);
+      console.log("loadAvailablePaymentMethods methods", methods)
+
+      if (Array.isArray(methods)) {
+        this.availableMethods = methods.map(m => m.name);
+      } else {
+        this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+      }
+    } catch (err) {
+      console.warn("[VioCheckout] Failed to load payment methods:", err);
+      this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+    }
   }
   async refreshApplePay() {
     Vio.checkout.clearApplePayCache();
@@ -9248,13 +9662,18 @@ var VioCheckout = class extends i4 {
     )}
               </div>
             ` : ""}
+        ${this.klarnaMounting ? b2`
+              <div style="padding: 20px; text-align: center; color: var(--vio-color-text-secondary, #666); font-size: 14px;">
+                Klargjør Klarna-betaling…
+              </div>
+            ` : ""}
         <div class="klarna-widget" id="vio-klarna-payments-container"></div>
         <button
           class="payment-btn primary complete-cta"
           @click=${() => void this.onKlarnaAuthorize()}
           ?disabled=${this.klarnaAuthorizing || !this.klarnaHandle || this.klarnaMounting}
         >
-          ${this.klarnaAuthorizing ? "Behandler\u2026" : `Betal ${this.payTotalLabel()} med Klarna`}
+          ${this.klarnaAuthorizing ? "Behandler\u2026" : this.klarnaMounting ? "Klargjør Klarna\u2026" : `Betal ${this.payTotalLabel()} med Klarna`}
         </button>
       </div>
     `;
@@ -9369,7 +9788,16 @@ var VioCheckout = class extends i4 {
                       ${this.applePayInProgress ? "\xC5pner\u2026" : b2`<span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width:18px;height:18px"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>Apple Pay</span>`}
                     </button>
                   ` : ""}
-              ${this.klarnaAvailable ? b2`
+              ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "stripe")) ? b2`
+                    <button
+                      class="payment-btn"
+                      @click=${() => this.onPay("stripe")}
+                      aria-pressed=${this.checkoutState?.paymentMethod === "stripe"}
+                    >
+                      <img src="vio-sdk/assets/stripe-blurple.svg" style="height: 20px; display: block;" alt="Stripe" />
+                    </button>
+                  ` : ""}
+              ${((this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "klarna")) && this.klarnaAvailable) ? b2`
                     <button
                       class="payment-btn"
                       @click=${() => this.onPay("klarna")}
@@ -9378,20 +9806,15 @@ var VioCheckout = class extends i4 {
                       Klarna
                     </button>
                   ` : ""}
-              <button
-                class="payment-btn"
-                @click=${() => this.onPay("vipps")}
-                aria-pressed=${this.checkoutState?.paymentMethod === "vipps"}
-              >
-                <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
-              </button>
-              <button
-                class="payment-btn"
-                @click=${() => this.onPay("card")}
-                aria-pressed=${this.checkoutState?.paymentMethod === "card"}
-              >
-                Kort
-              </button>
+              ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "vipps")) ? b2`
+                    <button
+                      class="payment-btn"
+                      @click=${() => this.onPay("vipps")}
+                      aria-pressed=${this.checkoutState?.paymentMethod === "vipps"}
+                    >
+                      <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
+                    </button>
+                  ` : ""}
               ${!this.applePayAvailable ? b2`
                     <div class="apple-pay-note">
                        Pay krever Safari på iOS eller macOS med Apple Pay konfigurert.
@@ -9499,6 +9922,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioCheckout.prototype, "form", 2);
+__decorateClass([
+  r5()
+], VioCheckout.prototype, "availableMethods", 2);
 
 // src/ui/elements.ts
 function registerVioElements() {
@@ -9578,7 +10004,29 @@ export {
   displayPrice,
   formatPrice,
   primaryImageUrl,
-  showApplePaySheet
+  showApplePaySheet,
+  gqlCreateCart as createCart,
+  gqlAddItem as addItem,
+  gqlDeleteItem as deleteItem,
+  gqlUpdateItem as updateItem,
+  gqlGetCart as getCart,
+  gqlGetLineItemsBySupplier as getLineItemsBySupplier,
+  gqlUpdateShippingsBySupplier as updateShippingsBySupplier,
+  gqlCreateCheckout as createCheckout,
+  gqlUpdateCheckout as updateCheckout,
+  gqlGetCheckout as getCheckout,
+  gqlGetAvailablePaymentMethods as getAvailablePaymentMethods,
+  CREATE_CART_MUTATION,
+  ADD_ITEM_MUTATION,
+  DELETE_ITEM_MUTATION,
+  UPDATE_ITEM_MUTATION,
+  GET_CART_QUERY,
+  GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
+  UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
+  CREATE_CHECKOUT_MUTATION,
+  UPDATE_CHECKOUT_MUTATION,
+  GET_CHECKOUT_QUERY,
+  GET_AVAILABLE_PAYMENT_METHODS_QUERY
 };
 /*! Bundled license information:
 
