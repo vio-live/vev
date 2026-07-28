@@ -22,10 +22,9 @@ for everyone with access:
    of the Vev Design Editor, under the custom/coded components section. Designers just
    **search or browse, then click or drag** them onto the canvas like any built-in
    element — no install step on their side.
-3. Who sees them is controlled by `vev.json`:
-   - By default the package is available to the deploying account's projects.
-   - Set `"shareWithAccount": true` to expose the components in the Add menu for **all
-     members of the account/workspace** after the next deploy.
+3. Who sees them is controlled by `vev.json`. This package sets
+   `"shareWithAccount": true`, so after deploy the components appear in the Add menu
+   for **every member of the account/workspace** — designers need zero setup.
 
 > Docs: [CLI getting started](https://developer.vev.design/cli/getting-started/) ·
 > [CLI commands](https://developer.vev.design/cli/commands/) ·
@@ -59,13 +58,58 @@ identical everywhere.
    style via the Design tab, publish. Checkout works end-to-end on the published page
    (Apple Pay requires the publish domain to be registered in Stripe).
 
+## Component reference
+
+Every product surface (Card / Carousel / Grid) shares the same **card options**:
+
+| Prop | Values | Default |
+|---|---|---|
+| Card layout | Standard (image + info) · Image only · Info over image · Horizontal | Standard |
+| Button | Icon (+) · Text (pill) · Full-width bar · No button | Icon |
+| Button label | text | `Kjøp` |
+| Button action | Add to cart · Open detail | Add to cart |
+| Image click | Product info · Add to cart | Product info |
+| Accent color | CSS color | — |
+| Show brand / name / price / retailer | boolean each | all on |
+| Discount badge | Off · Auto (from sale price) · Manual (text) | Off |
+| 'Annonse' label | boolean + text | off / `Annonse` |
+
+Plus **editableCSS** styling (Design tab) for card, image, buttons, badge, brand,
+name, price and retailer. Products with variants always open the detail drawer on
+add (the buyer must pick a variant); sold-out combinations are disabled there.
+
+Per block:
+
+- **Vio Config (SDK)** — `Vio API Key`, `API Base`, `GraphQL Base`, `Stripe PK`
+  (publishable, enables card + Apple Pay), cart button (`show`, `position` 4 corners,
+  `icon` bag/cart/basket, `color`, `hover effect`, `size`). Ships with working
+  staging defaults, so dropping the block needs zero config.
+- **Vio Product Card** — product picker (single) + card options.
+- **Vio Product Carousel** — product picker (multi), `Kicker`, `Heading`,
+  `Disclaimer` (default `annonselenker`), `Visible at once` (2–5), `Gap`,
+  `Show arrows` + card options.
+- **Vio Product Grid** — product picker (multi), `Kicker`, `Heading`,
+  `Columns` (2–5, collapses to 2 on mobile), `Gap` + card options.
+- **Vio · Add to Cart** — product picker + `Open cart after add`. Attach to any element.
+- **Vio · Open Product Info** — product picker. Attach to any element.
+- **Vio · Open Cart** — no props. Attach to any element.
+
 ## Development
 
-Prerequisites: Node.js ≥ 22, a Vev account with access to the package, and
-`npm install` (deps include `@vev/cli` tooling via npx).
+### Install (developers)
 
 ```bash
-npm run login        # vev login — one-time CLI auth
+git clone https://github.com/vio-live/vev.git vio-vev && cd vio-vev
+npm install
+npm run login        # vev login — one-time CLI auth (Vev account with package access)
+```
+
+Requires Node.js ≥ 22. Designers install nothing — see
+[How component installation works](#how-component-installation-works-in-vev).
+
+### Dev loop
+
+```bash
 npx vev start        # dev server on :9876 — live-serves blocks to the editor
 ```
 
