@@ -4047,8 +4047,21 @@ function displayPrice(product) {
   const amount = p3.amount_incl_taxes ?? p3.amount;
   return formatPrice(amount, p3.currency_code);
 }
+function getGlobalCurrency() {
+  if (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) {
+    return globalThis.__VIO_CURRENCY__;
+  }
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v = localStorage.getItem("vio.currency");
+      if (v) return v;
+    } catch {}
+  }
+  return "NOK";
+}
+
 function formatPrice(amount, currency) {
-  const activeCurrency = currency || (typeof globalThis !== 'undefined' && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== 'undefined' && localStorage.getItem('vio.currency')) || "NOK";
+  const activeCurrency = currency || getGlobalCurrency();
   const formatted = amount.toLocaleString("no-NO", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
   const symbol = activeCurrency === "NOK" ? "kr" : activeCurrency;
   return `${formatted} ${symbol}`;
@@ -5089,10 +5102,11 @@ var CheckoutManager = class extends EventTarget {
     if (!cart || cart.items.length === 0) {
       throw new Error(`[VioCheckout] sponsor ${sponsorId} has no cart items`);
     }
+    const activeCurrency = getGlobalCurrency();
     this.state = {
       sponsorId,
       subtotal: this.cartManager.subtotalForSponsor(sponsorId),
-      currency: cart.currency
+      currency: activeCurrency
     };
     this.emit();
     return this.state;
@@ -5505,7 +5519,7 @@ var CheckoutManager = class extends EventTarget {
     const selectedOpt = shippings.find((s) => s.id === opts?.shippingId) || shippings[0];
     if (selectedOpt?.id && selectedOpt?.supplierId) {
       try {
-        await this.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: selectedOpt.supplierId }], sponsorId);
+        await this.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }], sponsorId);
       } catch (err) {
         console.warn("[CheckoutManager] updateShippingsBySupplier failed during mount:", err);
       }
@@ -5526,7 +5540,10 @@ var CheckoutManager = class extends EventTarget {
     }
 
     const address = this.state?.address;
-    const activeCurrency = ctx.currency || this.state?.currency || (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || "NOK";
+    const activeCurrency = getGlobalCurrency();
+    if (this.state) this.state.currency = activeCurrency;
+    if (ctx) ctx.currency = activeCurrency;
+    console.log("[VioCheckout] mountKlarnaPayments → active currency:", activeCurrency, "| globalThis.__VIO_CURRENCY__:", typeof globalThis !== "undefined" ? globalThis.__VIO_CURRENCY__ : null, "| localStorage:", typeof localStorage !== "undefined" ? localStorage.getItem("vio.currency") : null);
     const variables = {
       checkoutId,
       countryCode: "NO",
@@ -5539,6 +5556,7 @@ var CheckoutManager = class extends EventTarget {
       shippingAddress: buildKlarnaAddress(address),
       autoCapture: true
     };
+    console.log("[VioCheckout] CreatePaymentKlarnaNative variables →", JSON.stringify(variables, null, 2));
 
     const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
     const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
@@ -5657,7 +5675,10 @@ var CheckoutManager = class extends EventTarget {
       }
 
       const address = this.state?.address;
-      const activeCurrency = ctx.currency || this.state?.currency || (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || "NOK";
+      const activeCurrency = getGlobalCurrency();
+      if (this.state) this.state.currency = activeCurrency;
+      if (ctx) ctx.currency = activeCurrency;
+      console.log("[VioCheckout] startKlarnaInstant → active currency:", activeCurrency);
       const variables = {
         checkoutId,
         countryCode: "NO",
@@ -5670,6 +5691,7 @@ var CheckoutManager = class extends EventTarget {
         shippingAddress: buildKlarnaAddress(address),
         autoCapture: true
       };
+      console.log("[VioCheckout] CreatePaymentKlarnaNative instant variables →", JSON.stringify(variables, null, 2));
 
       const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
       const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
@@ -9553,7 +9575,7 @@ var VioCheckout = class extends i4 {
     const selectedOpt = list.find((s) => s.id === id);
     if (selectedOpt && selectedOpt.supplierId) {
       try {
-        await Vio.checkout.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: selectedOpt.supplierId }], this.checkoutState?.sponsorId);
+        await Vio.checkout.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }], this.checkoutState?.sponsorId);
       } catch (err) {
         console.warn("[VioCheckout] updateShippingsBySupplier failed:", err);
       }
