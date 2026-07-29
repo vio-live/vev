@@ -4118,6 +4118,12 @@ var STORAGE_KEY = "vio.cart.v1";
 function lineId() {
   return "li_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
+function normId(val) {
+  if (val === null || val === undefined || val === 0 || val === "0" || val === "null" || val === "undefined") {
+    return "";
+  }
+  return String(val).trim();
+}
 var CartManager = class extends EventTarget {
   constructor() {
     super();
@@ -4220,9 +4226,19 @@ var CartManager = class extends EventTarget {
     } else if (opts.sponsorName && !cart.sponsorName) {
       cart.sponsorName = opts.sponsorName;
     }
-    const existing = cart.items.find(
-      (i5) => i5.productId === opts.productId && i5.variantId === opts.variantId
-    );
+    const existing = cart.items.find((i5) => {
+      const p1 = normId(i5.productId ?? i5.product_id);
+      const p2 = normId(opts.productId);
+      const v1 = normId(i5.variantId ?? i5.variant_id);
+      const v2 = normId(opts.variantId);
+      if (p1 && p2 && p1 === p2 && v1 === v2) return true;
+      if (v1 && v2 && v1 === v2) return true;
+      if (p1 && p2 && p1 === p2 && !v1 && !v2) return true;
+      const n1 = (i5.name || i5.title || "").trim().toLowerCase();
+      const n2 = (opts.name || "").trim().toLowerCase();
+      if (n1 && n2 && n1 === n2 && v1 === v2) return true;
+      return false;
+    });
     if (existing) {
       existing.quantity += qty;
     } else {
