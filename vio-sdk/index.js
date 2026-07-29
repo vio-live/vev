@@ -7546,6 +7546,7 @@ var VioProductDetail = class extends i4 {
     this.activeImageIndex = 0;
     this.adding = false;
     this.applePayOk = false;
+    this.availableMethods = [];
     /** Pre-prepared Apple Pay handle — show() fires synchronously on tap. */
     this.applePayHandle = null;
     this.boundProductClick = (e7) => {
@@ -8059,6 +8060,7 @@ var VioProductDetail = class extends i4 {
         this.applePayHandle = null;
         this.applePayOk = false;
       });
+      void this.loadAvailablePaymentMethods();
     }
     this.isLoading = false;
   }
@@ -8214,6 +8216,34 @@ var VioProductDetail = class extends i4 {
       })
     );
   }
+  buyWithStripe() {
+    if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    this.addCurrentToCart();
+    this.close();
+    this.dispatchEvent(
+      new CustomEvent("vio:checkout-open", {
+        bubbles: true,
+        composed: true,
+        detail: { sponsorId: this.sponsorId, paymentMethod: "stripe", express: false }
+      })
+    );
+  }
+  async loadAvailablePaymentMethods() {
+    const spId = this.sponsorId || (globalThis.__VIO_SPONSOR_ID__ ?? 4);
+    try {
+      const methods = await Vio.checkout.getAvailablePaymentMethods(spId);
+      if (Array.isArray(methods)) {
+        this.availableMethods = methods.map((m) => m.name);
+      } else {
+        this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+      }
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioProductDetail] Failed to load payment methods:", err);
+      }
+      this.availableMethods = ["Stripe", "Klarna", "Vipps"];
+    }
+  }
   /**
    * Express buy with Apple Pay. Runs synchronously inside the click so the
    * Apple Pay sheet keeps the user gesture: add to cart → open checkout (sets
@@ -8338,7 +8368,7 @@ var VioProductDetail = class extends i4 {
             </button>
           </div>
 
-          ${this.availableQuantity > 0 && this.applePayOk ? b2`
+          ${this.availableQuantity > 0 && this.applePayOk && (this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "apple-pay" || m.toLowerCase() === "applepay")) ? b2`
                 <button
                   class="buy-applepay"
                   @click=${this.buyWithApplePay}
@@ -8350,7 +8380,18 @@ var VioProductDetail = class extends i4 {
                   <span>Apple Pay</span>
                 </button>
               ` : ""}
-          ${this.availableQuantity > 0 ? b2`
+          ${this.availableQuantity > 0 && (this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "stripe")) ? b2`
+                <button
+                  class="buy-stripe"
+                  @click=${this.buyWithStripe}
+                  ?disabled=${this.adding}
+                  style="width: 100%; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; background: #635bff; color: #fff; border: none; padding: 14px 24px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;"
+                >
+                  <span>Kjøp nå med</span>
+                  <img src="vio-sdk/assets/stripe-blurple.svg" style="height: 20px; display: block; filter: brightness(0) invert(1);" alt="Stripe" />
+                </button>
+              ` : ""}
+          ${this.availableQuantity > 0 && (this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "klarna")) ? b2`
                 <button
                   class="buy-klarna"
                   @click=${this.buyWithKlarna}
@@ -8365,7 +8406,7 @@ var VioProductDetail = class extends i4 {
                 </button>
               ` : ""}
 
-          ${this.availableQuantity > 0 ? b2`
+          ${this.availableQuantity > 0 && (this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "vipps")) ? b2`
                 <button
                   class="buy-vipps"
                   @click=${this.buyWithVipps}
@@ -8459,6 +8500,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "applePayOk", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "availableMethods", 2);
 function normalizeValues(raw) {
   if (Array.isArray(raw)) {
     return raw.map((v2) => String(v2).trim()).filter((v2) => v2.length > 0);
