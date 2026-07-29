@@ -1069,3 +1069,22 @@ export async function createPaymentStripe(variables, options) {
   );
   return json?.data?.Payment?.CreatePaymentStripe;
 }
+
+export const CREATE_PAYMENT_VIPPS_MUTATION = `
+mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
+  Payment {
+    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
+      payment_url
+    }
+  }
+}
+`;
+
+export async function createPaymentVipps(variables, options) {
+  const json = await executeCartGraphQL(
+    CREATE_PAYMENT_VIPPS_MUTATION,
+    variables,
+    options
+  );
+  return json?.data?.Payment?.CreatePaymentVipps;
+}

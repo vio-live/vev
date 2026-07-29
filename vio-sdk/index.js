@@ -11,6 +11,7 @@ import {
   getCheckout as gqlGetCheckout,
   getAvailablePaymentMethods as gqlGetAvailablePaymentMethods,
   createPaymentStripe as gqlCreatePaymentStripe,
+  createPaymentVipps as gqlCreatePaymentVipps,
   CREATE_CART_MUTATION,
   ADD_ITEM_MUTATION,
   DELETE_ITEM_MUTATION,
@@ -22,7 +23,8 @@ import {
   UPDATE_CHECKOUT_MUTATION,
   GET_CHECKOUT_QUERY,
   GET_AVAILABLE_PAYMENT_METHODS_QUERY,
-  CREATE_PAYMENT_STRIPE_MUTATION
+  CREATE_PAYMENT_STRIPE_MUTATION,
+  CREATE_PAYMENT_VIPPS_MUTATION
 } from "./cart-queries.js";
 
 var __defProp = Object.defineProperty;
@@ -5409,6 +5411,88 @@ var CheckoutManager = class extends EventTarget {
     }
   }
 
+  async startVippsPayment(sponsorId, formData) {
+    const spId = sponsorId || this.state?.sponsorId || 4;
+    const cart = this.cartManager.getCart(spId);
+    let cartId = cart?.cartId;
+    if (!cartId) {
+      cartId = await this.cartManager.ensureCartId(spId);
+    }
+    if (!cartId) {
+      throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
+    }
+
+    const opts = await getCartGraphQLOptions(spId);
+    let checkoutId = this.state?.checkoutId;
+    if (!checkoutId) {
+      const checkoutRes = await gqlCreateCheckout(cartId, opts);
+      checkoutId = checkoutRes?.id;
+    }
+    if (!checkoutId) {
+      checkoutId = String(spId);
+    }
+
+    const addr = typeof formData === "object" && formData !== null ? formData : this.state?.address;
+    const addressObj = buildCheckoutAddress(addr);
+    const emailVal = (typeof formData === "string" ? formData : formData?.email) || this.state?.address?.email || "customer@example.com";
+
+    const updateVars = {
+      checkoutId,
+      email: emailVal,
+      paymentMethod: "Vipps",
+      buyerAcceptsPurchaseConditions: true,
+      buyerAcceptsTermsConditions: true
+    };
+    if (addressObj) {
+      updateVars.shippingAddress = addressObj;
+      updateVars.billingAddress = addressObj;
+    }
+
+    try {
+      const updated = await gqlUpdateCheckout(updateVars, opts);
+      if (updated?.id) {
+        this.state = {
+          ...(this.state || {}),
+          sponsorId: spId,
+          checkoutId: updated.id,
+          checkout: updated
+        };
+        this.emit();
+      }
+    } catch (err) {
+      console.warn("[CheckoutManager] UpdateCheckout during Vipps payment setup failed:", err);
+    }
+
+    const returnUrl = resolveHttpsReturnUrl(null, {
+      vio_payment: "success",
+      vio_method: "vipps",
+      vio_sponsor: spId,
+      checkout_id: checkoutId
+    });
+    const vippsRes = await gqlCreatePaymentVipps({
+      checkoutId,
+      email: emailVal,
+      returnUrl
+    }, opts);
+
+    if (vippsRes?.payment_url) {
+      if (typeof window !== "undefined") {
+        try {
+          if (window.top && window.top !== window) {
+            window.top.location.href = vippsRes.payment_url;
+          } else {
+            window.location.href = vippsRes.payment_url;
+          }
+        } catch (e) {
+          window.open(vippsRes.payment_url, "_top") || window.open(vippsRes.payment_url, "_blank");
+        }
+      }
+      return vippsRes;
+    } else {
+      throw new Error("Vipps payment link generation failed: missing payment_url");
+    }
+  }
+
   setAddress(address) {
     if (!this.state) return;
     this.state = { ...this.state, address };
@@ -9117,6 +9201,7 @@ var VioCheckout = class extends i4 {
     this.confirmedOrder = null;
     this.availableMethods = [];
     this.stripeLoading = false;
+    this.vippsLoading = false;
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
     this.klarnaMountedAmount = null;
@@ -9880,12 +9965,22 @@ var VioCheckout = class extends i4 {
     Vio.checkout.selectPaymentMethod(method);
     if (method === "stripe") {
       this.stripeLoading = true;
-      void Vio.checkout.startStripePayment(this.checkoutState?.sponsorId, this.form.email)
+      void Vio.checkout.startStripePayment(this.checkoutState?.sponsorId, this.form)
         .catch((err) => {
           this.paymentError = `Kunne ikke starte Stripe-betaling: ${err instanceof Error ? err.message : String(err)}`;
         })
         .finally(() => {
           this.stripeLoading = false;
+        });
+    }
+    if (method === "vipps") {
+      this.vippsLoading = true;
+      void Vio.checkout.startVippsPayment(this.checkoutState?.sponsorId, this.form)
+        .catch((err) => {
+          this.paymentError = `Kunne ikke starte Vipps-betaling: ${err instanceof Error ? err.message : String(err)}`;
+        })
+        .finally(() => {
+          this.vippsLoading = false;
         });
     }
   }
@@ -9901,6 +9996,10 @@ var VioCheckout = class extends i4 {
     if (!s4 || !s4.paymentMethod) return;
     if (s4.paymentMethod === "stripe") {
       void this.onPay("stripe");
+      return;
+    }
+    if (s4.paymentMethod === "vipps") {
+      void this.onPay("vipps");
       return;
     }
     this.confirmOrder(s4.paymentMethod, s4.sponsorId);
@@ -10194,9 +10293,10 @@ var VioCheckout = class extends i4 {
               ${method === "vipps" ? b2`
                 <button
                   class="payment-btn primary complete-cta"
-                  @click=${this.onCompleteOrder}
+                  @click=${() => void this.onPay("vipps")}
+                  ?disabled=${this.vippsLoading}
                 >
-                  Betal ${this.orderTotal()} med Vipps
+                  ${this.vippsLoading ? "Går til Vipps…" : `Betal ${this.orderTotal()} med Vipps`}
                 </button>
               ` : ""}
               ${method === "apple-pay" ? b2`
@@ -10350,6 +10450,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioCheckout.prototype, "stripeLoading", 2);
+__decorateClass([
+  r5()
+], VioCheckout.prototype, "vippsLoading", 2);
 
 // src/ui/elements.ts
 function registerVioElements() {
@@ -10442,6 +10545,7 @@ export {
   gqlGetCheckout as getCheckout,
   gqlGetAvailablePaymentMethods as getAvailablePaymentMethods,
   gqlCreatePaymentStripe as createPaymentStripe,
+  gqlCreatePaymentVipps as createPaymentVipps,
   CREATE_CART_MUTATION,
   ADD_ITEM_MUTATION,
   DELETE_ITEM_MUTATION,
@@ -10453,7 +10557,8 @@ export {
   UPDATE_CHECKOUT_MUTATION,
   GET_CHECKOUT_QUERY,
   GET_AVAILABLE_PAYMENT_METHODS_QUERY,
-  CREATE_PAYMENT_STRIPE_MUTATION
+  CREATE_PAYMENT_STRIPE_MUTATION,
+  CREATE_PAYMENT_VIPPS_MUTATION
 };
 /*! Bundled license information:
 
