@@ -4071,9 +4071,26 @@ function formatPrice(amount, currency) {
   return `${formatted} ${symbol}`;
 }
 function primaryImageUrl(product) {
-  const variantImage = product.variants[0]?.images[0]?.url;
-  if (variantImage) return variantImage;
-  return product.images[0]?.url;
+  if (!product || typeof product !== "object") return undefined;
+  if (Array.isArray(product.variants) && product.variants.length > 0) {
+    const vImages = product.variants[0]?.images;
+    if (Array.isArray(vImages) && vImages.length > 0) {
+      const vUrl = typeof vImages[0] === "string" ? vImages[0] : vImages[0]?.url;
+      if (vUrl) return vUrl;
+    }
+  }
+  if (Array.isArray(product.images) && product.images.length > 0) {
+    const img0 = product.images[0];
+    const url = typeof img0 === "string" ? img0 : img0?.url;
+    if (url) return url;
+  }
+  if (typeof product.image === "string" && product.image) return product.image;
+  if (product.image && typeof product.image === "object" && product.image.url) return product.image.url;
+  if (typeof product.imageUrl === "string" && product.imageUrl) return product.imageUrl;
+  if (typeof product.image_url === "string" && product.image_url) return product.image_url;
+  if (typeof product.primaryImage === "string" && product.primaryImage) return product.primaryImage;
+  if (product.primaryImage && typeof product.primaryImage === "object" && product.primaryImage.url) return product.primaryImage.url;
+  return undefined;
 }
 
 async function getCartGraphQLOptions(sponsorId) {
@@ -4148,7 +4165,17 @@ var CartManager = class extends EventTarget {
         const backendCart = await gqlCreateCart(customerSessionId, activeCurrency, shippingCountry, opts);
         if (backendCart?.cart_id) {
           cart.cartId = backendCart.cart_id;
-          this.updateFromBackendCart(sponsorId, backendCart);
+          if (Array.isArray(backendCart.line_items) && backendCart.line_items.length > 0) {
+            this.updateFromBackendCart(sponsorId, backendCart);
+          } else {
+            if (backendCart.currency) cart.currency = backendCart.currency;
+            if (backendCart.shipping_country) cart.shippingCountry = backendCart.shipping_country;
+            if (backendCart.subtotal != null) cart.subtotal = backendCart.subtotal;
+            if (backendCart.shipping != null) cart.shipping = backendCart.shipping;
+            if (backendCart.available_shipping_countries) cart.availableShippingCountries = backendCart.available_shipping_countries;
+            this.persist();
+            this.emit();
+          }
         }
       } catch (err) {
         console.warn("[CartManager] createCart failed:", err);
@@ -4168,21 +4195,45 @@ var CartManager = class extends EventTarget {
     if (backendCart.available_shipping_countries) cart.availableShippingCountries = backendCart.available_shipping_countries;
 
     if (Array.isArray(backendCart.line_items)) {
-      cart.items = backendCart.line_items.map((li) => ({
-        id: li.id,
-        cartItemId: li.id,
-        productId: li.product_id,
-        sponsorId,
-        variantId: li.variant_id,
-        brand: li.brand || "",
-        name: li.title ? (li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title) : "",
-        unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? 0,
-        currency: li.price?.currency_code || backendCart.currency,
-        imageUrl: li.image?.url || "",
-        quantity: li.quantity,
-        shipping: li.shipping,
-        availableShippings: li.available_shippings
-      }));
+      const existingItems = cart.items || [];
+      if (backendCart.line_items.length === 0 && existingItems.length > 0) {
+        this.persist();
+        this.emit();
+        return;
+      }
+      cart.items = backendCart.line_items.map((li) => {
+        const urlFromBackend = (typeof li.image === "string" ? li.image : li.image?.url) || li.imageUrl || li.image_url || "";
+        const matchedLocal = existingItems.find((existing) => {
+          const p1 = normId(existing.productId ?? existing.product_id);
+          const p2 = normId(li.product_id);
+          const v1 = normId(existing.variantId ?? existing.variant_id);
+          const v2 = normId(li.variant_id);
+          if (p1 && p2 && p1 === p2 && v1 === v2) return true;
+          if (v1 && v2 && v1 === v2) return true;
+          if (p1 && p2 && p1 === p2 && !v1 && !v2) return true;
+          const n1 = (existing.name || existing.title || "").trim().toLowerCase();
+          const n2 = (li.title || "").trim().toLowerCase();
+          if (n1 && n2 && n1 === n2 && v1 === v2) return true;
+          return false;
+        });
+        const imageUrl = urlFromBackend || matchedLocal?.imageUrl || "";
+
+        return {
+          id: li.id,
+          cartItemId: li.id,
+          productId: li.product_id,
+          sponsorId,
+          variantId: li.variant_id,
+          brand: li.brand || matchedLocal?.brand || "",
+          name: li.title ? (li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title) : (matchedLocal?.name || ""),
+          unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? matchedLocal?.unitPrice ?? 0,
+          currency: li.price?.currency_code || backendCart.currency || matchedLocal?.currency || "NOK",
+          imageUrl,
+          quantity: li.quantity,
+          shipping: li.shipping,
+          availableShippings: li.available_shippings
+        };
+      });
     }
     this.persist();
     this.emit();
@@ -4196,7 +4247,7 @@ var CartManager = class extends EventTarget {
     const variant = opts.variantId != null ? opts.product.variants?.find((v2) => v2.id === opts.variantId) : void 0;
     const price = variant?.price ?? opts.product.price;
     const unitPrice = price.amount_incl_taxes ?? price.amount ?? 0;
-    const imageUrl = variant?.images?.[0]?.url ?? primaryImageUrl(opts.product) ?? "";
+    const imageUrl = (variant?.images?.[0]?.url) || primaryImageUrl(opts.product) || "";
     const name = variant?.title ? `${opts.product.title} \u2014 ${variant.title}` : opts.product.title;
     return this.addManual({
       productId: opts.product.id,
