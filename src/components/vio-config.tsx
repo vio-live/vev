@@ -15,6 +15,7 @@ import {
   setRuntimeApiKey,
   resetCatalogCache,
   persistSponsorId,
+  persistCurrency,
 } from "./vio-helpers";
 
 /**
@@ -92,6 +93,7 @@ type Props = {
   graphQLBase?: string;
   stripePublishableKey?: string;
   sponsorId?: number;
+  currency?: string;
   // Cart button (floating action button).
   cartButton?: boolean;
   cartPosition?: string; // bottom-right | bottom-left | top-right | top-left
@@ -110,6 +112,7 @@ export default function VioConfig({
   graphQLBase,
   stripePublishableKey,
   sponsorId,
+  currency = "NOK",
   cartButton = true,
   cartPosition = "bottom-right",
   cartIcon = "bag",
@@ -227,6 +230,15 @@ export default function VioConfig({
     resetCatalogCache();
     window.dispatchEvent(new CustomEvent("vio:sponsor-changed", { detail: resolvedSponsorId }));
   }, [resolvedSponsorId]);
+
+  // Set the dynamic runtime currency and notify listeners
+  const resolvedCurrency = currency || "NOK";
+  useEffect(() => {
+    (globalThis as any).__VIO_CURRENCY__ = resolvedCurrency;
+    persistCurrency(resolvedCurrency);
+    resetCatalogCache();
+    window.dispatchEvent(new CustomEvent("vio:currency-changed", { detail: resolvedCurrency }));
+  }, [resolvedCurrency]);
 
   // Cart badge count.
   useEffect(() => {
@@ -595,6 +607,12 @@ registerVevComponent(VioConfig, {
       title: "Active Sponsor",
       type: "number",
       component: VioSponsorSelector as any,
+    },
+    {
+      name: "currency",
+      title: "Currency",
+      type: "string",
+      initialValue: "NOK",
     },
     { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
     { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },

@@ -83,6 +83,32 @@ export function getActiveSponsorId(): number {
   return resolved;
 }
 
+export const VIO_CURRENCY_STORAGE = "vio.currency";
+
+export function getPersistedCurrency(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(VIO_CURRENCY_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+export function persistCurrency(currency: string): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(VIO_CURRENCY_STORAGE, currency.trim());
+  } catch {
+    /* noop */
+  }
+}
+
+export function getActiveCurrency(): string {
+  const runtime = (globalThis as { __VIO_CURRENCY__?: string }).__VIO_CURRENCY__;
+  const persisted = getPersistedCurrency();
+  return runtime || persisted || "NOK";
+}
+
 /** A picked product reference (single-select value / multi-select item). */
 export type Item = { productId: number; sponsorId: number };
 
@@ -149,7 +175,11 @@ export async function fetchVioProduct(productId: number, sponsorId: number): Pro
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({ product_ids: [productId] });
+      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
+        product_ids: [productId],
+        currency: getActiveCurrency(),
+        image_size: "large"
+      });
       const list = Array.isArray(arr) ? arr : [];
       return (list.find((x: any) => Number(x.id) === Number(productId)) ?? null) as VioProduct | null;
     }, { label: `product ${productId}` });
@@ -166,7 +196,11 @@ export async function fetchVioProducts(productIds: number[], sponsorId: number):
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({ product_ids: ids });
+      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
+        product_ids: ids,
+        currency: getActiveCurrency(),
+        image_size: "large"
+      });
       const list = Array.isArray(arr) ? arr : [];
       // Preserve the requested order.
       return ids.map((id) => list.find((x: any) => Number(x.id) === Number(id))).filter(Boolean) as VioProduct[];
@@ -215,7 +249,7 @@ export function loadCatalog(): Promise<CatalogProduct[]> {
     ensureVioInit();
     await Vio.bootstrap();
     const commerce = Vio.commerceFor(getActiveSponsorId());
-    const data = await commerce.raw.request(PRODUCTS_QUERY, { currency: "NOK", imageSize: "large", useCache: true });
+    const data = await commerce.raw.request(PRODUCTS_QUERY, { currency: getActiveCurrency(), imageSize: "large", useCache: true });
     const list = (data?.Channel?.Products ?? []) as CatalogProduct[];
     if (DEBUG) console.log("[Vio] loadCatalog →", list.length, "products");
     return list;
@@ -227,10 +261,14 @@ export function loadCatalog(): Promise<CatalogProduct[]> {
 }
 
 /** Dispatch the SDK product-detail open event (the Config's <VioProductDetail> listens). */
-export function openProductInfo(productId: number, sponsorId: number): void {
+export function openProductInfo(productId: number, sponsorId: number, currency?: string): void {
   document.dispatchEvent(
     new CustomEvent("vio:product-click", {
-      detail: { productId: String(productId), sponsorId: String(sponsorId) },
+      detail: {
+        productId: String(productId),
+        sponsorId: String(sponsorId),
+        currency: currency || getActiveCurrency()
+      },
     })
   );
 }
