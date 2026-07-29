@@ -22,6 +22,7 @@ export const CREATE_CHECKOUT_MUTATION: string;
 export const UPDATE_CHECKOUT_MUTATION: string;
 export const GET_CHECKOUT_QUERY: string;
 export const GET_AVAILABLE_PAYMENT_METHODS_QUERY: string;
+export const CREATE_PAYMENT_STRIPE_MUTATION: string;
 
 export function createCart(customerSessionId: string, currency: string, shippingCountry?: string | null, options?: any): Promise<any>;
 export function addItem(cartId: string, lineItems: any[], options?: any): Promise<any>;
@@ -34,3 +35,4 @@ export function createCheckout(cartId: string, options?: any): Promise<any>;
 export function updateCheckout(variables: any, options?: any): Promise<any>;
 export function getCheckout(checkoutId: string, options?: any): Promise<any>;
 export function getAvailablePaymentMethods(options?: any): Promise<any>;
+export function createPaymentStripe(variables: any, options?: any): Promise<any>;

@@ -1041,6 +1041,17 @@ export async function getCheckout(checkoutId, options) {
   return json?.data?.Checkout?.GetCheckout;
 }
 
+export const CREATE_PAYMENT_STRIPE_MUTATION = `
+mutation CreatePaymentStripe($checkoutId: String!, $successUrl: String!, $paymentMethod: String!, $email: String!) {
+  Payment {
+    CreatePaymentStripe(checkout_id: $checkoutId, success_url: $successUrl, payment_method: $paymentMethod, email: $email) {
+      order_id
+      checkout_url
+    }
+  }
+}
+`;
+
 export async function getAvailablePaymentMethods(options) {
   const json = await executeCartGraphQL(
     GET_AVAILABLE_PAYMENT_METHODS_QUERY,
@@ -1048,4 +1059,13 @@ export async function getAvailablePaymentMethods(options) {
     options
   );
   return json?.data?.Payment?.GetAvailablePaymentMethods;
+}
+
+export async function createPaymentStripe(variables, options) {
+  const json = await executeCartGraphQL(
+    CREATE_PAYMENT_STRIPE_MUTATION,
+    variables,
+    options
+  );
+  return json?.data?.Payment?.CreatePaymentStripe;
 }
