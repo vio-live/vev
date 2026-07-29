@@ -1,28 +1,3 @@
-import {
-  createCart as gqlCreateCart,
-  addItem as gqlAddItem,
-  deleteItem as gqlDeleteItem,
-  updateItem as gqlUpdateItem,
-  getCart as gqlGetCart,
-  getLineItemsBySupplier as gqlGetLineItemsBySupplier,
-  updateShippingsBySupplier as gqlUpdateShippingsBySupplier,
-  createCheckout as gqlCreateCheckout,
-  updateCheckout as gqlUpdateCheckout,
-  getCheckout as gqlGetCheckout,
-  getAvailablePaymentMethods as gqlGetAvailablePaymentMethods,
-  CREATE_CART_MUTATION,
-  ADD_ITEM_MUTATION,
-  DELETE_ITEM_MUTATION,
-  UPDATE_ITEM_MUTATION,
-  GET_CART_QUERY,
-  GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
-  UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
-  CREATE_CHECKOUT_MUTATION,
-  UPDATE_CHECKOUT_MUTATION,
-  GET_CHECKOUT_QUERY,
-  GET_AVAILABLE_PAYMENT_METHODS_QUERY
-} from "./cart-queries.js";
-
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __decorateClass = (decorators, target, key, kind) => {
@@ -4048,18 +4023,17 @@ function displayPrice(product) {
   return formatPrice(amount, p3.currency_code);
 }
 function getGlobalCurrency() {
-  if (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) {
-    return globalThis.__VIO_CURRENCY__;
-  }
+  const g2 = globalThis;
+  if (g2.__VIO_CURRENCY__) return g2.__VIO_CURRENCY__;
   if (typeof localStorage !== "undefined") {
     try {
-      const v = localStorage.getItem("vio.currency");
-      if (v) return v;
-    } catch {}
+      const v2 = localStorage.getItem("vio.currency");
+      if (v2) return v2;
+    } catch {
+    }
   }
   return "NOK";
 }
-
 function formatPrice(amount, currency) {
   const activeCurrency = currency || getGlobalCurrency();
   const formatted = amount.toLocaleString("no-NO", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
@@ -4072,33 +4046,1015 @@ function primaryImageUrl(product) {
   return product.images[0]?.url;
 }
 
-function getCartGraphQLOptions(sponsorId) {
-  const cfg = Configuration.isInitialized ? Configuration.get() : {
-    apiBase: "https://api-dev.vio.live",
-    graphQLBase: "https://graph-ql-dev.vio.live"
-  };
-  let commerceKey = cfg.apiKey;
-  if (sponsorId && typeof Vio !== "undefined" && typeof Vio.findSponsor === "function") {
-    const sponsor = Vio.findSponsor(sponsorId);
-    if (sponsor?.commerce?.apiKey) {
-      commerceKey = sponsor.commerce.apiKey;
+// src/core/api/cart-queries.ts
+var CREATE_CART_MUTATION = `
+mutation CreateCart($customerSessionId: String!, $currency: String!, $shippingCountry: String) {
+  Cart {
+    CreateCart(customer_session_id: $customerSessionId, currency: $currency, shipping_country: $shippingCountry) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
     }
   }
+}
+`;
+var ADD_ITEM_MUTATION = `
+mutation AddItem($cartId: String!, $lineItems: [LineItemInput!]!) {
+  Cart {
+    AddItem(cart_id: $cartId, line_items: $lineItems) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
+    }
+  }
+}
+`;
+var DELETE_ITEM_MUTATION = `
+mutation DeleteItem($cartId: String!, $cartItemId: String!) {
+  Cart {
+    DeleteItem(cart_id: $cartId, cart_item_id: $cartItemId) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
+    }
+  }
+}
+`;
+var UPDATE_ITEM_MUTATION = `
+mutation UpdateItem($cartId: String!, $cartItemId: String!, $shippingId: String, $qty: Int) {
+  Cart {
+    UpdateItem(cart_id: $cartId, cart_item_id: $cartItemId, shipping_id: $shippingId, qty: $qty) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
+    }
+  }
+}
+`;
+var GET_CART_QUERY = `
+query GetCart($cartId: String!) {
+  Cart {
+    GetCart(cart_id: $cartId) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
+    }
+  }
+}
+`;
+var GET_LINE_ITEMS_BY_SUPPLIER_QUERY = `
+query GetLineItemsBySupplier($cartId: String!) {
+  Cart {
+    GetLineItemsBySupplier(cart_id: $cartId) {
+      supplier {
+        id
+        name
+      }
+      available_shippings {
+        id
+        name
+        description
+        country_code
+        price {
+          amount
+          currency_code
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+      }
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+    }
+  }
+}
+`;
+var UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION = `
+mutation UpdateShippingsBySupplier($cartId: String!, $data: [DataUpdateShippingsBySupplier!]!) {
+  Cart {
+    UpdateShippingsBySupplier(cart_id: $cartId, data: $data) {
+      cart_id
+      customer_session_id
+      shipping_country
+      line_items {
+        id
+        supplier
+        image {
+          id
+          url
+          width
+          height
+        }
+        sku
+        barcode
+        brand
+        product_id
+        title
+        variant_id
+        variant_title
+        variant {
+          option
+          value
+        }
+        quantity
+        price {
+          amount
+          currency_code
+          discount
+          compare_at
+          compare_at_incl_taxes
+          amount_incl_taxes
+          tax_amount
+          tax_rate
+        }
+        shipping {
+          id
+          name
+          description
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+        available_shippings {
+          id
+          name
+          description
+          country_code
+          price {
+            amount
+            currency_code
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+        }
+      }
+      subtotal
+      shipping
+      currency
+      available_shipping_countries
+    }
+  }
+}
+`;
+var CREATE_CHECKOUT_MUTATION = `
+mutation CreateCheckout($cartId: String!) {
+  Checkout {
+    CreateCheckout(cart_id: $cartId) {
+      buyer_accepts_purchase_conditions
+      buyer_accepts_terms_conditions
+      created_at
+      updated_at
+      id
+      deleted_at
+      success_url
+      cancel_url
+      payment_method
+      email
+      status
+      checkout_url
+      origin_payment_id
+      billing_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      shipping_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      available_payment_methods {
+        name
+      }
+      discount_code
+      cart {
+        cart_id
+        customer_session_id
+        shipping_country
+        line_items {
+          id
+          supplier
+          image {
+            id
+            url
+            width
+            height
+          }
+          sku
+          barcode
+          brand
+          product_id
+          title
+          variant_id
+          variant_title
+          variant {
+            option
+            value
+          }
+          quantity
+          price {
+            amount
+            currency_code
+            discount
+            compare_at
+            compare_at_incl_taxes
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+          shipping {
+            id
+            name
+            description
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+          available_shippings {
+            id
+            name
+            description
+            country_code
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+        }
+        subtotal
+        shipping
+        currency
+        available_shipping_countries
+      }
+      totals {
+        currency_code
+        subtotal
+        shipping
+        total
+        taxes
+        tax_rate
+        discounts
+      }
+    }
+  }
+}
+`;
+var UPDATE_CHECKOUT_MUTATION = `
+mutation UpdateCheckout($checkoutId: String!, $status: String, $successUrl: String, $email: String, $cancelUrl: String, $paymentMethod: String, $shippingAddress: AddressArgs, $billingAddress: AddressArgs, $buyerAcceptsPurchaseConditions: Boolean, $buyerAcceptsTermsConditions: Boolean) {
+  Checkout {
+    UpdateCheckout(checkout_id: $checkoutId, status: $status, success_url: $successUrl, email: $email, cancel_url: $cancelUrl, payment_method: $paymentMethod, shipping_address: $shippingAddress, billing_address: $billingAddress, buyer_accepts_purchase_conditions: $buyerAcceptsPurchaseConditions, buyer_accepts_terms_conditions: $buyerAcceptsTermsConditions) {
+      buyer_accepts_purchase_conditions
+      buyer_accepts_terms_conditions
+      created_at
+      updated_at
+      id
+      deleted_at
+      success_url
+      cancel_url
+      payment_method
+      email
+      status
+      checkout_url
+      origin_payment_id
+      billing_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      shipping_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      available_payment_methods {
+        name
+      }
+      discount_code
+      cart {
+        cart_id
+        customer_session_id
+        shipping_country
+        line_items {
+          id
+          supplier
+          image {
+            id
+            url
+            width
+            height
+          }
+          sku
+          barcode
+          brand
+          product_id
+          title
+          variant_id
+          variant_title
+          variant {
+            option
+            value
+          }
+          quantity
+          price {
+            amount
+            currency_code
+            discount
+            compare_at
+            compare_at_incl_taxes
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+          shipping {
+            id
+            name
+            description
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+          available_shippings {
+            id
+            name
+            description
+            country_code
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+        }
+        subtotal
+        shipping
+        currency
+        available_shipping_countries
+      }
+      totals {
+        currency_code
+        subtotal
+        shipping
+        total
+        taxes
+        tax_rate
+        discounts
+      }
+    }
+  }
+}
+`;
+var GET_CHECKOUT_QUERY = `
+query GetCheckout($checkoutId: String!) {
+  Checkout {
+    GetCheckout(checkout_id: $checkoutId) {
+      buyer_accepts_purchase_conditions
+      buyer_accepts_terms_conditions
+      created_at
+      updated_at
+      id
+      deleted_at
+      success_url
+      cancel_url
+      payment_method
+      email
+      status
+      checkout_url
+      origin_payment_id
+      billing_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      shipping_address {
+        id
+        first_name
+        last_name
+        phone_code
+        phone
+        company
+        address1
+        address2
+        city
+        province
+        province_code
+        country
+        country_code
+        zip
+      }
+      available_payment_methods {
+        name
+      }
+      discount_code
+      cart {
+        cart_id
+        customer_session_id
+        shipping_country
+        line_items {
+          id
+          supplier
+          image {
+            id
+            url
+            width
+            height
+          }
+          sku
+          barcode
+          brand
+          product_id
+          title
+          variant_id
+          variant_title
+          variant {
+            option
+            value
+          }
+          quantity
+          price {
+            amount
+            currency_code
+            discount
+            compare_at
+            compare_at_incl_taxes
+            amount_incl_taxes
+            tax_amount
+            tax_rate
+          }
+          shipping {
+            id
+            name
+            description
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+          available_shippings {
+            id
+            name
+            description
+            country_code
+            price {
+              amount
+              currency_code
+              amount_incl_taxes
+              tax_amount
+              tax_rate
+            }
+          }
+        }
+        subtotal
+        shipping
+        currency
+        available_shipping_countries
+      }
+      totals {
+        currency_code
+        subtotal
+        shipping
+        total
+        taxes
+        tax_rate
+        discounts
+      }
+    }
+  }
+}
+`;
+var GET_AVAILABLE_PAYMENT_METHODS_QUERY = `
+query Config {
+  Payment {
+    GetAvailablePaymentMethods {
+      config {
+        name
+        type
+        value
+      }
+      name
+    }
+  }
+}
+`;
+function getCartGraphQLOptions(sponsorId) {
+  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: void 0, graphQLBase: "https://graph-ql-dev.vio.live" };
+  const anyCfg = cfg;
+  let commerceKey = anyCfg.apiKey;
+  const facade = globalThis.__VIO_FACADE__;
+  if (sponsorId && typeof facade?.findSponsor === "function") {
+    const sponsor = facade.findSponsor(sponsorId);
+    if (sponsor?.commerce?.apiKey) commerceKey = sponsor.commerce.apiKey;
+  }
   return {
-    endpoint: cfg.graphQLBase || "https://graph-ql-dev.vio.live",
-    apiKey: cfg.apiKey,
+    endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
+    apiKey: anyCfg.apiKey,
     commerceKey
   };
 }
-
+var CUSTOMER_SESSION_KEY = "vio.customer_session_id.v1";
 function getCustomerSessionId() {
   if (typeof localStorage === "undefined") return "cs_session_default";
-  let id = localStorage.getItem("vio.customer_session_id.v1");
+  let id = localStorage.getItem(CUSTOMER_SESSION_KEY);
   if (!id) {
     id = "cs_" + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
-    localStorage.setItem("vio.customer_session_id.v1", id);
+    localStorage.setItem(CUSTOMER_SESSION_KEY, id);
   }
   return id;
+}
+async function executeCartGraphQL(query, variables, options = {}) {
+  const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = options;
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) headers["X-API-Key"] = apiKey;
+  if (commerceKey || apiKey) headers["Authorization"] = commerceKey || apiKey;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query, variables })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.errors) {
+    const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
+    throw new Error(errMsg);
+  }
+  return json;
+}
+async function createCart(customerSessionId, currency, shippingCountry, options) {
+  const json = await executeCartGraphQL(
+    CREATE_CART_MUTATION,
+    { customerSessionId, currency, shippingCountry: shippingCountry || null },
+    options
+  );
+  return json?.data?.Cart?.CreateCart;
+}
+async function addItem(cartId, lineItems, options) {
+  const json = await executeCartGraphQL(ADD_ITEM_MUTATION, { cartId, lineItems }, options);
+  return json?.data?.Cart?.AddItem;
+}
+async function deleteItem(cartId, cartItemId, options) {
+  const json = await executeCartGraphQL(DELETE_ITEM_MUTATION, { cartId, cartItemId }, options);
+  return json?.data?.Cart?.DeleteItem;
+}
+async function updateItem(cartId, cartItemId, shippingId, qty, options) {
+  const json = await executeCartGraphQL(
+    UPDATE_ITEM_MUTATION,
+    { cartId, cartItemId, shippingId: shippingId || null, qty: qty != null ? qty : null },
+    options
+  );
+  return json?.data?.Cart?.UpdateItem;
+}
+async function getCart(cartId, options) {
+  const json = await executeCartGraphQL(GET_CART_QUERY, { cartId }, options);
+  return json?.data?.Cart?.GetCart;
+}
+async function getLineItemsBySupplier(cartId, options) {
+  const json = await executeCartGraphQL(GET_LINE_ITEMS_BY_SUPPLIER_QUERY, { cartId }, options);
+  return json?.data?.Cart?.GetLineItemsBySupplier;
+}
+async function updateShippingsBySupplier(cartId, data, options) {
+  const json = await executeCartGraphQL(
+    UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
+    { cartId, data },
+    options
+  );
+  return json?.data?.Cart?.UpdateShippingsBySupplier;
+}
+async function createCheckout(cartId, options) {
+  const json = await executeCartGraphQL(CREATE_CHECKOUT_MUTATION, { cartId }, options);
+  return json?.data?.Checkout?.CreateCheckout;
+}
+async function updateCheckout(variables, options) {
+  const json = await executeCartGraphQL(UPDATE_CHECKOUT_MUTATION, variables, options);
+  return json?.data?.Checkout?.UpdateCheckout;
+}
+async function getCheckout(checkoutId, options) {
+  const json = await executeCartGraphQL(GET_CHECKOUT_QUERY, { checkoutId }, options);
+  return json?.data?.Checkout?.GetCheckout;
+}
+async function getAvailablePaymentMethods(options) {
+  const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, options);
+  return json?.data?.Payment?.GetAvailablePaymentMethods;
 }
 
 // src/core/cart/cart-manager.ts
@@ -4111,34 +5067,36 @@ var CartManager = class extends EventTarget {
     super();
     this.cartsBySponsor = this.loadFromStorage();
   }
-
-  async ensureCartId(sponsorId, currency, shippingCountry = 'NO') {
-    const activeCurrency = currency || (typeof globalThis !== 'undefined' && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== 'undefined' && localStorage.getItem('vio.currency')) || "NOK";
+  // MARK: - Backend cart sync (Vio Commerce GraphQL)
+  /** Ensure the sponsor cart exists server-side; returns its backend cart id. */
+  async ensureCartId(sponsorId, currency, shippingCountry = "NO") {
+    const activeCurrency = currency || getGlobalCurrency();
     let cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) {
-      cart = {
-        sponsorId,
-        items: [],
-        currency: activeCurrency
-      };
+      cart = { sponsorId, items: [], currency: activeCurrency };
       this.cartsBySponsor.set(sponsorId, cart);
     }
     if (!cart.cartId) {
       const opts = getCartGraphQLOptions(sponsorId);
       const customerSessionId = getCustomerSessionId();
       try {
-        const backendCart = await gqlCreateCart(customerSessionId, activeCurrency, shippingCountry, opts);
+        const backendCart = await createCart(
+          customerSessionId,
+          activeCurrency,
+          shippingCountry,
+          opts
+        );
         if (backendCart?.cart_id) {
           cart.cartId = backendCart.cart_id;
           this.updateFromBackendCart(sponsorId, backendCart);
         }
       } catch (err) {
-        console.warn("[CartManager] createCart failed:", err);
+        if (typeof console !== "undefined") console.warn("[CartManager] createCart failed:", err);
       }
     }
     return cart.cartId;
   }
-
+  /** Overwrite local cart state with the backend cart response (source of truth). */
   updateFromBackendCart(sponsorId, backendCart) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
@@ -4147,19 +5105,20 @@ var CartManager = class extends EventTarget {
     if (backendCart.shipping_country) cart.shippingCountry = backendCart.shipping_country;
     if (backendCart.subtotal != null) cart.subtotal = backendCart.subtotal;
     if (backendCart.shipping != null) cart.shipping = backendCart.shipping;
-    if (backendCart.available_shipping_countries) cart.availableShippingCountries = backendCart.available_shipping_countries;
-
+    if (backendCart.available_shipping_countries) {
+      cart.availableShippingCountries = backendCart.available_shipping_countries;
+    }
     if (Array.isArray(backendCart.line_items)) {
       cart.items = backendCart.line_items.map((li) => ({
         id: li.id,
         cartItemId: li.id,
         productId: li.product_id,
         sponsorId,
-        variantId: li.variant_id,
+        variantId: li.variant_id != null ? Number(li.variant_id) : void 0,
         brand: li.brand || "",
-        name: li.title ? (li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title) : "",
+        name: li.title ? li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title : "",
         unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? 0,
-        currency: li.price?.currency_code || backendCart.currency,
+        currency: li.price?.currency_code || backendCart.currency || cart.currency,
         imageUrl: li.image?.url || "",
         quantity: li.quantity,
         shipping: li.shipping,
@@ -4169,7 +5128,6 @@ var CartManager = class extends EventTarget {
     this.persist();
     this.emit();
   }
-
   // MARK: - Mutations
   /** Add a Product DTO to a sponsor's cart. Bumps quantity if already present.
    * When a variantId is given, the line uses the VARIANT's price / image / title
@@ -4230,41 +5188,38 @@ var CartManager = class extends EventTarget {
     }
     this.persist();
     this.emit();
-
-    const addedItem = existing || cart.items[cart.items.length - 1];
-
-    // Async sync with GraphQL backend
-    (async () => {
+    const addedItem = existing ?? cart.items[cart.items.length - 1];
+    void (async () => {
       try {
-        const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || "NOK");
+        const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0);
         if (cartId) {
           const gqlOpts = getCartGraphQLOptions(opts.sponsorId);
           const lineItemsInput = [
             {
               product_id: Number(opts.productId || 0),
               quantity: qty,
-              variant_id: opts.variantId ? Number(opts.variantId) : null
+              variant_id: opts.variantId != null ? Number(opts.variantId) : null
             }
           ];
-          const resCart = await gqlAddItem(cartId, lineItemsInput, gqlOpts);
+          const resCart = await addItem(cartId, lineItemsInput, gqlOpts);
           if (resCart && Array.isArray(resCart.line_items)) {
             this.updateFromBackendCart(opts.sponsorId, resCart);
           }
         }
       } catch (err) {
-        console.warn("[CartManager] GraphQL AddItem failed:", err);
+        if (typeof console !== "undefined") {
+          console.warn("[CartManager] GraphQL AddItem failed:", err);
+        }
       }
     })();
-
     return addedItem;
   }
-
   updateQuantity(lineItemId, sponsorId, quantity) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
     const item = cart.items.find((i5) => i5.id === lineItemId || i5.cartItemId === lineItemId);
     if (!item) return;
-    const targetItemId = item.cartItemId || item.id;
+    const targetItemId = item.cartItemId ?? item.id;
     if (quantity <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
     } else {
@@ -4273,74 +5228,65 @@ var CartManager = class extends EventTarget {
     if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
     this.persist();
     this.emit();
-
-    if (cart && cart.cartId) {
+    if (cart.cartId) {
+      const backendCartId = cart.cartId;
       const gqlOpts = getCartGraphQLOptions(sponsorId);
-      (async () => {
+      void (async () => {
         try {
-          let resCart;
-          if (quantity <= 0) {
-            resCart = await gqlDeleteItem(cart.cartId, targetItemId, gqlOpts);
-          } else {
-            resCart = await gqlUpdateItem(cart.cartId, targetItemId, null, quantity, gqlOpts);
-          }
+          const resCart = quantity <= 0 ? await deleteItem(backendCartId, targetItemId, gqlOpts) : await updateItem(backendCartId, targetItemId, null, quantity, gqlOpts);
           if (resCart && Array.isArray(resCart.line_items)) {
             this.updateFromBackendCart(sponsorId, resCart);
           }
         } catch (err) {
-          console.warn("[CartManager] GraphQL Update/DeleteItem failed:", err);
+          if (typeof console !== "undefined") {
+            console.warn("[CartManager] GraphQL Update/DeleteItem failed:", err);
+          }
         }
       })();
     }
   }
-
   removeItem(lineItemId, sponsorId) {
     this.updateQuantity(lineItemId, sponsorId, 0);
   }
-
   clearSponsorCart(sponsorId) {
     if (this.cartsBySponsor.delete(sponsorId)) {
       this.persist();
       this.emit();
     }
   }
-
   clearAllCarts() {
     if (this.cartsBySponsor.size === 0) return;
     this.cartsBySponsor.clear();
     this.persist();
     this.emit();
   }
-
+  /** Refresh the local cart from the backend (source of truth). */
   async fetchCartFromBackend(sponsorId) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart?.cartId) return null;
     const gqlOpts = getCartGraphQLOptions(sponsorId);
-    const resCart = await gqlGetCart(cart.cartId, gqlOpts);
-    if (resCart) {
-      this.updateFromBackendCart(sponsorId, resCart);
-    }
+    const resCart = await getCart(cart.cartId, gqlOpts);
+    if (resCart) this.updateFromBackendCart(sponsorId, resCart);
     return resCart;
   }
-
+  /** Line items grouped by supplier (shipping is per-supplier server-side). */
   async fetchLineItemsBySupplier(sponsorId) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart?.cartId) return null;
     const gqlOpts = getCartGraphQLOptions(sponsorId);
-    return await gqlGetLineItemsBySupplier(cart.cartId, gqlOpts);
+    return getLineItemsBySupplier(cart.cartId, gqlOpts);
   }
-
+  /** Set the chosen shipping option per supplier on the backend cart. */
   async updateShippingsBySupplier(sponsorId, data) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart?.cartId) return null;
     const gqlOpts = getCartGraphQLOptions(sponsorId);
-    const resCart = await gqlUpdateShippingsBySupplier(cart.cartId, data, gqlOpts);
+    const resCart = await updateShippingsBySupplier(cart.cartId, data, gqlOpts);
     if (resCart && Array.isArray(resCart.line_items)) {
       this.updateFromBackendCart(sponsorId, resCart);
     }
     return resCart;
   }
-
   // MARK: - Read accessors
   getAllCarts() {
     return new Map(this.cartsBySponsor);
@@ -4907,7 +5853,6 @@ var KLARNA_SHIPPING_OPTIONS = [
     preselected: false
   }
 ];
-
 var CREATE_PAYMENT_KLARNA_NATIVE_MUTATION = `
 mutation CreatePaymentKlarnaNative($checkoutId: String!, $countryCode: String, $currency: String, $locale: String, $returnUrl: String, $intent: String, $customer: KlarnaNativeCustomerInput, $billingAddress: KlarnaNativeAddressInput, $shippingAddress: KlarnaNativeAddressInput, $autoCapture: Boolean) {
   Payment {
@@ -4930,7 +5875,6 @@ mutation CreatePaymentKlarnaNative($checkoutId: String!, $countryCode: String, $
   }
 }
 `;
-
 var CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION = `
 mutation ConfirmPaymentKlarnaNative($checkoutId: String!, $authorizationToken: String!, $autoCapture: Boolean, $billingAddress: KlarnaNativeAddressInput, $shippingAddress: KlarnaNativeAddressInput, $customer: KlarnaNativeCustomerInput) {
   Payment {
@@ -5014,7 +5958,6 @@ mutation ConfirmPaymentKlarnaNative($checkoutId: String!, $authorizationToken: S
   }
 }
 `;
-
 function buildKlarnaCustomer(address) {
   if (!address) return null;
   return {
@@ -5025,7 +5968,6 @@ function buildKlarnaCustomer(address) {
     type: address.type || "person"
   };
 }
-
 function buildKlarnaAddress(address) {
   if (!address) return null;
   return {
@@ -5037,11 +5979,11 @@ function buildKlarnaAddress(address) {
     phone: address.phone || null,
     postal_code: address.postalCode || address.postal_code || address.zip || null,
     region: address.region || address.state || null,
-    street_address: address.streetAddress || address.street_address || address.address1 || address.street || null,
+    street_address: address.streetAddress || address.street_address || address.address1 || address.street || address.address || // CheckoutAddress uses plain `address` for the street
+    null,
     street_address2: address.streetAddress2 || address.street_address2 || address.address2 || null
   };
 }
-
 function resolveHttpsReturnUrl(overrideUrl) {
   let url = overrideUrl;
   if (!url && typeof window !== "undefined" && window.location) {
@@ -5057,37 +5999,9 @@ function resolveHttpsReturnUrl(overrideUrl) {
   }
   return url;
 }
-
 async function executeKlarnaGraphQL(query, variables, sponsorId) {
-  const cfg = Configuration.get();
-  const endpoint = cfg.graphQLBase || "https://graph-ql-dev.vio.live";
-  
-  let commerceKey = cfg.apiKey;
-  if (sponsorId && typeof Vio !== "undefined" && typeof Vio.findSponsor === "function") {
-    const sponsor = Vio.findSponsor(sponsorId);
-    if (sponsor?.commerce?.apiKey) {
-      commerceKey = sponsor.commerce.apiKey;
-    }
-  }
-
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": cfg.apiKey,
-      "Authorization": commerceKey
-    },
-    body: JSON.stringify({ query, variables })
-  });
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.errors) {
-    const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
-    throw new Error(errMsg);
-  }
-  return json;
+  return executeCartGraphQL(query, variables, getCartGraphQLOptions(sponsorId));
 }
-
 var CheckoutManager = class extends EventTarget {
   constructor(cartManager) {
     super();
@@ -5096,17 +6010,20 @@ var CheckoutManager = class extends EventTarget {
     this.applePayAvailableCache = null;
     this.klarnaAvailableCache = null;
     this.klarnaOrderInFlight = false;
+    /** Last backend shippings fetched (per-supplier), for UI reuse. */
+    this.lastFetchedShippings = [];
   }
   open(sponsorId) {
     const cart = this.cartManager.getCart(sponsorId);
     if (!cart || cart.items.length === 0) {
       throw new Error(`[VioCheckout] sponsor ${sponsorId} has no cart items`);
     }
-    const activeCurrency = getGlobalCurrency();
     this.state = {
       sponsorId,
       subtotal: this.cartManager.subtotalForSponsor(sponsorId),
-      currency: activeCurrency
+      // Page-level currency wins over whatever the persisted cart carries —
+      // the host may have switched currency since the cart was created.
+      currency: getGlobalCurrency()
     };
     this.emit();
     return this.state;
@@ -5117,75 +6034,83 @@ var CheckoutManager = class extends EventTarget {
     this.klarnaAvailableCache = null;
     this.emit();
   }
+  // MARK: - Backend checkout (Vio Commerce GraphQL)
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  /** Create the backend checkout for the sponsor's cart (auto-accepts terms). */
   async createCheckout(sponsorId) {
     const cart = this.cartManager.getCart(sponsorId);
     let cartId = cart?.cartId;
     if (!cartId) {
-      cartId = await this.cartManager.ensureCartId(sponsorId, cart?.currency || "NOK");
+      cartId = await this.cartManager.ensureCartId(sponsorId, cart?.currency);
       if (!cartId) {
         throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${sponsorId}`);
       }
     }
     const opts = getCartGraphQLOptions(sponsorId);
-    const checkout = await gqlCreateCheckout(cartId, opts);
+    const checkout = await createCheckout(cartId, opts);
     if (checkout?.id) {
       this.state = {
-        ...(this.state || {}),
+        ...this.state ?? { sponsorId, subtotal: 0, currency: getGlobalCurrency() },
         sponsorId,
         checkoutId: checkout.id,
         checkout
       };
       this.emit();
       try {
-        const updated = await gqlUpdateCheckout({
-          checkoutId: checkout.id,
-          buyerAcceptsPurchaseConditions: true,
-          buyerAcceptsTermsConditions: true
-        }, opts);
+        const updated = await updateCheckout(
+          {
+            checkoutId: checkout.id,
+            buyerAcceptsPurchaseConditions: true,
+            buyerAcceptsTermsConditions: true
+          },
+          opts
+        );
         if (updated?.id) {
-          this.state.checkout = updated;
+          this.state = { ...this.state, checkout: updated };
           this.emit();
           return updated;
         }
       } catch (err) {
-        console.warn("[CheckoutManager] Failed to auto-accept terms & purchase conditions:", err);
+        if (typeof console !== "undefined") {
+          console.warn("[CheckoutManager] Failed to auto-accept terms & purchase conditions:", err);
+        }
       }
     }
     return checkout;
   }
-
+  /** Update the backend checkout (terms are re-asserted unless overridden). */
   async updateCheckout(variables, sponsorId) {
-    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
+    const opts = getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     const fullVars = {
       buyerAcceptsPurchaseConditions: true,
       buyerAcceptsTermsConditions: true,
       ...variables
     };
-    const updated = await gqlUpdateCheckout(fullVars, opts);
-    if (updated?.id) {
-      this.state = {
-        ...(this.state || {}),
-        checkoutId: updated.id,
-        checkout: updated
-      };
+    const updated = await updateCheckout(fullVars, opts);
+    if (updated?.id && this.state) {
+      this.state = { ...this.state, checkoutId: updated.id, checkout: updated };
       this.emit();
     }
     return updated;
   }
-
   async getCheckout(checkoutId, sponsorId) {
-    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
-    return await gqlGetCheckout(checkoutId, opts);
+    const opts = getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getCheckout(checkoutId, opts);
   }
-
+  /** Payment methods enabled for the sponsor (backend-configured). */
   async getAvailablePaymentMethods(sponsorId) {
-    const opts = getCartGraphQLOptions(sponsorId || this.state?.sponsorId);
-    return await gqlGetAvailablePaymentMethods(opts);
+    const opts = getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getAvailablePaymentMethods(opts);
   }
-
+  /**
+   * Real shipping options from the backend cart (per supplier), mapped to the
+   * KlarnaShippingOption shape (minor units). Empty array on failure — callers
+   * fall back to the static KLARNA_SHIPPING_OPTIONS.
+   */
   async fetchAvailableShippings(sponsorId) {
     try {
-      const spId = sponsorId || this.state?.sponsorId || 4;
+      const spId = sponsorId ?? this.state?.sponsorId;
+      if (!spId) return [];
       const cart = this.cartManager.getCart(spId);
       let cartId = cart?.cartId;
       if (!cartId) {
@@ -5193,27 +6118,24 @@ var CheckoutManager = class extends EventTarget {
       }
       if (!cartId) return [];
       const opts = getCartGraphQLOptions(spId);
-      const supplierGroups = await gqlGetLineItemsBySupplier(cartId, opts);
+      const supplierGroups = await getLineItemsBySupplier(cartId, opts);
       const firstGroup = Array.isArray(supplierGroups) ? supplierGroups[0] : null;
       const shippings = firstGroup?.available_shippings ?? [];
       if (Array.isArray(shippings) && shippings.length > 0) {
         const supplierId = firstGroup?.supplier?.id;
-        const mapped = shippings.map((s, idx) => {
-          const priceObj = s.price ?? {};
-          const amount = typeof priceObj.amount_incl_taxes === "number"
-            ? priceObj.amount_incl_taxes
-            : (typeof priceObj.amount === "number" ? priceObj.amount : 0);
-          const priceInMinor = Math.round(amount * 100);
+        const mapped = shippings.map((s4, idx) => {
+          const priceObj = s4.price ?? {};
+          const amount = typeof priceObj.amount_incl_taxes === "number" ? priceObj.amount_incl_taxes : typeof priceObj.amount === "number" ? priceObj.amount : 0;
           return {
-            id: String(s.id),
-            supplierId: supplierId ? String(supplierId) : undefined,
-            method: s.name || "Default Shipping",
-            name: s.name || "Default Shipping",
-            description: s.description || "",
-            country_code: s.country_code || "NO",
-            price: priceInMinor,
+            id: String(s4.id),
+            supplierId: supplierId != null ? String(supplierId) : void 0,
+            method: s4.name || "Default Shipping",
+            name: s4.name || "Default Shipping",
+            description: s4.description || "",
+            country_code: s4.country_code || "NO",
+            price: Math.round(amount * 100),
             priceMajor: amount,
-            currency: priceObj.currency_code || (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || "NOK",
+            currency: priceObj.currency_code || getGlobalCurrency(),
             tax_amount: Math.round((priceObj.tax_amount ?? 0) * 100),
             tax_rate: Math.round((priceObj.tax_rate ?? 0) * 100),
             preselected: idx === 0
@@ -5223,24 +6145,26 @@ var CheckoutManager = class extends EventTarget {
         return mapped;
       }
     } catch (err) {
-      console.warn("[CheckoutManager] fetchAvailableShippings failed:", err);
+      if (typeof console !== "undefined") {
+        console.warn("[CheckoutManager] fetchAvailableShippings failed:", err);
+      }
     }
     return [];
   }
-
+  /** Set the chosen shipping per supplier on the backend cart. */
   async updateShippingsBySupplier(data, sponsorId) {
-    const spId = sponsorId || this.state?.sponsorId || 4;
+    const spId = sponsorId ?? this.state?.sponsorId;
+    if (!spId) return null;
     const cart = this.cartManager.getCart(spId);
-    let cartId = cart?.cartId;
-    if (!cartId) return null;
+    if (!cart?.cartId) return null;
     const opts = getCartGraphQLOptions(spId);
-    const updated = await gqlUpdateShippingsBySupplier(cartId, data, opts);
+    const updated = await updateShippingsBySupplier(cart.cartId, data, opts);
     if (updated) {
       this.cartManager.updateFromBackendCart(spId, updated);
     }
     return updated;
   }
-
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
     if (!this.state) return;
     this.state = { ...this.state, address };
@@ -5506,26 +6430,24 @@ var CheckoutManager = class extends EventTarget {
    */
   async mountKlarnaPayments(container, opts) {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
-    const cfg = Configuration.get();
-    const sponsorId = this.state?.sponsorId || 4;
-
+    const sponsorId = this.state.sponsorId;
     const fetchedShippings = await this.fetchAvailableShippings(sponsorId);
     const shippings = fetchedShippings.length > 0 ? fetchedShippings : KLARNA_SHIPPING_OPTIONS;
-
-    const { ctx, shippingOptions } = opts?.withShipping
-      ? this.buildKlarnaInstantContext(opts.shippingId, shippings)
-      : { ctx: this.buildKlarnaPendingContext(), shippingOptions: shippings };
-
-    const selectedOpt = shippings.find((s) => s.id === opts?.shippingId) || shippings[0];
+    const { ctx } = opts?.withShipping ? this.buildKlarnaInstantContext(opts.shippingId, shippings) : { ctx: this.buildKlarnaPendingContext() };
+    const selectedOpt = shippings.find((s4) => s4.id === opts?.shippingId) ?? shippings[0];
     if (selectedOpt?.id && selectedOpt?.supplierId) {
       try {
-        await this.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }], sponsorId);
+        await this.updateShippingsBySupplier(
+          [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+          sponsorId
+        );
       } catch (err) {
-        console.warn("[CheckoutManager] updateShippingsBySupplier failed during mount:", err);
+        if (typeof console !== "undefined") {
+          console.warn("[CheckoutManager] updateShippingsBySupplier failed during mount:", err);
+        }
       }
     }
-
-    let checkoutId = ctx.checkoutId || this.state?.checkoutId;
+    let checkoutId = ctx.checkoutId ?? this.state.checkoutId;
     try {
       const checkoutRes = await this.createCheckout(sponsorId);
       if (checkoutRes?.id) {
@@ -5533,17 +6455,15 @@ var CheckoutManager = class extends EventTarget {
         ctx.checkoutId = checkoutRes.id;
       }
     } catch (err) {
-      console.warn("[CheckoutManager] CreateCheckout before Klarna init failed:", err);
+      if (typeof console !== "undefined") {
+        console.warn("[CheckoutManager] CreateCheckout before Klarna init failed:", err);
+      }
     }
-    if (!checkoutId) {
-      checkoutId = String(sponsorId);
-    }
-
-    const address = this.state?.address;
+    if (!checkoutId) checkoutId = String(sponsorId);
+    const address = this.state.address;
     const activeCurrency = getGlobalCurrency();
-    if (this.state) this.state.currency = activeCurrency;
-    if (ctx) ctx.currency = activeCurrency;
-    console.log("[VioCheckout] mountKlarnaPayments → active currency:", activeCurrency, "| globalThis.__VIO_CURRENCY__:", typeof globalThis !== "undefined" ? globalThis.__VIO_CURRENCY__ : null, "| localStorage:", typeof localStorage !== "undefined" ? localStorage.getItem("vio.currency") : null);
+    if (this.state) this.state = { ...this.state, currency: activeCurrency };
+    ctx.currency = activeCurrency;
     const variables = {
       checkoutId,
       countryCode: "NO",
@@ -5556,27 +6476,25 @@ var CheckoutManager = class extends EventTarget {
       shippingAddress: buildKlarnaAddress(address),
       autoCapture: true
     };
-    console.log("[VioCheckout] CreatePaymentKlarnaNative variables →", JSON.stringify(variables, null, 2));
-
-    const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
+    const json = await executeKlarnaGraphQL(
+      CREATE_PAYMENT_KLARNA_NATIVE_MUTATION,
+      variables,
+      sponsorId
+    );
     const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
     if (!nativeRes || !nativeRes.client_token) {
       throw new Error("Klarna session creation failed: missing client_token");
     }
-
     if (nativeRes.checkout_id) {
       ctx.checkoutId = nativeRes.checkout_id;
-      this.state.checkoutId = nativeRes.checkout_id;
+      this.state = { ...this.state, checkoutId: nativeRes.checkout_id };
     }
     if (nativeRes.session_id) {
       ctx.sessionId = nativeRes.session_id;
-      this.state.sessionId = nativeRes.session_id;
+      this.state = { ...this.state, sessionId: nativeRes.session_id };
     }
-    if (nativeRes.client_token) {
-      ctx.clientToken = nativeRes.client_token;
-      this.state.clientToken = nativeRes.client_token;
-    }
-
+    ctx.clientToken = nativeRes.client_token;
+    this.state = { ...this.state, clientToken: nativeRes.client_token };
     const widget = await createKlarnaPaymentsWidget({
       clientToken: nativeRes.client_token,
       sessionId: nativeRes.session_id,
@@ -5652,15 +6570,14 @@ var CheckoutManager = class extends EventTarget {
    */
   async startKlarnaInstant() {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
-    const cfg = Configuration.get();
-    const sponsorId = this.state?.sponsorId || 4;
+    const sponsorId = this.state.sponsorId;
     const fetchedShippings = await this.fetchAvailableShippings(sponsorId);
     const shippings = fetchedShippings.length > 0 ? fetchedShippings : KLARNA_SHIPPING_OPTIONS;
-    const { ctx, shippingOptions } = this.buildKlarnaInstantContext(undefined, shippings);
+    const { ctx } = this.buildKlarnaInstantContext(void 0, shippings);
     let clientToken;
     let categories;
     try {
-      let checkoutId = ctx.checkoutId || this.state?.checkoutId;
+      let checkoutId = ctx.checkoutId ?? this.state.checkoutId;
       try {
         const checkoutRes = await this.createCheckout(sponsorId);
         if (checkoutRes?.id) {
@@ -5668,17 +6585,15 @@ var CheckoutManager = class extends EventTarget {
           ctx.checkoutId = checkoutRes.id;
         }
       } catch (err) {
-        console.warn("[CheckoutManager] CreateCheckout before Klarna instant failed:", err);
+        if (typeof console !== "undefined") {
+          console.warn("[CheckoutManager] CreateCheckout before Klarna instant failed:", err);
+        }
       }
-      if (!checkoutId) {
-        checkoutId = String(sponsorId);
-      }
-
-      const address = this.state?.address;
+      if (!checkoutId) checkoutId = String(sponsorId);
+      const address = this.state.address;
       const activeCurrency = getGlobalCurrency();
-      if (this.state) this.state.currency = activeCurrency;
-      if (ctx) ctx.currency = activeCurrency;
-      console.log("[VioCheckout] startKlarnaInstant → active currency:", activeCurrency);
+      this.state = { ...this.state, currency: activeCurrency };
+      ctx.currency = activeCurrency;
       const variables = {
         checkoutId,
         countryCode: "NO",
@@ -5691,25 +6606,25 @@ var CheckoutManager = class extends EventTarget {
         shippingAddress: buildKlarnaAddress(address),
         autoCapture: true
       };
-      console.log("[VioCheckout] CreatePaymentKlarnaNative instant variables →", JSON.stringify(variables, null, 2));
-
-      const json = await executeKlarnaGraphQL(CREATE_PAYMENT_KLARNA_NATIVE_MUTATION, variables, sponsorId);
+      const json = await executeKlarnaGraphQL(
+        CREATE_PAYMENT_KLARNA_NATIVE_MUTATION,
+        variables,
+        sponsorId
+      );
       const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
       if (!nativeRes || !nativeRes.client_token) {
         throw new Error("Klarna instant session failed: missing client_token");
       }
       if (nativeRes.checkout_id) {
         ctx.checkoutId = nativeRes.checkout_id;
-        this.state.checkoutId = nativeRes.checkout_id;
+        this.state = { ...this.state, checkoutId: nativeRes.checkout_id };
       }
       if (nativeRes.session_id) {
         ctx.sessionId = nativeRes.session_id;
-        this.state.sessionId = nativeRes.session_id;
+        this.state = { ...this.state, sessionId: nativeRes.session_id };
       }
-      if (nativeRes.client_token) {
-        ctx.clientToken = nativeRes.client_token;
-        this.state.clientToken = nativeRes.client_token;
-      }
+      ctx.clientToken = nativeRes.client_token;
+      this.state = { ...this.state, clientToken: nativeRes.client_token };
       clientToken = nativeRes.client_token;
       categories = nativeRes.payment_method_categories ?? [];
     } catch (err) {
@@ -5725,7 +6640,12 @@ var CheckoutManager = class extends EventTarget {
     container.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
     document.body.appendChild(container);
     try {
-      const widget = await createKlarnaPaymentsWidget({ clientToken, sessionId: ctx.sessionId, categories, container });
+      const widget = await createKlarnaPaymentsWidget({
+        clientToken,
+        sessionId: ctx.sessionId,
+        categories,
+        container
+      });
       await widget.load();
       const token = await widget.authorize();
       await this.completeKlarnaOrder(token, ctx, { authorizationToken: token });
@@ -5819,9 +6739,8 @@ var CheckoutManager = class extends EventTarget {
       this.klarnaOrderInFlight = true;
       sessionStorage.removeItem(KLARNA_PENDING_KEY);
     }
-    const cfg = Configuration.get();
     try {
-      const checkoutId = ctx?.checkoutId || this.state?.checkoutId || String(ctx?.sponsorId || this.state?.sponsorId || 4);
+      const checkoutId = ctx?.checkoutId ?? this.state?.checkoutId ?? String(ctx?.sponsorId ?? this.state?.sponsorId ?? "");
       const address = this.state?.address;
       const variables = {
         checkoutId,
@@ -5831,13 +6750,15 @@ var CheckoutManager = class extends EventTarget {
         shippingAddress: buildKlarnaAddress(address),
         customer: buildKlarnaCustomer(address)
       };
-
-      const json = await executeKlarnaGraphQL(CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION, variables, ctx?.sponsorId || this.state?.sponsorId);
+      const json = await executeKlarnaGraphQL(
+        CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION,
+        variables,
+        ctx?.sponsorId ?? this.state?.sponsorId
+      );
       const confirmRes = json?.data?.Payment?.ConfirmPaymentKlarnaNative;
       if (!confirmRes) {
         throw new Error("Klarna order confirmation failed: missing response data");
       }
-
       const orderData = confirmRes.order || confirmRes;
       const state = this.state ?? { sponsorId: ctx.sponsorId, subtotal: ctx.orderAmount, currency: ctx.currency };
       this.dispatchEvent(
@@ -5845,6 +6766,8 @@ var CheckoutManager = class extends EventTarget {
           detail: {
             method: "klarna",
             state,
+            // chargedTotal in MAJOR units (incl. shipping for express) for the
+            // confirmation screen. ctx.orderAmount is minor (øre) → /100.
             result: { ...result, order: orderData, chargedTotal: ctx.orderAmount / 100 }
           }
         })
@@ -7295,11 +8218,7 @@ var VioProductDetail = class extends i4 {
       if (Number.isNaN(sponsorIdNum) || sponsorIdNum <= 0) return;
       this.productId = ev.detail.productId;
       this.sponsorId = sponsorIdNum;
-      if (ev.detail.currency) {
-        this.currency = ev.detail.currency;
-      } else {
-        this.currency = (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== "undefined" && localStorage.getItem("vio.currency")) || "NOK";
-      }
+      this.currency = ev.detail.currency || getGlobalCurrency();
       this.show();
       void this.fetchProduct();
     };
@@ -7761,7 +8680,7 @@ var VioProductDetail = class extends i4 {
     let lastError = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const activeCurrency = (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== "undefined" && localStorage.getItem("vio.currency")) || this.currency || "NOK";
+        const activeCurrency = getGlobalCurrency() || this.currency;
         this.currency = activeCurrency;
         const commerce = Vio.commerceFor(this.sponsorId);
         products = await commerce.channel.product.getByIds({
@@ -8208,6 +9127,9 @@ function normalizeValues(raw) {
 }
 
 // src/ui/components/vio-cart.ts
+var STRIPE_LOGO_SRC = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 25" fill="none"><path d="M5.4 12.8c0-1.8 1.4-2.8 3.8-2.8 1.5 0 2.9.4 3.7.8V7.4c-.8-.3-2.1-.6-3.5-.6-3.8 0-6.4 2-6.4 5.9 0 5.4 7.2 4.5 7.2 6.9 0 1.9-1.5 2.8-3.9 2.8-1.8 0-3.3-.4-4.2-1v3.5c1 .5 2.4.8 4 .8 4 0 6.6-2 6.6-6 0-5.8-7.3-4.7-7.3-6.9zM19.1 7.2c-1.3 0-2.1.6-2.5 1.1v-6.7h-2.5v17.4h2.5V11c0-1.6 1.1-2.4 2.4-2.4 1.3 0 2.2.8 2.2 2.4v8h2.5v-8.3c0-2.3-1.6-3.5-4.7-3.5zM27 7.2h-2.5v11.8H27V7.2zM27 3.3h-2.5v2.5H27V3.3zM34.9 7.2c-1.4 0-2.3.6-2.8 1.3V7.2h-2.5v16.1h2.5v-4.5c.5.7 1.4 1.3 2.8 1.3 2.9 0 5-2.2 5-6.6s-2.1-6.3-5-6.3zm-.6 9.8c-1.4 0-2.3-1-2.3-2.6s.9-2.6 2.3-2.6c1.4 0 2.4 1 2.4 2.6s-1 2.6-2.4 2.6zM46.7 13c-.3-.2-1.3-.7-2.4-.7-1.5 0-2.4.9-2.4 2.2 0 1.3 1.1 1.9 2.7 2.3 2.2.6 4.3 1.3 4.3 4.1 0 3.3-2.7 4.8-6.1 4.8-1.9 0-3.7-.5-4.8-1.2v-3.4c1.1.7 2.7 1.2 4.4 1.2 1.7 0 2.8-.7 2.8-2 0-1.4-1.1-1.9-2.9-2.3-2.4-.6-4.1-1.5-4.1-4 0-3 2.4-4.5 5.5-4.5 1.7 0 3.1.4 4 .9V13z" fill="#635BFF"/></svg>'
+);
 var VioCart = class extends i4 {
   constructor() {
     super(...arguments);
@@ -8218,8 +9140,8 @@ var VioCart = class extends i4 {
     this.carts = /* @__PURE__ */ new Map();
     this.itemCount = 0;
     this.applePayAvailable = false;
-    this.confirmedOrder = null;
     this.availableMethods = [];
+    this.confirmedOrder = null;
     /** Pre-resolved Apple Pay handle; `show()` fires the sheet synchronously. */
     this.applePayHandle = null;
     /** Cart total Apple Pay was last prepared for (avoids redundant prep). */
@@ -8228,7 +9150,7 @@ var VioCart = class extends i4 {
       const detail = e7.detail;
       this.carts = detail.cartsBySponsor;
       this.itemCount = detail.itemCount;
-      this.loadAvailablePaymentMethods();
+      void this.loadAvailablePaymentMethods();
     };
   }
   static {
@@ -8481,6 +9403,7 @@ var VioCart = class extends i4 {
       letter-spacing: -0.02em;
       line-height: 1;
     }
+    /* Stripe — brand blurple button, same express row. */
     .stripe-btn {
       width: 100%;
       padding: 15px;
@@ -8588,34 +9511,27 @@ var VioCart = class extends i4 {
     this.open = true;
     void this.loadAvailablePaymentMethods();
   }
+  /** Which payment buttons to render — backend-configured per sponsor.
+   * Falls back to showing everything if the query fails or none is set. */
   async loadAvailablePaymentMethods() {
-    console.log("[VioCart] loadAvailablePaymentMethods INIT");
-    const firstSponsorId = [...this.carts.keys()][0] ?? (globalThis.__VIO_SPONSOR_ID__ ?? 4);
+    const firstSponsorId = [...this.carts.keys()][0] ?? globalThis.__VIO_SPONSOR_ID__;
+    if (firstSponsorId === void 0) return;
     try {
-      console.log("[VioCart] loadAvailablePaymentMethods inside");
       const methods = await Vio.checkout.getAvailablePaymentMethods(firstSponsorId);
-      console.log("[VioCart] loadAvailablePaymentMethods methods", methods);
       if (Array.isArray(methods)) {
-        this.availableMethods = methods.map(m => m.name);
+        this.availableMethods = methods.map((m2) => m2.name);
       } else {
         this.availableMethods = ["Stripe", "Klarna", "Vipps"];
       }
     } catch (err) {
-      console.warn("[VioCart] Failed to load payment methods:", err);
+      if (typeof console !== "undefined") {
+        console.warn("[VioCart] Failed to load payment methods:", err);
+      }
       this.availableMethods = ["Stripe", "Klarna", "Vipps"];
     }
   }
-  onStripe() {
-    if (this.itemCount === 0) return;
-    const firstSponsorId = [...this.carts.keys()][0];
-    if (firstSponsorId === void 0) return;
-    this.dispatchEvent(
-      new CustomEvent("vio:checkout-open", {
-        bubbles: true,
-        composed: true,
-        detail: { sponsorId: firstSponsorId, paymentMethod: "stripe", express: false }
-      })
-    );
+  methodEnabled(name) {
+    return this.availableMethods.length === 0 || this.availableMethods.some((m2) => m2.toLowerCase() === name);
   }
   updated(changed) {
     if (changed.has("open") && this.open) {
@@ -8712,6 +9628,19 @@ var VioCart = class extends i4 {
         bubbles: true,
         composed: true,
         detail: { sponsorId: firstSponsorId, paymentMethod: "vipps", express: false }
+      })
+    );
+  }
+  /** Stripe — opens the checkout with Stripe preselected. */
+  onStripe() {
+    if (this.itemCount === 0) return;
+    const firstSponsorId = [...this.carts.keys()][0];
+    if (firstSponsorId === void 0) return;
+    this.dispatchEvent(
+      new CustomEvent("vio:checkout-open", {
+        bubbles: true,
+        composed: true,
+        detail: { sponsorId: firstSponsorId, paymentMethod: "stripe", express: false }
       })
     );
   }
@@ -8820,21 +9749,16 @@ var VioCart = class extends i4 {
                         Apple Pay
                       </button>
                     ` : ""}
-                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "stripe")) ? b2`
+                ${this.methodEnabled("stripe") ? b2`
                       <button
                         class="stripe-btn"
                         @click=${this.onStripe}
                         aria-label="Betal med Stripe"
                       >
-                        <img
-                          class="stripe-logo"
-                          src="vio-sdk/assets/stripe-blurple.svg"
-                          alt="Stripe"
-                          style="height: 20px; display: block;"
-                        />
+                        <img class="stripe-logo" src=${STRIPE_LOGO_SRC} alt="Stripe" />
                       </button>
                     ` : ""}
-                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "klarna")) ? b2`
+                ${this.methodEnabled("klarna") ? b2`
                       <button
                         class="klarna-btn"
                         @click=${this.onKlarnaExpress}
@@ -8848,7 +9772,7 @@ var VioCart = class extends i4 {
                         />
                       </button>
                     ` : ""}
-                ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "vipps")) ? b2`
+                ${this.methodEnabled("vipps") ? b2`
                       <button
                         class="vipps-btn"
                         @click=${this.onVipps}
@@ -8912,12 +9836,15 @@ __decorateClass([
 ], VioCart.prototype, "applePayAvailable", 2);
 __decorateClass([
   r5()
-], VioCart.prototype, "confirmedOrder", 2);
+], VioCart.prototype, "availableMethods", 2);
 __decorateClass([
   r5()
-], VioCart.prototype, "availableMethods", 2);
+], VioCart.prototype, "confirmedOrder", 2);
 
 // src/ui/components/vio-checkout.ts
+var STRIPE_LOGO_SRC2 = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 25" fill="none"><path d="M5.4 12.8c0-1.8 1.4-2.8 3.8-2.8 1.5 0 2.9.4 3.7.8V7.4c-.8-.3-2.1-.6-3.5-.6-3.8 0-6.4 2-6.4 5.9 0 5.4 7.2 4.5 7.2 6.9 0 1.9-1.5 2.8-3.9 2.8-1.8 0-3.3-.4-4.2-1v3.5c1 .5 2.4.8 4 .8 4 0 6.6-2 6.6-6 0-5.8-7.3-4.7-7.3-6.9zM19.1 7.2c-1.3 0-2.1.6-2.5 1.1v-6.7h-2.5v17.4h2.5V11c0-1.6 1.1-2.4 2.4-2.4 1.3 0 2.2.8 2.2 2.4v8h2.5v-8.3c0-2.3-1.6-3.5-4.7-3.5zM27 7.2h-2.5v11.8H27V7.2zM27 3.3h-2.5v2.5H27V3.3zM34.9 7.2c-1.4 0-2.3.6-2.8 1.3V7.2h-2.5v16.1h2.5v-4.5c.5.7 1.4 1.3 2.8 1.3 2.9 0 5-2.2 5-6.6s-2.1-6.3-5-6.3zm-.6 9.8c-1.4 0-2.3-1-2.3-2.6s.9-2.6 2.3-2.6c1.4 0 2.4 1 2.4 2.6s-1 2.6-2.4 2.6zM46.7 13c-.3-.2-1.3-.7-2.4-.7-1.5 0-2.4.9-2.4 2.2 0 1.3 1.1 1.9 2.7 2.3 2.2.6 4.3 1.3 4.3 4.1 0 3.3-2.7 4.8-6.1 4.8-1.9 0-3.7-.5-4.8-1.2v-3.4c1.1.7 2.7 1.2 4.4 1.2 1.7 0 2.8-.7 2.8-2 0-1.4-1.1-1.9-2.9-2.3-2.4-.6-4.1-1.5-4.1-4 0-3 2.4-4.5 5.5-4.5 1.7 0 3.1.4 4 .9V13z" fill="#635BFF"/></svg>'
+);
 var VioCheckout = class extends i4 {
   constructor() {
     super(...arguments);
@@ -8934,7 +9861,6 @@ var VioCheckout = class extends i4 {
     this.confirmedMethod = null;
     this.paymentError = null;
     this.confirmedOrder = null;
-    this.availableMethods = [];
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
     this.klarnaMountedAmount = null;
@@ -8944,6 +9870,8 @@ var VioCheckout = class extends i4 {
     this.klarnaSelectedCat = "";
     this.klarnaAuthorizing = false;
     this.selectedShipping = KLARNA_SHIPPING_OPTIONS.find((o7) => o7.preselected)?.id ?? KLARNA_SHIPPING_OPTIONS[0]?.id ?? "";
+    this.availableShippingsList = [];
+    this.availableMethods = [];
     this.form = {
       firstName: "",
       lastName: "",
@@ -8959,7 +9887,7 @@ var VioCheckout = class extends i4 {
       if (this.checkoutState) {
         this.refreshApplePay();
         this.refreshKlarna();
-        this.loadAvailablePaymentMethods();
+        void this.loadAvailablePaymentMethods();
       } else {
         this.applePayAvailable = false;
         this.klarnaAvailable = false;
@@ -9480,24 +10408,27 @@ var VioCheckout = class extends i4 {
   show() {
     this.open = true;
   }
+  /** Which payment buttons to render — backend-configured per sponsor. */
   async loadAvailablePaymentMethods() {
-    console.log("loadAvailablePaymentMethods INIT")
     if (!this.checkoutState) return;
     try {
-      console.log("loadAvailablePaymentMethods inside")
-      const sponsorId = this.checkoutState.sponsorId;
-      const methods = await Vio.checkout.getAvailablePaymentMethods(sponsorId);
-      console.log("loadAvailablePaymentMethods methods", methods)
-
+      const methods = await Vio.checkout.getAvailablePaymentMethods(
+        this.checkoutState.sponsorId
+      );
       if (Array.isArray(methods)) {
-        this.availableMethods = methods.map(m => m.name);
+        this.availableMethods = methods.map((m2) => m2.name);
       } else {
         this.availableMethods = ["Stripe", "Klarna", "Vipps"];
       }
     } catch (err) {
-      console.warn("[VioCheckout] Failed to load payment methods:", err);
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Failed to load payment methods:", err);
+      }
       this.availableMethods = ["Stripe", "Klarna", "Vipps"];
     }
+  }
+  methodEnabled(name) {
+    return this.availableMethods.length === 0 || this.availableMethods.some((m2) => m2.toLowerCase() === name);
   }
   async refreshApplePay() {
     Vio.checkout.clearApplePayCache();
@@ -9538,7 +10469,7 @@ var VioCheckout = class extends i4 {
       this.klarnaSelectedCat = handle.selected;
       if (Array.isArray(handle.shippings) && handle.shippings.length > 0) {
         this.availableShippingsList = handle.shippings;
-        if (!this.selectedShipping || !handle.shippings.some((s) => s.id === this.selectedShipping)) {
+        if (!this.selectedShipping || !handle.shippings.some((s4) => s4.id === this.selectedShipping)) {
           this.selectedShipping = handle.shippings[0].id;
         }
       }
@@ -9562,22 +10493,31 @@ var VioCheckout = class extends i4 {
     this.klarnaSelectedCat = "";
     this.klarnaAuthorizing = false;
   }
+  /** Shippings in effect: backend per-supplier when loaded, static otherwise. */
+  get shippingList() {
+    return this.availableShippingsList.length > 0 ? this.availableShippingsList : KLARNA_SHIPPING_OPTIONS;
+  }
   /** Selected shipping option (express flow). */
   get shippingOption() {
-    const list = this.availableShippingsList?.length > 0 ? this.availableShippingsList : KLARNA_SHIPPING_OPTIONS;
+    const list = this.shippingList;
     return list.find((o7) => o7.id === this.selectedShipping) ?? list[0] ?? null;
   }
-  /** Pick a shipping option → re-mounts the Klarna widget with the new total. */
+  /** Pick a shipping option → re-mounts the Klarna widget with the new total.
+   * Also persists the choice on the backend cart (per supplier). */
   async onSelectShipping(id) {
     if (this.selectedShipping === id || this.klarnaMounting) return;
     this.selectedShipping = id;
-    const list = this.availableShippingsList?.length > 0 ? this.availableShippingsList : KLARNA_SHIPPING_OPTIONS;
-    const selectedOpt = list.find((s) => s.id === id);
-    if (selectedOpt && selectedOpt.supplierId) {
+    const selectedOpt = this.shippingList.find((s4) => s4.id === id);
+    if (selectedOpt?.supplierId) {
       try {
-        await Vio.checkout.updateShippingsBySupplier([{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }], this.checkoutState?.sponsorId);
+        await Vio.checkout.updateShippingsBySupplier(
+          [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+          this.checkoutState?.sponsorId
+        );
       } catch (err) {
-        console.warn("[VioCheckout] updateShippingsBySupplier failed:", err);
+        if (typeof console !== "undefined") {
+          console.warn("[VioCheckout] updateShippingsBySupplier failed:", err);
+        }
       }
     }
   }
@@ -9751,12 +10691,12 @@ var VioCheckout = class extends i4 {
   }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
   renderKlarnaPanel() {
-    const currency = this.checkoutState?.currency || (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== "undefined" && localStorage.getItem("vio.currency")) || "NOK";
+    const currency = this.checkoutState?.currency || getGlobalCurrency();
     return b2`
       <div class="klarna-panel">
         ${this.express ? b2`
               <div class="ship-select" role="radiogroup" aria-label="Frakt">
-                ${(this.availableShippingsList?.length > 0 ? this.availableShippingsList : KLARNA_SHIPPING_OPTIONS).map(
+                ${this.shippingList.map(
       (o7) => b2`
                     <button
                       class="ship-opt ${this.selectedShipping === o7.id ? "active" : ""}"
@@ -9768,7 +10708,9 @@ var VioCheckout = class extends i4 {
                       <span class="ship-meta">
                         <b>${o7.method || o7.name}</b><span>${o7.description}</span>
                       </span>
-                      <span class="ship-price">${formatPrice(o7.priceMajor ?? (o7.price / 100), o7.currency || currency)}</span>
+                      <span class="ship-price">
+                        ${formatPrice(o7.priceMajor ?? o7.price / 100, o7.currency || currency)}
+                      </span>
                     </button>
                   `
     )}
@@ -9799,14 +10741,14 @@ var VioCheckout = class extends i4 {
           @click=${() => void this.onKlarnaAuthorize()}
           ?disabled=${this.klarnaAuthorizing || !this.klarnaHandle || this.klarnaMounting}
         >
-          ${this.klarnaAuthorizing ? "Behandler\u2026" : this.klarnaMounting ? "Klargjør Klarna\u2026" : `Betal ${this.payTotalLabel()} med Klarna`}
+          ${this.klarnaAuthorizing ? "Behandler\u2026" : this.klarnaMounting ? "Klargj\xF8r Klarna\u2026" : `Betal ${this.payTotalLabel()} med Klarna`}
         </button>
       </div>
     `;
   }
   /** Express layout — only the Klarna widget + a compact order summary. */
   renderKlarnaExpress() {
-    const currency = this.checkoutState?.currency || (typeof globalThis !== "undefined" && globalThis.__VIO_CURRENCY__) || (typeof localStorage !== "undefined" && localStorage.getItem("vio.currency")) || "NOK";
+    const currency = this.checkoutState?.currency || getGlobalCurrency();
     return b2`
       <section class="section">
         <h3 class="section-heading">Kjøp med Klarna</h3>
@@ -9915,16 +10857,16 @@ var VioCheckout = class extends i4 {
                       ${this.applePayInProgress ? "\xC5pner\u2026" : b2`<span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width:18px;height:18px"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>Apple Pay</span>`}
                     </button>
                   ` : ""}
-              ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "stripe")) ? b2`
+              ${this.methodEnabled("stripe") ? b2`
                     <button
                       class="payment-btn"
                       @click=${() => this.onPay("stripe")}
                       aria-pressed=${this.checkoutState?.paymentMethod === "stripe"}
                     >
-                      <img src="vio-sdk/assets/stripe-blurple.svg" style="height: 20px; display: block;" alt="Stripe" />
+                      <img src=${STRIPE_LOGO_SRC2} style="height: 20px; display: block;" alt="Stripe" />
                     </button>
                   ` : ""}
-              ${((this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "klarna")) && this.klarnaAvailable) ? b2`
+              ${this.methodEnabled("klarna") && this.klarnaAvailable ? b2`
                     <button
                       class="payment-btn"
                       @click=${() => this.onPay("klarna")}
@@ -9933,7 +10875,7 @@ var VioCheckout = class extends i4 {
                       Klarna
                     </button>
                   ` : ""}
-              ${(this.availableMethods.length === 0 || this.availableMethods.some(m => m.toLowerCase() === "vipps")) ? b2`
+              ${this.methodEnabled("vipps") ? b2`
                     <button
                       class="payment-btn"
                       @click=${() => this.onPay("vipps")}
@@ -10048,10 +10990,13 @@ __decorateClass([
 ], VioCheckout.prototype, "selectedShipping", 2);
 __decorateClass([
   r5()
-], VioCheckout.prototype, "form", 2);
+], VioCheckout.prototype, "availableShippingsList", 2);
 __decorateClass([
   r5()
 ], VioCheckout.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], VioCheckout.prototype, "form", 2);
 
 // src/ui/elements.ts
 function registerVioElements() {
@@ -10113,10 +11058,21 @@ var VioCheckout2 = o({
   }
 });
 export {
+  ADD_ITEM_MUTATION,
+  CREATE_CART_MUTATION,
+  CREATE_CHECKOUT_MUTATION,
   CartManager,
   CheckoutManager,
   CommerceClient,
   Configuration,
+  DELETE_ITEM_MUTATION,
+  GET_AVAILABLE_PAYMENT_METHODS_QUERY,
+  GET_CART_QUERY,
+  GET_CHECKOUT_QUERY,
+  GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
+  UPDATE_CHECKOUT_MUTATION,
+  UPDATE_ITEM_MUTATION,
+  UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
   Vio,
   VioApi,
   VioApiError,
@@ -10125,35 +11081,28 @@ export {
   VioProduct2 as VioProduct,
   VioProductCarousel2 as VioProductCarousel,
   VioProductDetail2 as VioProductDetail,
+  addItem,
   checkApplePayAvailability,
+  createCart,
+  createCheckout,
   createCommerceClient,
   createVioApi,
+  deleteItem,
   displayPrice,
+  executeCartGraphQL,
   formatPrice,
+  getAvailablePaymentMethods,
+  getCart,
+  getCartGraphQLOptions,
+  getCheckout,
+  getCustomerSessionId,
+  getGlobalCurrency,
+  getLineItemsBySupplier,
   primaryImageUrl,
   showApplePaySheet,
-  gqlCreateCart as createCart,
-  gqlAddItem as addItem,
-  gqlDeleteItem as deleteItem,
-  gqlUpdateItem as updateItem,
-  gqlGetCart as getCart,
-  gqlGetLineItemsBySupplier as getLineItemsBySupplier,
-  gqlUpdateShippingsBySupplier as updateShippingsBySupplier,
-  gqlCreateCheckout as createCheckout,
-  gqlUpdateCheckout as updateCheckout,
-  gqlGetCheckout as getCheckout,
-  gqlGetAvailablePaymentMethods as getAvailablePaymentMethods,
-  CREATE_CART_MUTATION,
-  ADD_ITEM_MUTATION,
-  DELETE_ITEM_MUTATION,
-  UPDATE_ITEM_MUTATION,
-  GET_CART_QUERY,
-  GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
-  UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
-  CREATE_CHECKOUT_MUTATION,
-  UPDATE_CHECKOUT_MUTATION,
-  GET_CHECKOUT_QUERY,
-  GET_AVAILABLE_PAYMENT_METHODS_QUERY
+  updateCheckout,
+  updateItem,
+  updateShippingsBySupplier
 };
 /*! Bundled license information:
 
