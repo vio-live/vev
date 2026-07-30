@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Vio, primaryImageUrl } from "../../vio-sdk";
-import { fetchVioProduct, openCart } from "./vio-helpers";
+import { checkHasVariants, fetchVioProduct, openCart } from "./vio-helpers";
 import {
   productToItem,
   trackAddToCart,
@@ -249,11 +249,11 @@ export function ProductCardView({
   const name = p?.title ?? "";
   // Products with options show a "from" price (uses the correct product base
   // price, not the per-variant prices which the feed may ship mislabeled).
+  const hasVariants = checkHasVariants(p);
   const price = p?.price
-    ? `${p.options_enabled ? "Fra " : ""}${p.price.amount} ${p.price.currency_code ?? ""}`
+    ? `${hasVariants ? "Fra " : ""}${p.price.amount} ${p.price.currency_code ?? ""}`
     : "";
   const retailer = p?.supplier?.name ?? p?.brand ?? "";
-  const hasVariants = Boolean(p?.options_enabled);
   const inCart = qty > 0;
   const discount = resolveDiscount(p, discountMode, discountText);
   const isImageOnly = layout === "image-only";

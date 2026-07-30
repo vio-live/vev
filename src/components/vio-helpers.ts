@@ -134,6 +134,18 @@ export type VioProduct = {
   options?: unknown[];
 };
 
+export function checkHasVariants(p: any): boolean {
+  if (!p) return false;
+  if (Boolean(p.options_enabled) || Boolean(p.hasVariants) || Boolean(p.has_variants)) return true;
+  if (Array.isArray(p.options) && p.options.length > 0) return true;
+  if (Array.isArray(p.variants) && p.variants.length > 1) return true;
+  if (Array.isArray(p.variants) && p.variants.length === 1) {
+    const title = String(p.variants[0]?.title ?? "").trim().toLowerCase();
+    if (title && title !== "default title" && title !== "default") return true;
+  }
+  return false;
+}
+
 export function ensureVioInit(propKey?: string): void {
   const key = resolveApiKey(propKey);
   if (!Vio.isInitialized || lastInitKey !== key) {

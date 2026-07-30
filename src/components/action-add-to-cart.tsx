@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { registerVevComponent } from "@vev/react";
 import { Vio } from "../../vio-sdk";
 import ProductSelect from "./product-picker";
-import { fetchVioProduct, openCart, openProductInfo } from "./vio-helpers";
+import { checkHasVariants, fetchVioProduct, openCart, openProductInfo } from "./vio-helpers";
 import { productToItem, trackAddToCart, trackViewItem } from "./analytics";
 
 /**
@@ -38,7 +38,7 @@ export default function VioAddToCart({ product, openCartOnAdd = true, className,
 
   const onClick = () => {
     if (productId == null) return;
-    if (p?.options_enabled) {
+    if (checkHasVariants(p)) {
       trackViewItem(productToItem(p)); // variants → detail opens (product view)
       openProductInfo(Number(productId), Number(sponsorId)); // variants → pick in detail
       return;

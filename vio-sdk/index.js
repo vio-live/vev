@@ -8045,7 +8045,7 @@ var VioProduct = class extends i4 {
    * `vio:product-add` so the host adds it (bumping quantity on repeat taps). */
   onAdd(e7) {
     e7.stopPropagation();
-    if (this.hasVariants) {
+    if (this.hasVariants || (Array.isArray(this.variants) && this.variants.length > 1) || (Array.isArray(this.options) && this.options.length > 0)) {
       this.onClick();
       return;
     }
