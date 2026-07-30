@@ -8134,71 +8134,241 @@ var VioProductDetail = class extends i4 {
   /** Option values a variant represents — variant titles join them with " / "
    * (or "|"). Exact parts, lowercased, so matching is combination-accurate
    * (avoids "M" matching "Medium"). */
+  getVariantOptionMap(v2, productOptions) {
+    const map = {};
+    if (!v2) return { map, titleParts: [] };
+
+    if (v2.option1 != null && productOptions?.[0]) map[productOptions[0].name.toLowerCase()] = String(v2.option1).trim().toLowerCase();
+    if (v2.option2 != null && productOptions?.[1]) map[productOptions[1].name.toLowerCase()] = String(v2.option2).trim().toLowerCase();
+    if (v2.option3 != null && productOptions?.[2]) map[productOptions[2].name.toLowerCase()] = String(v2.option3).trim().toLowerCase();
+
+    const optArray = Array.isArray(v2.options) ? v2.options : Array.isArray(v2.selected_options) ? v2.selected_options : Array.isArray(v2.variant) ? v2.variant : null;
+    if (optArray) {
+      for (const item of optArray) {
+        const key = (item.name || item.option || "").trim().toLowerCase();
+        const val = (item.value || "").trim().toLowerCase();
+        if (key && val) map[key] = val;
+      }
+    } else if (v2.options && typeof v2.options === "object") {
+      for (const [k, v] of Object.entries(v2.options)) {
+        map[k.trim().toLowerCase()] = String(v).trim().toLowerCase();
+      }
+    }
+
+    const title = (v2.title ?? "").trim();
+    const titleLower = title.toLowerCase();
+
+    if (Array.isArray(productOptions)) {
+      for (const opt of productOptions) {
+        const key = opt.name.toLowerCase();
+        if (!map[key]) {
+          const rawValues = normalizeValues(opt.values);
+          const sortedVals = [...rawValues].sort((a, b) => b.length - a.length);
+          for (const valStr of sortedVals) {
+            const valLower = valStr.trim().toLowerCase();
+            const escaped = valLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const regex = new RegExp(`(?:^|[/|\\-,;\\s])${escaped}(?:$|[/|\\-,;\\s])`, "i");
+            if (regex.test(titleLower) || titleLower === valLower) {
+              map[key] = valLower;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const titleParts = title
+      .split(/\s*[/|,]\s*|\s+-\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (Array.isArray(productOptions)) {
+      productOptions.forEach((opt, idx) => {
+        const key = opt.name.toLowerCase();
+        if (!map[key] && titleParts[idx] != null) {
+          map[key] = titleParts[idx].toLowerCase();
+        }
+      });
+    }
+
+    return { map, titleParts };
+  }
+
   variantOptionValues(v2) {
-    return (v2.title ?? "").split(/\s*[/|]\s*/).map((s4) => s4.trim().toLowerCase()).filter(Boolean);
+    const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
+    const set = new Set(titleParts.map((s) => s.toLowerCase()));
+    for (const v of Object.values(map)) {
+      set.add(v);
+    }
+    return Array.from(set);
   }
-  /** Does a variant part represent this option value? Whole-token match, so the
-   * value "30" matches the part "30 ml" but "M" does NOT match "Medium". */
+
   partMatchesValue(part, value) {
-    if (part === value) return true;
-    return part.split(/\s+/).includes(value);
+    if (!part || !value) return false;
+    const p = String(part).trim().toLowerCase();
+    const v = String(value).trim().toLowerCase();
+    if (p === v) return true;
+    return p.split(/\s+/).includes(v);
   }
-  /** Does a variant satisfy every currently-selected option value? */
+
   variantMatchesSelection(v2, selection) {
-    const wanted = Object.values(selection).map((s4) => s4.trim().toLowerCase());
-    if (wanted.length === 0) return true;
-    const parts = this.variantOptionValues(v2);
-    return wanted.every((w2) => parts.some((part) => this.partMatchesValue(part, w2)));
+    if (!v2 || !selection) return false;
+    const entries = Object.entries(selection);
+    if (entries.length === 0) return true;
+
+    const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
+    const titlePartsLower = titleParts.map((t) => t.toLowerCase());
+
+    return entries.every(([optName, val]) => {
+      const key = optName.trim().toLowerCase();
+      const targetVal = String(val).trim().toLowerCase();
+
+      if (map[key]) {
+        return this.partMatchesValue(map[key], targetVal);
+      }
+      return titlePartsLower.some((part) => this.partMatchesValue(part, targetVal));
+    });
   }
-  /** Resolve the active variant from the selected combination. Prefers a FULL
-   * match (all options accounted for), then a partial match, then the first. */
+
+  getVariantQty(v2) {
+    if (!v2) return 0;
+    if (v2.available === false || v2.in_stock === false || v2.is_available === false) return 0;
+    if (v2.available === true || v2.in_stock === true || v2.is_available === true) return 999;
+
+    const rawQty = v2.quantity ?? v2.inventory_quantity ?? v2.stock ?? v2.available_quantity ?? v2.stock_quantity;
+    if (rawQty !== null && rawQty !== undefined && rawQty !== "") {
+      const parsed = Number(rawQty);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+
+    return 999;
+  }
+
   selectedVariant() {
-    if (!this.product || this.product.variants.length === 0) return null;
+    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) return null;
     const sel = this.selectedOptions;
-    const wanted = Object.values(sel).map((s4) => s4.trim().toLowerCase());
-    if (wanted.length === 0) return this.product.variants[0] ?? null;
+    const entries = Object.entries(sel);
+    if (entries.length === 0) return this.product.variants[0] ?? null;
+
+    const fullInStock = this.product.variants.find(
+      (v2) => this.variantMatchesSelection(v2, sel) && this.getVariantQty(v2) > 0
+    );
+    if (fullInStock) return fullInStock;
+
     const full = this.product.variants.find(
-      (v2) => this.variantOptionValues(v2).length === wanted.length && this.variantMatchesSelection(v2, sel)
+      (v2) => this.variantMatchesSelection(v2, sel)
     );
     if (full) return full;
-    const partial = this.product.variants.find((v2) => this.variantMatchesSelection(v2, sel));
-    return partial ?? this.product.variants[0] ?? null;
+
+    let bestVariant = null;
+    let maxScore = -1;
+
+    for (const v2 of this.product.variants) {
+      const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
+      const titlePartsLower = titleParts.map((t) => t.toLowerCase());
+      let score = 0;
+
+      for (const [optName, val] of entries) {
+        const key = optName.trim().toLowerCase();
+        const targetVal = String(val).trim().toLowerCase();
+        if (map[key] && this.partMatchesValue(map[key], targetVal)) {
+          score += 2;
+        } else if (titlePartsLower.some((part) => this.partMatchesValue(part, targetVal))) {
+          score += 1;
+        }
+      }
+
+      if (this.getVariantQty(v2) > 0) score += 0.5;
+
+      if (score > maxScore) {
+        maxScore = score;
+        bestVariant = v2;
+      }
+    }
+
+    return bestVariant ?? this.product.variants[0] ?? null;
   }
-  /** True if picking `value` for `optionName` (with the rest of the current
-   * selection) still yields an in-stock variant. When no variant reports stock
-   * (missing data), never disables — lets the backend be the source of truth. */
+
   isValueAvailable(optionName, value) {
-    if (!this.product) return true;
-    const anyStock = this.product.variants.some((v2) => (v2.quantity ?? 0) > 0);
-    if (!anyStock) return true;
-    const trial = { ...this.selectedOptions, [optionName]: value };
-    return this.product.variants.some(
-      (v2) => this.variantMatchesSelection(v2, trial) && (v2.quantity ?? 0) > 0
-    );
+    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) return true;
+
+    const valLower = String(value).trim().toLowerCase();
+    const key = optionName.trim().toLowerCase();
+
+    return this.product.variants.some((v2) => {
+      const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
+      if (this.getVariantQty(v2) <= 0) return false;
+      if (map[key]) return this.partMatchesValue(map[key], valLower);
+      return titleParts.some((part) => this.partMatchesValue(part.toLowerCase(), valLower));
+    });
   }
+
   get unitPrice() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
     return price?.amount_incl_taxes ?? price?.amount ?? 0;
   }
+
   get compareAt() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
     return price?.compare_at_incl_taxes ?? price?.compare_at ?? null;
   }
+
   get availableQuantity() {
     const v2 = this.selectedVariant();
-    if (v2) return v2.quantity ?? 0;
+    if (v2) return this.getVariantQty(v2);
     return this.product?.quantity ?? 0;
   }
+
   stockLabel() {
     const qty = this.availableQuantity;
     if (qty <= 0) return { text: "Utsolgt", cls: "out-of-stock" };
     if (qty <= 3) return { text: `F\xE5 igjen \u2014 ${qty} stk`, cls: "low-stock" };
     return { text: "P\xE5 lager", cls: "in-stock" };
   }
+
   selectOption(optionName, value) {
-    this.selectedOptions = { ...this.selectedOptions, [optionName]: value };
+    const newSelection = { ...this.selectedOptions, [optionName]: value };
+    const exactInStock = this.product?.variants?.find(
+      (v2) => this.variantMatchesSelection(v2, newSelection) && this.getVariantQty(v2) > 0
+    );
+    if (exactInStock) {
+      this.selectedOptions = newSelection;
+      return;
+    }
+    const exactAnyStock = this.product?.variants?.find(
+      (v2) => this.variantMatchesSelection(v2, newSelection)
+    );
+    if (exactAnyStock) {
+      this.selectedOptions = newSelection;
+      return;
+    }
+
+    const valLower = String(value).trim().toLowerCase();
+    const key = optionName.trim().toLowerCase();
+    const anyInStockWithVal = this.product?.variants?.find((v2) => {
+      const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
+      if (this.getVariantQty(v2) <= 0) return false;
+      if (map[key]) return this.partMatchesValue(map[key], valLower);
+      return titleParts.some((p) => this.partMatchesValue(p.toLowerCase(), valLower));
+    });
+
+    if (anyInStockWithVal) {
+      const { map } = this.getVariantOptionMap(anyInStockWithVal, this.product?.options);
+      const updated = { ...newSelection };
+      for (const opt of this.product?.options ?? []) {
+        const k = opt.name.toLowerCase();
+        if (map[k]) {
+          const optValues = normalizeValues(opt.values);
+          const origCase = optValues.find((v) => v.toLowerCase() === map[k]) || map[k];
+          updated[opt.name] = origCase;
+        }
+      }
+      this.selectedOptions = updated;
+    } else {
+      this.selectedOptions = newSelection;
+    }
   }
   allImages() {
     if (!this.product) return [];
@@ -8506,11 +8676,13 @@ var VioProductDetail = class extends i4 {
           <div class="option-values">
             ${values.map((val) => {
         const available = this.isValueAvailable(opt.name, val);
+        const currentVal = this.selectedOptions[opt.name] ?? "";
+        const isSelected = String(currentVal).trim().toLowerCase() === String(val).trim().toLowerCase();
         return b2`
                 <button
                   class="option-pill ${available ? "" : "unavailable"}"
                   @click=${() => this.selectOption(opt.name, val)}
-                  aria-pressed=${this.selectedOptions[opt.name] === val}
+                  aria-pressed=${isSelected}
                   ?disabled=${!available}
                   title=${available ? "" : "Utsolgt"}
                 >
