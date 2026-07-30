@@ -10721,8 +10721,9 @@ var VioCheckout = class extends i4 {
       background: var(--vio-color-surface-hover, #fafafa);
     }
     .payment-btn:disabled {
-      cursor: progress;
-      opacity: 0.6;
+      cursor: not-allowed;
+      opacity: 0.45;
+      pointer-events: none;
     }
     .payment-btn.primary {
       background: var(--vio-color-text, #0a0a0a);
@@ -11148,6 +11149,19 @@ var VioCheckout = class extends i4 {
     const list = this.shippingList;
     return list.find((o7) => o7.id === this.selectedShipping) ?? list[0] ?? null;
   }
+  /** Whether all mandatory fields in Leveringsadresse are filled. */
+  get isAddressValid() {
+    const f = this.form;
+    if (!f) return false;
+    return Boolean(
+      f.firstName && String(f.firstName).trim().length > 0 &&
+      f.lastName && String(f.lastName).trim().length > 0 &&
+      f.email && String(f.email).trim().length > 0 && String(f.email).includes("@") &&
+      f.address && String(f.address).trim().length > 0 &&
+      f.postalCode && String(f.postalCode).trim().length > 0 &&
+      f.city && String(f.city).trim().length > 0
+    );
+  }
   /** Pick a shipping option → re-mounts the Klarna widget with the new total.
    * Also persists the choice on the backend cart (per supplier). */
   async onSelectShipping(id) {
@@ -11209,6 +11223,10 @@ var VioCheckout = class extends i4 {
   }
   onPay(method) {
     this.paymentError = null;
+    if (!this.isAddressValid) {
+      this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
+      return;
+    }
     if (method === "apple-pay") {
       void this.onApplePay();
       return;
@@ -11239,6 +11257,10 @@ var VioCheckout = class extends i4 {
   onCompleteOrder() {
     const s4 = this.checkoutState;
     if (!s4 || !s4.paymentMethod) return;
+    if (!this.isAddressValid) {
+      this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
+      return;
+    }
     if (s4.paymentMethod === "stripe" || s4.paymentMethod === "vipps") {
       this.onPay(s4.paymentMethod);
       return;
@@ -11451,18 +11473,20 @@ var VioCheckout = class extends i4 {
             <h3 class="section-heading">Leveringsadresse</h3>
             <div class="form-row">
               <div class="field">
-                <label>Fornavn</label>
+                <label>Fornavn *</label>
                 <input
                   type="text"
+                  required
                   autocomplete="given-name"
                   .value=${this.form.firstName}
                   @input=${(e7) => this.onFieldChange("firstName", e7.target.value)}
                 />
               </div>
               <div class="field">
-                <label>Etternavn</label>
+                <label>Etternavn *</label>
                 <input
                   type="text"
+                  required
                   autocomplete="family-name"
                   .value=${this.form.lastName}
                   @input=${(e7) => this.onFieldChange("lastName", e7.target.value)}
@@ -11470,18 +11494,20 @@ var VioCheckout = class extends i4 {
               </div>
             </div>
             <div class="field">
-              <label>E-post</label>
+              <label>E-post *</label>
               <input
                 type="email"
+                required
                 autocomplete="email"
                 .value=${this.form.email}
                 @input=${(e7) => this.onFieldChange("email", e7.target.value)}
               />
             </div>
             <div class="field">
-              <label>Adresse</label>
+              <label>Adresse *</label>
               <input
                 type="text"
+                required
                 autocomplete="street-address"
                 .value=${this.form.address}
                 @input=${(e7) => this.onFieldChange("address", e7.target.value)}
@@ -11489,18 +11515,20 @@ var VioCheckout = class extends i4 {
             </div>
             <div class="form-row">
               <div class="field">
-                <label>Postnummer</label>
+                <label>Postnummer *</label>
                 <input
                   type="text"
+                  required
                   autocomplete="postal-code"
                   .value=${this.form.postalCode}
                   @input=${(e7) => this.onFieldChange("postalCode", e7.target.value)}
                 />
               </div>
               <div class="field">
-                <label>Sted</label>
+                <label>Sted *</label>
                 <input
                   type="text"
+                  required
                   autocomplete="address-level2"
                   .value=${this.form.city}
                   @input=${(e7) => this.onFieldChange("city", e7.target.value)}
@@ -11531,7 +11559,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("stripe")}
-                          ?disabled=${this.stripeLoading}
+                          ?disabled=${this.stripeLoading || !this.isAddressValid}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
                         >
                           ${this.stripeLoading ? "G\xE5r til Stripe\u2026" : `Betal ${this.orderTotal()} med Stripe`}
                         </button>
@@ -11541,7 +11570,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("vipps")}
-                          ?disabled=${this.vippsLoading}
+                          ?disabled=${this.vippsLoading || !this.isAddressValid}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
                         >
                           ${this.vippsLoading ? "G\xE5r til Vipps\u2026" : `Betal ${this.orderTotal()} med Vipps`}
                         </button>
@@ -11551,7 +11581,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("apple-pay")}
-                          ?disabled=${this.applePayInProgress}
+                          ?disabled=${this.applePayInProgress || !this.isAddressValid}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
                         >
                           ${this.applePayInProgress ? "\xC5pner\u2026" : `Betal ${this.orderTotal()} med Apple Pay`}
                         </button>
@@ -11561,9 +11592,16 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${this.onCompleteOrder}
+                          ?disabled=${!this.isAddressValid}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
                         >
                           Betal ${this.orderTotal()} med ${this.methodLabel(method ?? null)}
                         </button>
+                      ` : ""}
+                  ${!this.isAddressValid ? b2`
+                        <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
+                          Vennligst fyll ut leveringsadresse for å fullføre betalingen
+                        </div>
                       ` : ""}
                 ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
