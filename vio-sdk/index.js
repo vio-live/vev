@@ -10806,9 +10806,15 @@ var VioCheckout = class extends i4 {
       color: var(--vio-color-accent, #c14a3b);
       text-align: center;
     }
-    /* "Betal" CTA — sits full-width below the method grid once a method is
-       picked. Reuses .payment-btn.primary (its grid-column spans the row). */
-    .complete-cta { margin-top: 8px; }
+    .complete-cta {
+      width: 100% !important;
+      box-sizing: border-box !important;
+      margin-top: 8px;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      text-align: center !important;
+    }
 
     /* Order confirmation — compact, shown inside the drawer. */
     .confirmation {
@@ -11523,6 +11529,7 @@ var VioCheckout = class extends i4 {
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("stripe")}
                           ?disabled=${this.stripeLoading}
                         >
@@ -11532,6 +11539,7 @@ var VioCheckout = class extends i4 {
                   ${method === "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("vipps")}
                           ?disabled=${this.vippsLoading}
                         >
@@ -11541,6 +11549,7 @@ var VioCheckout = class extends i4 {
                   ${method === "apple-pay" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("apple-pay")}
                           ?disabled=${this.applePayInProgress}
                         >
@@ -11550,6 +11559,7 @@ var VioCheckout = class extends i4 {
                   ${showCompleteCta && method !== "stripe" && method !== "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          style="width: 100%; box-sizing: border-box;"
                           @click=${this.onCompleteOrder}
                         >
                           Betal ${this.orderTotal()} med ${this.methodLabel(method ?? null)}
