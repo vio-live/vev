@@ -10437,6 +10437,9 @@ var VioCheckout = class extends i4 {
           void this.refreshApplePay();
           void this.refreshKlarna();
           void this.loadAvailablePaymentMethods();
+          void this.loadAvailableShippings();
+        } else if (this.availableShippingsList.length === 0) {
+          void this.loadAvailableShippings();
         }
       } else {
         this.applePayAvailable = false;
@@ -11041,7 +11044,10 @@ var VioCheckout = class extends i4 {
     this.unmountKlarna();
     super.disconnectedCallback();
   }
-  updated() {
+  updated(changed) {
+    if (changed?.has && changed.has("open") && this.open && this.availableShippingsList.length === 0) {
+      void this.loadAvailableShippings();
+    }
     void this.mountKlarnaIfNeeded();
   }
   close() {
@@ -11051,6 +11057,34 @@ var VioCheckout = class extends i4 {
   }
   show() {
     this.open = true;
+    if (this.availableShippingsList.length === 0) {
+      void this.loadAvailableShippings();
+    }
+  }
+  /** Fetch available shippings via GetLineItemsBySupplier and update state. */
+  async loadAvailableShippings() {
+    const spId = this.checkoutState?.sponsorId;
+    if (!spId) return;
+    try {
+      const shippings = await Vio.checkout.fetchAvailableShippings(spId);
+      if (Array.isArray(shippings) && shippings.length > 0) {
+        this.availableShippingsList = shippings;
+        if (!this.selectedShipping || !shippings.some((s4) => s4.id === this.selectedShipping)) {
+          const firstOpt = shippings[0];
+          this.selectedShipping = firstOpt.id;
+          if (firstOpt?.supplierId) {
+            void Vio.checkout.updateShippingsBySupplier(
+              [{ shipping_id: firstOpt.id, supplier_id: Number(firstOpt.supplierId) }],
+              spId
+            );
+          }
+        }
+      }
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] loadAvailableShippings failed:", err);
+      }
+    }
   }
   /** Which payment buttons to render — backend-configured per sponsor. */
   async loadAvailablePaymentMethods() {
@@ -11163,6 +11197,11 @@ var VioCheckout = class extends i4 {
       f.city && String(f.city).trim().length > 0
     );
   }
+  /** Whether a valid shipping option is selected (when shippings are available). */
+  get hasSelectedShipping() {
+    if (this.availableShippingsList.length === 0) return true;
+    return Boolean(this.selectedShipping && this.shippingList.some((s4) => s4.id === this.selectedShipping));
+  }
   /** Pick a shipping option → re-mounts the Klarna widget with the new total.
    * Also persists the choice on the backend cart (per supplier). */
   async onSelectShipping(id) {
@@ -11222,11 +11261,17 @@ var VioCheckout = class extends i4 {
       this.applePayInProgress = false;
     }
   }
-  onPay(method) {
+  async onPay(method) {
     this.paymentError = null;
-    if (method !== "vipps" && !this.isAddressValid) {
-      this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
-      return;
+    if (method !== "vipps") {
+      if (!this.isAddressValid) {
+        this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
+        return;
+      }
+      if (!this.hasSelectedShipping) {
+        this.paymentError = "Vennligst velg en fraktmetode.";
+        return;
+      }
     }
     if (method === "apple-pay") {
       void this.onApplePay();
@@ -11234,6 +11279,19 @@ var VioCheckout = class extends i4 {
     }
     Vio.checkout.selectPaymentMethod(method);
     if (method === "stripe") {
+      const selectedOpt = this.shippingList.find((s4) => s4.id === this.selectedShipping);
+      if (selectedOpt?.supplierId) {
+        try {
+          await Vio.checkout.updateShippingsBySupplier(
+            [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+            this.checkoutState?.sponsorId
+          );
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] updateShippingsBySupplier on stripe pay failed:", err);
+          }
+        }
+      }
       this.stripeLoading = true;
       void Vio.checkout.startStripePayment(this.checkoutState?.sponsorId, this.form).catch((err) => {
         this.paymentError = `Kunne ikke starte Stripe-betaling: ${err instanceof Error ? err.message : String(err)}`;
@@ -11538,6 +11596,32 @@ var VioCheckout = class extends i4 {
                   />
                 </div>
               </div>
+              ${this.availableShippingsList.length > 0 ? b2`
+                <div style="margin-top: 16px;">
+                  <label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px;">
+                    Fraktmetode *
+                  </label>
+                  <div class="ship-select">
+                    ${this.availableShippingsList.map(
+                      (o7) => b2`
+                        <button
+                          type="button"
+                          class="ship-opt ${this.selectedShipping === o7.id ? "active" : ""}"
+                          @click=${() => void this.onSelectShipping(o7.id)}
+                        >
+                          <span class="ship-meta">
+                            <b>${o7.method || o7.name}</b>
+                            ${o7.description ? b2`<span>${o7.description}</span>` : ""}
+                          </span>
+                          <span class="ship-price">
+                            ${formatPrice(o7.priceMajor ?? (o7.price / 100), o7.currency || this.checkoutState?.currency || "NOK")}
+                          </span>
+                        </button>
+                      `
+                    )}
+                  </div>
+                </div>
+              ` : ""}
             </section>
           ` : ""}
 
@@ -11563,8 +11647,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("stripe")}
-                          ?disabled=${this.stripeLoading || !this.isAddressValid}
-                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
+                          ?disabled=${this.stripeLoading || !this.isAddressValid || !this.hasSelectedShipping}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           ${this.stripeLoading ? "G\xE5r til Stripe\u2026" : `Betal ${this.orderTotal()} med Stripe`}
                         </button>
@@ -11584,8 +11668,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("apple-pay")}
-                          ?disabled=${this.applePayInProgress || !this.isAddressValid}
-                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
+                          ?disabled=${this.applePayInProgress || !this.isAddressValid || !this.hasSelectedShipping}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           ${this.applePayInProgress ? "\xC5pner\u2026" : `Betal ${this.orderTotal()} med Apple Pay`}
                         </button>
@@ -11595,8 +11679,8 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${this.onCompleteOrder}
-                          ?disabled=${!this.isAddressValid}
-                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
+                          ?disabled=${!this.isAddressValid || !this.hasSelectedShipping}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           Betal ${this.orderTotal()} med ${this.methodLabel(method ?? null)}
                         </button>
@@ -11604,6 +11688,10 @@ var VioCheckout = class extends i4 {
                   ${!isVipps && !this.isAddressValid ? b2`
                         <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                           Vennligst fyll ut leveringsadresse for å fullføre betalingen
+                        </div>
+                      ` : !isVipps && !this.hasSelectedShipping ? b2`
+                        <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
+                          Vennligst velg en fraktmetode for å fullføre betalingen
                         </div>
                       ` : ""}
                 ` : b2`
