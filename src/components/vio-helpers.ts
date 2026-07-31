@@ -225,7 +225,7 @@ export type CatalogProduct = {
   id: number | string;
   brand?: string;
   title?: string;
-  price?: { amount?: number; currency_code?: string };
+  price?: { amount?: number; amount_incl_taxes?: number; currency_code?: string };
   images?: Array<{ url?: string }>;
 };
 
@@ -236,11 +236,17 @@ export type VioProduct = {
   title?: string;
   options_enabled?: boolean;
   supplier?: { name?: string };
-  price?: { amount?: number; currency_code?: string; compare_at?: number };
+  price?: { amount?: number; amount_incl_taxes?: number; currency_code?: string; compare_at?: number };
   images?: Array<{ url?: string }>;
-  variants?: Array<{ id: number; title?: string; price?: { amount?: number; currency_code?: string } }>;
+  variants?: Array<{ id: number; title?: string; price?: { amount?: number; amount_incl_taxes?: number; currency_code?: string } }>;
   options?: unknown[];
 };
+
+export function getProductPriceAmount(p: any): number | undefined {
+  if (!p?.price) return undefined;
+  const amount = p.price.amount_incl_taxes ?? p.price.amount;
+  return amount != null ? Number(amount) : undefined;
+}
 
 export function checkHasVariants(p: any): boolean {
   if (!p) return false;
@@ -348,7 +354,7 @@ const PRODUCTS_QUERY = `
         id
         brand
         title
-        price { amount currency_code }
+        price { amount amount_incl_taxes currency_code }
         images { url }
       }
     }

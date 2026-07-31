@@ -3988,10 +3988,10 @@ var ChannelProduct = class {
     if (!options.product_ids || options.product_ids.length === 0) return [];
     const variables = {
       productIds: options.product_ids,
-      currency: options.currency ?? null,
+      currency: options.currency ?? getGlobalCurrency(),
       imageSize: options.image_size ?? "large",
       useCache: options.useCache ?? true,
-      shippingCountryCode: options.shipping_country_code ?? null
+      shippingCountryCode: options.shipping_country_code ?? getGlobalCountryCode()
     };
     const data = await this.client.request(GET_PRODUCTS_BY_IDS, variables);
     return data.Channel?.GetProductsByIds ?? [];

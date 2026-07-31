@@ -19,8 +19,9 @@ export function parseIds(ids?: string): number[] {
 }
 
 function priceLabel(p: CatalogProduct): string {
-  if (!p.price?.amount) return "";
-  return `${p.price.amount} ${p.price.currency_code ?? ""}`.trim();
+  const amount = getProductPriceAmount(p);
+  if (amount == null) return "";
+  return `${amount} ${p.price?.currency_code ?? ""}`.trim();
 }
 
 function CatalogModal({

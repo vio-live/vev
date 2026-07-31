@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Vio, primaryImageUrl } from "../../vio-sdk";
-import { checkHasVariants, fetchVioProduct, openCart } from "./vio-helpers";
+import { checkHasVariants, fetchVioProduct, getProductPriceAmount, openCart } from "./vio-helpers";
 import {
   productToItem,
   trackAddToCart,
@@ -145,7 +145,9 @@ const CheckIcon = () => (
 function resolveDiscount(p: any, mode?: string, manual?: string): string | null {
   if (mode === "manual") return manual?.trim() || null;
   if (mode === "auto" && p?.price) {
-    const now = Number(p.price.amount);
+    const amountVal = getProductPriceAmount(p);
+    if (amountVal == null) return null;
+    const now = Number(amountVal);
     const was = Number(
       p.price.compare_at ?? p.price.original ?? p.price.original_amount ?? p.compare_at ?? NaN
     );
@@ -250,8 +252,9 @@ export function ProductCardView({
   // Products with options show a "from" price (uses the correct product base
   // price, not the per-variant prices which the feed may ship mislabeled).
   const hasVariants = checkHasVariants(p);
-  const price = p?.price
-    ? `${hasVariants ? "Fra " : ""}${p.price.amount} ${p.price.currency_code ?? ""}`
+  const priceAmount = getProductPriceAmount(p);
+  const price = p?.price && priceAmount != null
+    ? `${hasVariants ? "Fra " : ""}${priceAmount} ${p.price.currency_code ?? ""}`
     : "";
   const retailer = p?.supplier?.name ?? p?.brand ?? "";
   const inCart = qty > 0;
