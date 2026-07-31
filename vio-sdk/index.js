@@ -6358,8 +6358,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       checkoutId = checkoutRes?.id;
     }
     if (!checkoutId) checkoutId = String(spId);
+    const isVipps = extraUpdateVars?.paymentMethod === "Vipps";
     const addr = typeof formData === "object" && formData !== null ? formData : this.state?.address;
-    const addressObj = buildCheckoutAddress(addr);
+    const addressObj = !isVipps ? buildCheckoutAddress(addr) : null;
     const emailVal = (typeof formData === "string" ? formData : formData?.email) || this.state?.address?.email || "customer@example.com";
     const updateVars = {
       checkoutId,
@@ -11223,7 +11224,7 @@ var VioCheckout = class extends i4 {
   }
   onPay(method) {
     this.paymentError = null;
-    if (!this.isAddressValid) {
+    if (method !== "vipps" && !this.isAddressValid) {
       this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
       return;
     }
@@ -11257,7 +11258,7 @@ var VioCheckout = class extends i4 {
   onCompleteOrder() {
     const s4 = this.checkoutState;
     if (!s4 || !s4.paymentMethod) return;
-    if (!this.isAddressValid) {
+    if (s4.paymentMethod !== "vipps" && !this.isAddressValid) {
       this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
       return;
     }
@@ -11467,78 +11468,81 @@ var VioCheckout = class extends i4 {
   renderCheckoutBody() {
     const method = this.checkoutState?.paymentMethod;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
+    const isVipps = method === "vipps";
     return b2`
-          <section class="section">
-            <div class="section-label">Steg 1</div>
-            <h3 class="section-heading">Leveringsadresse</h3>
-            <div class="form-row">
+          ${!isVipps ? b2`
+            <section class="section">
+              <div class="section-label">Steg 1</div>
+              <h3 class="section-heading">Leveringsadresse</h3>
+              <div class="form-row">
+                <div class="field">
+                  <label>Fornavn *</label>
+                  <input
+                    type="text"
+                    required
+                    autocomplete="given-name"
+                    .value=${this.form.firstName}
+                    @input=${(e7) => this.onFieldChange("firstName", e7.target.value)}
+                  />
+                </div>
+                <div class="field">
+                  <label>Etternavn *</label>
+                  <input
+                    type="text"
+                    required
+                    autocomplete="family-name"
+                    .value=${this.form.lastName}
+                    @input=${(e7) => this.onFieldChange("lastName", e7.target.value)}
+                  />
+                </div>
+              </div>
               <div class="field">
-                <label>Fornavn *</label>
+                <label>E-post *</label>
                 <input
-                  type="text"
+                  type="email"
                   required
-                  autocomplete="given-name"
-                  .value=${this.form.firstName}
-                  @input=${(e7) => this.onFieldChange("firstName", e7.target.value)}
+                  autocomplete="email"
+                  .value=${this.form.email}
+                  @input=${(e7) => this.onFieldChange("email", e7.target.value)}
                 />
               </div>
               <div class="field">
-                <label>Etternavn *</label>
+                <label>Adresse *</label>
                 <input
                   type="text"
                   required
-                  autocomplete="family-name"
-                  .value=${this.form.lastName}
-                  @input=${(e7) => this.onFieldChange("lastName", e7.target.value)}
+                  autocomplete="street-address"
+                  .value=${this.form.address}
+                  @input=${(e7) => this.onFieldChange("address", e7.target.value)}
                 />
               </div>
-            </div>
-            <div class="field">
-              <label>E-post *</label>
-              <input
-                type="email"
-                required
-                autocomplete="email"
-                .value=${this.form.email}
-                @input=${(e7) => this.onFieldChange("email", e7.target.value)}
-              />
-            </div>
-            <div class="field">
-              <label>Adresse *</label>
-              <input
-                type="text"
-                required
-                autocomplete="street-address"
-                .value=${this.form.address}
-                @input=${(e7) => this.onFieldChange("address", e7.target.value)}
-              />
-            </div>
-            <div class="form-row">
-              <div class="field">
-                <label>Postnummer *</label>
-                <input
-                  type="text"
-                  required
-                  autocomplete="postal-code"
-                  .value=${this.form.postalCode}
-                  @input=${(e7) => this.onFieldChange("postalCode", e7.target.value)}
-                />
+              <div class="form-row">
+                <div class="field">
+                  <label>Postnummer *</label>
+                  <input
+                    type="text"
+                    required
+                    autocomplete="postal-code"
+                    .value=${this.form.postalCode}
+                    @input=${(e7) => this.onFieldChange("postalCode", e7.target.value)}
+                  />
+                </div>
+                <div class="field">
+                  <label>Sted *</label>
+                  <input
+                    type="text"
+                    required
+                    autocomplete="address-level2"
+                    .value=${this.form.city}
+                    @input=${(e7) => this.onFieldChange("city", e7.target.value)}
+                  />
+                </div>
               </div>
-              <div class="field">
-                <label>Sted *</label>
-                <input
-                  type="text"
-                  required
-                  autocomplete="address-level2"
-                  .value=${this.form.city}
-                  @input=${(e7) => this.onFieldChange("city", e7.target.value)}
-                />
-              </div>
-            </div>
-          </section>
+            </section>
+          ` : ""}
 
           <section class="section">
-            <div class="section-label">Steg 2</div>
+            <div class="section-label">${isVipps ? "Betaling" : "Steg 2"}</div>
             ${method ? b2`
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                     <h3 class="section-heading" style="margin:0;">
@@ -11570,8 +11574,7 @@ var VioCheckout = class extends i4 {
                           class="payment-btn primary complete-cta"
                           style="width: 100%; box-sizing: border-box;"
                           @click=${() => this.onPay("vipps")}
-                          ?disabled=${this.vippsLoading || !this.isAddressValid}
-                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : ""}
+                          ?disabled=${this.vippsLoading}
                         >
                           ${this.vippsLoading ? "G\xE5r til Vipps\u2026" : `Betal ${this.orderTotal()} med Vipps`}
                         </button>
@@ -11598,7 +11601,7 @@ var VioCheckout = class extends i4 {
                           Betal ${this.orderTotal()} med ${this.methodLabel(method ?? null)}
                         </button>
                       ` : ""}
-                  ${!this.isAddressValid ? b2`
+                  ${!isVipps && !this.isAddressValid ? b2`
                         <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                           Vennligst fyll ut leveringsadresse for å fullføre betalingen
                         </div>
