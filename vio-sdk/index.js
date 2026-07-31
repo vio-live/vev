@@ -6413,7 +6413,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async startStripePayment(sponsorId, formData) {
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
       sponsorId,
-      formData
+      formData,
+      { paymentMethod: "Stripe" }
     );
     const successUrl = resolveHttpsReturnUrl(null, {
       vio_payment: "success",
