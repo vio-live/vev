@@ -4022,6 +4022,30 @@ function displayPrice(product) {
   const amount = p3.amount_incl_taxes ?? p3.amount;
   return formatPrice(amount, p3.currency_code);
 }
+function getGlobalCountryCode() {
+  const g2 = globalThis;
+  if (g2.__VIO_COUNTRY__) return g2.__VIO_COUNTRY__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.country");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  return "NO";
+}
+function getGlobalLocale() {
+  const g2 = globalThis;
+  if (g2.__VIO_LOCALE__) return g2.__VIO_LOCALE__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.locale");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  return "nb-NO";
+}
 function getGlobalCurrency() {
   const g2 = globalThis;
   if (g2.__VIO_CURRENCY__) return g2.__VIO_CURRENCY__;
@@ -4034,11 +4058,32 @@ function getGlobalCurrency() {
   }
   return "NOK";
 }
+function getGlobalSymbol(currency) {
+  const activeCurrency = currency || getGlobalCurrency();
+  const g2 = globalThis;
+  if (!currency && g2.__VIO_SYMBOL__) return g2.__VIO_SYMBOL__;
+  if (!currency && typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.symbol");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  const curr = String(activeCurrency).toUpperCase();
+  if (curr === "NOK" || curr === "DKK") return "Kr";
+  if (curr === "SEK") return "SEK";
+  if (curr === "EUR") return "€";
+  if (curr === "USD" || curr === "CAD") return "$";
+  if (curr === "GBP") return "£";
+  if (curr === "CHF") return "CHF";
+  return activeCurrency;
+}
 function formatPrice(amount, currency) {
   const activeCurrency = currency || getGlobalCurrency();
-  const formatted = amount.toLocaleString("no-NO", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
-  const symbol = activeCurrency === "NOK" ? "kr" : activeCurrency;
-  return `${formatted} ${symbol}`;
+  const activeLocale = getGlobalLocale();
+  const activeSymbol = getGlobalSymbol(activeCurrency);
+  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
+  return `${formatted} ${activeSymbol}`;
 }
 function primaryImageUrl(product) {
   const p3 = product;
@@ -5032,7 +5077,7 @@ async function executeCartGraphQL(query, variables, options = {}) {
 async function createCart(customerSessionId, currency, shippingCountry, options) {
   const json = await executeCartGraphQL(
     CREATE_CART_MUTATION,
-    { customerSessionId, currency, shippingCountry: shippingCountry || null },
+    { customerSessionId, currency: currency || getGlobalCurrency(), shippingCountry: shippingCountry || getGlobalCountryCode() },
     options
   );
   return json?.data?.Cart?.CreateCart;
@@ -5131,12 +5176,15 @@ var CartManager = class extends EventTarget {
   }
   // MARK: - Backend cart sync (Vio Commerce GraphQL)
   /** Ensure the sponsor cart exists server-side; returns its backend cart id. */
-  async ensureCartId(sponsorId, currency, shippingCountry = "NO") {
+  async ensureCartId(sponsorId, currency, shippingCountry) {
     const activeCurrency = currency || getGlobalCurrency();
+    const activeCountry = shippingCountry || getGlobalCountryCode();
     let cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) {
-      cart = { sponsorId, items: [], currency: activeCurrency };
+      cart = { sponsorId, items: [], currency: activeCurrency, shippingCountry: activeCountry };
       this.cartsBySponsor.set(sponsorId, cart);
+    } else {
+      cart.shippingCountry = activeCountry;
     }
     if (!cart.cartId) {
       const opts = await getCartGraphQLOptions(sponsorId);
@@ -5145,7 +5193,7 @@ var CartManager = class extends EventTarget {
         const backendCart = await createCart(
           customerSessionId,
           activeCurrency,
-          shippingCountry,
+          activeCountry,
           opts
         );
         if (backendCart?.cart_id) {
@@ -5713,7 +5761,7 @@ async function mountKlarnaExpressButton(opts) {
       currency: opts.paymentRequest.currency,
       paymentAmount: opts.paymentRequest.amount,
       intents: ["PAY"],
-      locale: "nb-NO",
+      locale: getGlobalLocale(),
       // REDIRECT = full-page navigation to Klarna's hosted journey, then back
       // to `returnUrl` with the result. We force this (vs DEVICE_BEST's desktop
       // popup) because the popup proved unreliable here — it opened and closed
@@ -6079,7 +6127,7 @@ function buildKlarnaAddress(address) {
   if (!address) return null;
   return {
     city: address.city || null,
-    country: address.country || address.countryCode || "NO",
+    country: address.country || address.countryCode || getGlobalCountryCode(),
     email: address.email || null,
     family_name: address.familyName || address.family_name || address.last_name || address.lastName || null,
     given_name: address.givenName || address.given_name || address.first_name || address.firstName || null,
@@ -6099,7 +6147,7 @@ function buildCheckoutAddress(address) {
   const address1 = address.address || address.address1 || address.street || address.street_address || null;
   const city = address.city || null;
   const zip2 = address.postalCode || address.postal_code || address.zip || null;
-  const country_code = address.countryCode || address.country_code || address.country || "NO";
+  const country_code = address.countryCode || address.country_code || address.country || getGlobalCountryCode();
   if (!firstName && !lastName && !address1 && !city && !zip2) return null;
   return {
     first_name: firstName,
@@ -6638,7 +6686,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     const available = await isKlarnaAvailable({
       clientId,
-      locale: "nb-NO",
+      locale: getGlobalLocale(),
       environment: cfg?.klarnaEnvironment
     });
     this.klarnaAvailableCache = available;
@@ -6690,7 +6738,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     return mountKlarnaExpressButton({
       config: {
         clientId: cfg.klarnaClientId,
-        locale: "nb-NO",
+        locale: getGlobalLocale(),
         environment: cfg.klarnaEnvironment
       },
       container,
@@ -6760,9 +6808,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     ctx.currency = activeCurrency;
     const variables = {
       checkoutId,
-      countryCode: "NO",
+      countryCode: getGlobalCountryCode(),
       currency: activeCurrency,
-      locale: "nb-NO",
+      locale: getGlobalLocale(),
       returnUrl: resolveHttpsReturnUrl(null, {
         vio_payment: "success",
         vio_method: "klarna",
@@ -6895,9 +6943,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       ctx.currency = activeCurrency;
       const variables = {
         checkoutId,
-        countryCode: "NO",
+        countryCode: getGlobalCountryCode(),
         currency: activeCurrency,
-        locale: "nb-NO",
+        locale: getGlobalLocale(),
         returnUrl: resolveHttpsReturnUrl(null, {
           vio_payment: "success",
           vio_method: "klarna",
@@ -7000,7 +7048,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const cfg = Configuration.isInitialized ? Configuration.get() : null;
     if (!cfg?.klarnaClientId) return;
     await listenForKlarnaCompletion({
-      config: { clientId: cfg.klarnaClientId, locale: "nb-NO", environment: cfg.klarnaEnvironment },
+      config: { clientId: cfg.klarnaClientId, locale: getGlobalLocale(), environment: cfg.klarnaEnvironment },
       onComplete: (result) => {
         void this.completeKlarnaOrder(result.authorizationToken, pending, result);
       },

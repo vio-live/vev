@@ -83,7 +83,55 @@ export function getActiveSponsorId(): number {
   return resolved;
 }
 
+export type CountryConfig = {
+  code: string;
+  name: string;
+  locale: string;
+  symbol: string;
+  currency: string;
+};
+
+export const SUPPORTED_COUNTRIES: CountryConfig[] = [
+  { code: "NO", name: "Norway", locale: "nb-NO", symbol: "Kr", currency: "NOK" },
+  { code: "DK", name: "Denmark", locale: "da-DK", symbol: "Kr", currency: "DKK" },
+  { code: "SE", name: "Sweden", locale: "sv-SE", symbol: "SEK", currency: "SEK" },
+  { code: "FI", name: "Finland", locale: "fi-FI", symbol: "€", currency: "EUR" },
+  { code: "US", name: "United States", locale: "en-US", symbol: "$", currency: "USD" },
+  { code: "CA", name: "Canada", locale: "en-CA", symbol: "$", currency: "CAD" },
+  { code: "GB", name: "United Kingdom", locale: "en-GB", symbol: "£", currency: "GBP" },
+  { code: "DE", name: "Germany", locale: "de-DE", symbol: "€", currency: "EUR" },
+  { code: "NL", name: "Netherlands", locale: "nl-NL", symbol: "€", currency: "EUR" },
+  { code: "ES", name: "Spain", locale: "es-ES", symbol: "€", currency: "EUR" },
+  { code: "IT", name: "Italy", locale: "it-IT", symbol: "€", currency: "EUR" },
+  { code: "CH", name: "Switzerland", locale: "de-CH", symbol: "CHF", currency: "CHF" },
+];
+
+export function getCountryConfig(input?: string): CountryConfig {
+  if (!input) return SUPPORTED_COUNTRIES[0];
+  const query = input.trim().toLowerCase();
+  const found = SUPPORTED_COUNTRIES.find(
+    (c) =>
+      c.code.toLowerCase() === query ||
+      c.name.toLowerCase() === query ||
+      c.locale.toLowerCase() === query ||
+      c.currency.toLowerCase() === query
+  );
+  return found || SUPPORTED_COUNTRIES[0];
+}
+
+export const VIO_COUNTRY_STORAGE = "vio.country";
 export const VIO_CURRENCY_STORAGE = "vio.currency";
+export const VIO_LOCALE_STORAGE = "vio.locale";
+export const VIO_SYMBOL_STORAGE = "vio.symbol";
+
+export function getPersistedCountry(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(VIO_COUNTRY_STORAGE);
+  } catch {
+    return null;
+  }
+}
 
 export function getPersistedCurrency(): string | null {
   if (typeof localStorage === "undefined") return null;
@@ -94,19 +142,79 @@ export function getPersistedCurrency(): string | null {
   }
 }
 
-export function persistCurrency(currency: string): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(VIO_CURRENCY_STORAGE, currency.trim());
-  } catch {
-    /* noop */
+export function persistCountry(countryInput: string): CountryConfig {
+  const config = getCountryConfig(countryInput);
+  const g = globalThis as any;
+  g.__VIO_COUNTRY__ = config.code;
+  g.__VIO_CURRENCY__ = config.currency;
+  g.__VIO_LOCALE__ = config.locale;
+  g.__VIO_SYMBOL__ = config.symbol;
+
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(VIO_COUNTRY_STORAGE, config.code);
+      localStorage.setItem(VIO_CURRENCY_STORAGE, config.currency);
+      localStorage.setItem(VIO_LOCALE_STORAGE, config.locale);
+      localStorage.setItem(VIO_SYMBOL_STORAGE, config.symbol);
+    } catch {
+      /* noop */
+    }
   }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("vio:country-changed", { detail: config }));
+    window.dispatchEvent(new CustomEvent("vio:currency-changed", { detail: config.currency }));
+  }
+
+  return config;
+}
+
+export function persistCurrency(currency: string): void {
+  persistCountry(currency);
+}
+
+export function getActiveCountry(): CountryConfig {
+  const g = globalThis as any;
+  const runtime = g.__VIO_COUNTRY__;
+  const persisted = getPersistedCountry();
+  return getCountryConfig(runtime || persisted || "NO");
+}
+
+export function getActiveCountryCode(): string {
+  return getActiveCountry().code;
 }
 
 export function getActiveCurrency(): string {
-  const runtime = (globalThis as { __VIO_CURRENCY__?: string }).__VIO_CURRENCY__;
+  const g = globalThis as any;
+  const runtime = g.__VIO_CURRENCY__;
   const persisted = getPersistedCurrency();
-  return runtime || persisted || "NOK";
+  if (runtime) return runtime;
+  if (persisted) return persisted;
+  return getActiveCountry().currency;
+}
+
+export function getActiveLocale(): string {
+  const g = globalThis as any;
+  if (g.__VIO_LOCALE__) return g.__VIO_LOCALE__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v = localStorage.getItem(VIO_LOCALE_STORAGE);
+      if (v) return v;
+    } catch {}
+  }
+  return getActiveCountry().locale;
+}
+
+export function getActiveSymbol(): string {
+  const g = globalThis as any;
+  if (g.__VIO_SYMBOL__) return g.__VIO_SYMBOL__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v = localStorage.getItem(VIO_SYMBOL_STORAGE);
+      if (v) return v;
+    } catch {}
+  }
+  return getActiveCountry().symbol;
 }
 
 /** A picked product reference (single-select value / multi-select item). */
@@ -190,6 +298,7 @@ export async function fetchVioProduct(productId: number, sponsorId: number): Pro
       const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
         product_ids: [productId],
         currency: getActiveCurrency(),
+        shipping_country_code: getActiveCountryCode(),
         image_size: "large"
       });
       const list = Array.isArray(arr) ? arr : [];
@@ -211,6 +320,7 @@ export async function fetchVioProducts(productIds: number[], sponsorId: number):
       const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
         product_ids: ids,
         currency: getActiveCurrency(),
+        shipping_country_code: getActiveCountryCode(),
         image_size: "large"
       });
       const list = Array.isArray(arr) ? arr : [];
@@ -223,7 +333,7 @@ export async function fetchVioProducts(productIds: number[], sponsorId: number):
 }
 
 const PRODUCTS_QUERY = `
-  query Products($currency: String, $imageSize: ImageSize, $useCache: Boolean!) {
+  query Products($currency: String, $shippingCountryCode: String, $imageSize: ImageSize, $useCache: Boolean!) {
     Channel {
       Products(
         barcode_list: []
@@ -233,7 +343,7 @@ const PRODUCTS_QUERY = `
         currency: $currency
         image_size: $imageSize
         useCache: $useCache
-        shipping_country_code: null
+        shipping_country_code: $shippingCountryCode
       ) {
         id
         brand
@@ -261,7 +371,12 @@ export function loadCatalog(): Promise<CatalogProduct[]> {
     ensureVioInit();
     await Vio.bootstrap();
     const commerce = Vio.commerceFor(getActiveSponsorId());
-    const data = await commerce.raw.request(PRODUCTS_QUERY, { currency: getActiveCurrency(), imageSize: "large", useCache: true });
+    const data = await commerce.raw.request(PRODUCTS_QUERY, {
+      currency: getActiveCurrency(),
+      shippingCountryCode: getActiveCountryCode(),
+      imageSize: "large",
+      useCache: true,
+    });
     const list = (data?.Channel?.Products ?? []) as CatalogProduct[];
     if (DEBUG) console.log("[Vio] loadCatalog →", list.length, "products");
     return list;

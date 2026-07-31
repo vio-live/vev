@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { getActiveLocale } from "./vio-helpers";
 
 /**
  * Analytics inspector — a floating, live view of the commerce funnel events as
@@ -142,7 +143,7 @@ export default function AnalyticsInspector() {
                 <span style={{ marginLeft: "auto", opacity: 0.75, textAlign: "right" }}>
                   {e.value != null ? (
                     <span>
-                      {e.value.toLocaleString("nb-NO")} {e.currency ?? ""}
+                      {e.value.toLocaleString(getActiveLocale())} {e.currency ?? ""}
                     </span>
                   ) : e.count != null ? (
                     <span>{e.count} items</span>

@@ -15,7 +15,9 @@ import {
   setRuntimeApiKey,
   resetCatalogCache,
   persistSponsorId,
-  persistCurrency,
+  persistCountry,
+  SUPPORTED_COUNTRIES,
+  getCountryConfig,
 } from "./vio-helpers";
 
 /**
@@ -93,6 +95,7 @@ type Props = {
   graphQLBase?: string;
   stripePublishableKey?: string;
   sponsorId?: number;
+  country?: string;
   currency?: string;
   // Cart button (floating action button).
   cartButton?: boolean;
@@ -112,7 +115,8 @@ export default function VioConfig({
   graphQLBase,
   stripePublishableKey,
   sponsorId,
-  currency = "NOK",
+  country = "NO",
+  currency,
   cartButton = true,
   cartPosition = "bottom-right",
   cartIcon = "bag",
@@ -231,14 +235,12 @@ export default function VioConfig({
     window.dispatchEvent(new CustomEvent("vio:sponsor-changed", { detail: resolvedSponsorId }));
   }, [resolvedSponsorId]);
 
-  // Set the dynamic runtime currency and notify listeners
-  const resolvedCurrency = currency || "NOK";
+  // Set the dynamic runtime country/currency/locale/symbol and notify listeners
+  const resolvedCountryInput = country || (currency ? getCountryConfig(currency).code : "NO");
   useEffect(() => {
-    (globalThis as any).__VIO_CURRENCY__ = resolvedCurrency;
-    persistCurrency(resolvedCurrency);
+    persistCountry(resolvedCountryInput);
     resetCatalogCache();
-    window.dispatchEvent(new CustomEvent("vio:currency-changed", { detail: resolvedCurrency }));
-  }, [resolvedCurrency]);
+  }, [resolvedCountryInput]);
 
   // Cart badge count.
   useEffect(() => {
@@ -609,11 +611,18 @@ registerVevComponent(VioConfig, {
       component: VioSponsorSelector as any,
     },
     {
-      name: "currency",
-      title: "Currency",
-      type: "string",
-      initialValue: "NOK",
-    },
+      name: "country",
+      title: "Country",
+      type: "select",
+      initialValue: "NO",
+      options: {
+        display: "dropdown",
+        items: SUPPORTED_COUNTRIES.map((c) => ({
+          value: c.code,
+          label: c.name,
+        })),
+      },
+    } as any,
     { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
     { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },
     { name: "stripePublishableKey", title: "Stripe PK", type: "string", initialValue: DEFAULT_STRIPE_PK },
