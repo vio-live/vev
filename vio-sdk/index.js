@@ -3895,6 +3895,101 @@ var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
   };
 };
 
+// src/core/types.ts
+function displayPrice(product) {
+  const p3 = product.price;
+  const amount = p3.amount_incl_taxes ?? p3.amount;
+  return formatPrice(amount, p3.currency_code);
+}
+function getGlobalCountryCode() {
+  const g2 = globalThis;
+  if (g2.__VIO_COUNTRY__) return g2.__VIO_COUNTRY__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.country");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  return "NO";
+}
+function getGlobalLocale() {
+  const g2 = globalThis;
+  if (g2.__VIO_LOCALE__) return g2.__VIO_LOCALE__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.locale");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  return "nb-NO";
+}
+function getGlobalSymbol(currency) {
+  const activeCurrency = currency || getGlobalCurrency();
+  const g2 = globalThis;
+  if (!currency && g2.__VIO_SYMBOL__) return g2.__VIO_SYMBOL__;
+  if (!currency && typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.symbol");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  const curr = String(activeCurrency).toUpperCase();
+  if (curr === "NOK" || curr === "DKK") return "Kr";
+  if (curr === "SEK") return "SEK";
+  if (curr === "EUR") return "\u20AC";
+  if (curr === "USD" || curr === "CAD") return "$";
+  if (curr === "GBP") return "\xA3";
+  if (curr === "CHF") return "CHF";
+  return activeCurrency;
+}
+function getGlobalCurrency() {
+  const g2 = globalThis;
+  if (g2.__VIO_CURRENCY__) return g2.__VIO_CURRENCY__;
+  if (typeof localStorage !== "undefined") {
+    try {
+      const v2 = localStorage.getItem("vio.currency");
+      if (v2) return v2;
+    } catch {
+    }
+  }
+  return "NOK";
+}
+function formatPrice(amount, currency) {
+  const activeCurrency = currency || getGlobalCurrency();
+  const activeLocale = getGlobalLocale();
+  const activeSymbol = getGlobalSymbol(activeCurrency);
+  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
+  return `${formatted} ${activeSymbol}`;
+}
+function primaryImageUrl(product) {
+  const p3 = product;
+  if (!p3 || typeof p3 !== "object") return void 0;
+  if (Array.isArray(p3.variants) && p3.variants.length > 0) {
+    const vImages = p3.variants[0]?.images;
+    if (Array.isArray(vImages) && vImages.length > 0) {
+      const vUrl = typeof vImages[0] === "string" ? vImages[0] : vImages[0]?.url;
+      if (vUrl) return vUrl;
+    }
+  }
+  if (Array.isArray(p3.images) && p3.images.length > 0) {
+    const img0 = p3.images[0];
+    const url = typeof img0 === "string" ? img0 : img0?.url;
+    if (url) return url;
+  }
+  if (typeof p3.image === "string" && p3.image) return p3.image;
+  if (p3.image && typeof p3.image === "object" && p3.image.url) return p3.image.url;
+  if (typeof p3.imageUrl === "string" && p3.imageUrl) return p3.imageUrl;
+  if (typeof p3.image_url === "string" && p3.image_url) return p3.image_url;
+  if (typeof p3.primaryImage === "string" && p3.primaryImage) return p3.primaryImage;
+  if (p3.primaryImage && typeof p3.primaryImage === "object" && p3.primaryImage.url) {
+    return p3.primaryImage.url;
+  }
+  return void 0;
+}
+
 // src/core/api/commerce.ts
 var GET_PRODUCTS_BY_IDS = (
   /* GraphQL */
@@ -3988,6 +4083,7 @@ var ChannelProduct = class {
     if (!options.product_ids || options.product_ids.length === 0) return [];
     const variables = {
       productIds: options.product_ids,
+      // Page-level currency/country defaults (multi-market support).
       currency: options.currency ?? getGlobalCurrency(),
       imageSize: options.image_size ?? "large",
       useCache: options.useCache ?? true,
@@ -4014,101 +4110,6 @@ var CommerceClient = class {
 };
 function createCommerceClient(options) {
   return new CommerceClient(options);
-}
-
-// src/core/types.ts
-function displayPrice(product) {
-  const p3 = product.price;
-  const amount = p3.amount_incl_taxes ?? p3.amount;
-  return formatPrice(amount, p3.currency_code);
-}
-function getGlobalCountryCode() {
-  const g2 = globalThis;
-  if (g2.__VIO_COUNTRY__) return g2.__VIO_COUNTRY__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.country");
-      if (v2) return v2;
-    } catch {
-    }
-  }
-  return "NO";
-}
-function getGlobalLocale() {
-  const g2 = globalThis;
-  if (g2.__VIO_LOCALE__) return g2.__VIO_LOCALE__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.locale");
-      if (v2) return v2;
-    } catch {
-    }
-  }
-  return "nb-NO";
-}
-function getGlobalCurrency() {
-  const g2 = globalThis;
-  if (g2.__VIO_CURRENCY__) return g2.__VIO_CURRENCY__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.currency");
-      if (v2) return v2;
-    } catch {
-    }
-  }
-  return "NOK";
-}
-function getGlobalSymbol(currency) {
-  const activeCurrency = currency || getGlobalCurrency();
-  const g2 = globalThis;
-  if (!currency && g2.__VIO_SYMBOL__) return g2.__VIO_SYMBOL__;
-  if (!currency && typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.symbol");
-      if (v2) return v2;
-    } catch {
-    }
-  }
-  const curr = String(activeCurrency).toUpperCase();
-  if (curr === "NOK" || curr === "DKK") return "Kr";
-  if (curr === "SEK") return "SEK";
-  if (curr === "EUR") return "€";
-  if (curr === "USD" || curr === "CAD") return "$";
-  if (curr === "GBP") return "£";
-  if (curr === "CHF") return "CHF";
-  return activeCurrency;
-}
-function formatPrice(amount, currency) {
-  const activeCurrency = currency || getGlobalCurrency();
-  const activeLocale = getGlobalLocale();
-  const activeSymbol = getGlobalSymbol(activeCurrency);
-  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
-  return `${formatted} ${activeSymbol}`;
-}
-function primaryImageUrl(product) {
-  const p3 = product;
-  if (!p3 || typeof p3 !== "object") return void 0;
-  if (Array.isArray(p3.variants) && p3.variants.length > 0) {
-    const vImages = p3.variants[0]?.images;
-    if (Array.isArray(vImages) && vImages.length > 0) {
-      const vUrl = typeof vImages[0] === "string" ? vImages[0] : vImages[0]?.url;
-      if (vUrl) return vUrl;
-    }
-  }
-  if (Array.isArray(p3.images) && p3.images.length > 0) {
-    const img0 = p3.images[0];
-    const url = typeof img0 === "string" ? img0 : img0?.url;
-    if (url) return url;
-  }
-  if (typeof p3.image === "string" && p3.image) return p3.image;
-  if (p3.image && typeof p3.image === "object" && p3.image.url) return p3.image.url;
-  if (typeof p3.imageUrl === "string" && p3.imageUrl) return p3.imageUrl;
-  if (typeof p3.image_url === "string" && p3.image_url) return p3.image_url;
-  if (typeof p3.primaryImage === "string" && p3.primaryImage) return p3.primaryImage;
-  if (p3.primaryImage && typeof p3.primaryImage === "object" && p3.primaryImage.url) {
-    return p3.primaryImage.url;
-  }
-  return void 0;
 }
 
 // src/core/api/cart-queries.ts
@@ -5077,7 +5078,11 @@ async function executeCartGraphQL(query, variables, options = {}) {
 async function createCart(customerSessionId, currency, shippingCountry, options) {
   const json = await executeCartGraphQL(
     CREATE_CART_MUTATION,
-    { customerSessionId, currency: currency || getGlobalCurrency(), shippingCountry: shippingCountry || getGlobalCountryCode() },
+    {
+      customerSessionId,
+      currency: currency || getGlobalCurrency(),
+      shippingCountry: shippingCountry || getGlobalCountryCode()
+    },
     options
   );
   return json?.data?.Cart?.CreateCart;
@@ -7922,6 +7927,8 @@ var VioProduct = class extends i4 {
     this.productId = "";
     this.sponsorId = "";
     this.hasVariants = false;
+    this.variants = void 0;
+    this.options = void 0;
     this.hideMeta = false;
     this.inCart = false;
     this.cartQty = 0;
@@ -8095,7 +8102,7 @@ var VioProduct = class extends i4 {
    * `vio:product-add` so the host adds it (bumping quantity on repeat taps). */
   onAdd(e7) {
     e7.stopPropagation();
-    if (this.hasVariants || (Array.isArray(this.variants) && this.variants.length > 1) || (Array.isArray(this.options) && this.options.length > 0)) {
+    if (this.hasVariants || Array.isArray(this.variants) && this.variants.length > 1 || Array.isArray(this.options) && this.options.length > 0) {
       this.onClick();
       return;
     }
@@ -8181,6 +8188,12 @@ __decorateClass([
 __decorateClass([
   n5({ type: Boolean, attribute: "has-variants" })
 ], VioProduct.prototype, "hasVariants", 2);
+__decorateClass([
+  n5({ attribute: false })
+], VioProduct.prototype, "variants", 2);
+__decorateClass([
+  n5({ attribute: false })
+], VioProduct.prototype, "options", 2);
 __decorateClass([
   n5({ type: Boolean, attribute: "hide-meta" })
 ], VioProduct.prototype, "hideMeta", 2);
@@ -9097,17 +9110,24 @@ var VioProductDetail = class extends i4 {
   methodEnabled(...names) {
     return this.availableMethods.length === 0 || this.availableMethods.some((m2) => names.includes(m2.toLowerCase()));
   }
-  /** Option values a variant represents — variant titles join them with " / "
-   * (or "|"). Exact parts, lowercased, so matching is combination-accurate
-   * (avoids "M" matching "Medium"). */
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  /**
+   * Build an option-name → value map for a variant, from every shape the feeds
+   * ship: option1/2/3 columns, options/selected_options/variant arrays, plain
+   * object maps, and finally the title (value scan first, position fallback).
+   */
   getVariantOptionMap(v2, productOptions) {
     const map = {};
     if (!v2) return { map, titleParts: [] };
-
-    if (v2.option1 != null && productOptions?.[0]) map[productOptions[0].name.toLowerCase()] = String(v2.option1).trim().toLowerCase();
-    if (v2.option2 != null && productOptions?.[1]) map[productOptions[1].name.toLowerCase()] = String(v2.option2).trim().toLowerCase();
-    if (v2.option3 != null && productOptions?.[2]) map[productOptions[2].name.toLowerCase()] = String(v2.option3).trim().toLowerCase();
-
+    if (v2.option1 != null && productOptions?.[0]) {
+      map[productOptions[0].name.toLowerCase()] = String(v2.option1).trim().toLowerCase();
+    }
+    if (v2.option2 != null && productOptions?.[1]) {
+      map[productOptions[1].name.toLowerCase()] = String(v2.option2).trim().toLowerCase();
+    }
+    if (v2.option3 != null && productOptions?.[2]) {
+      map[productOptions[2].name.toLowerCase()] = String(v2.option3).trim().toLowerCase();
+    }
     const optArray = Array.isArray(v2.options) ? v2.options : Array.isArray(v2.selected_options) ? v2.selected_options : Array.isArray(v2.variant) ? v2.variant : null;
     if (optArray) {
       for (const item of optArray) {
@@ -9116,20 +9136,18 @@ var VioProductDetail = class extends i4 {
         if (key && val) map[key] = val;
       }
     } else if (v2.options && typeof v2.options === "object") {
-      for (const [k, v] of Object.entries(v2.options)) {
-        map[k.trim().toLowerCase()] = String(v).trim().toLowerCase();
+      for (const [k2, val] of Object.entries(v2.options)) {
+        map[k2.trim().toLowerCase()] = String(val).trim().toLowerCase();
       }
     }
-
-    const title = (v2.title ?? "").trim();
+    const title = String(v2.title ?? "").trim();
     const titleLower = title.toLowerCase();
-
     if (Array.isArray(productOptions)) {
       for (const opt of productOptions) {
         const key = opt.name.toLowerCase();
         if (!map[key]) {
           const rawValues = normalizeValues(opt.values);
-          const sortedVals = [...rawValues].sort((a, b) => b.length - a.length);
+          const sortedVals = [...rawValues].sort((a3, b3) => b3.length - a3.length);
           for (const valStr of sortedVals) {
             const valLower = valStr.trim().toLowerCase();
             const escaped = valLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -9142,12 +9160,7 @@ var VioProductDetail = class extends i4 {
         }
       }
     }
-
-    const titleParts = title
-      .split(/\s*[/|,]\s*|\s+-\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-
+    const titleParts = title.split(/\s*[/|,]\s*|\s+-\s+/).map((s4) => s4.trim()).filter(Boolean);
     if (Array.isArray(productOptions)) {
       productOptions.forEach((opt, idx) => {
         const key = opt.name.toLowerCase();
@@ -9156,84 +9169,74 @@ var VioProductDetail = class extends i4 {
         }
       });
     }
-
     return { map, titleParts };
   }
-
+  /** Option values a variant represents (map values ∪ title parts). */
   variantOptionValues(v2) {
     const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
-    const set = new Set(titleParts.map((s) => s.toLowerCase()));
-    for (const v of Object.values(map)) {
-      set.add(v);
-    }
+    const set = new Set(titleParts.map((s4) => s4.toLowerCase()));
+    for (const val of Object.values(map)) set.add(val);
     return Array.from(set);
   }
-
+  /** Does a variant part represent this option value? Whole-token match, so the
+   * value "30" matches the part "30 ml" but "M" does NOT match "Medium". */
   partMatchesValue(part, value) {
     if (!part || !value) return false;
-    const p = String(part).trim().toLowerCase();
-    const v = String(value).trim().toLowerCase();
-    if (p === v) return true;
-    return p.split(/\s+/).includes(v);
+    const p3 = String(part).trim().toLowerCase();
+    const v2 = String(value).trim().toLowerCase();
+    if (p3 === v2) return true;
+    return p3.split(/\s+/).includes(v2);
   }
-
+  /** Does a variant satisfy every currently-selected option value? */
   variantMatchesSelection(v2, selection) {
     if (!v2 || !selection) return false;
     const entries = Object.entries(selection);
     if (entries.length === 0) return true;
-
     const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
-    const titlePartsLower = titleParts.map((t) => t.toLowerCase());
-
+    const titlePartsLower = titleParts.map((t4) => t4.toLowerCase());
     return entries.every(([optName, val]) => {
       const key = optName.trim().toLowerCase();
       const targetVal = String(val).trim().toLowerCase();
-
       if (map[key]) {
         return this.partMatchesValue(map[key], targetVal);
       }
       return titlePartsLower.some((part) => this.partMatchesValue(part, targetVal));
     });
   }
-
+  /** Sellable quantity for a variant, across the stock field zoo. Boolean
+   * availability flags win; unknown stock is treated as sellable (999). */
   getVariantQty(v2) {
     if (!v2) return 0;
     if (v2.available === false || v2.in_stock === false || v2.is_available === false) return 0;
     if (v2.available === true || v2.in_stock === true || v2.is_available === true) return 999;
-
     const rawQty = v2.quantity ?? v2.inventory_quantity ?? v2.stock ?? v2.available_quantity ?? v2.stock_quantity;
-    if (rawQty !== null && rawQty !== undefined && rawQty !== "") {
+    if (rawQty !== null && rawQty !== void 0 && rawQty !== "") {
       const parsed = Number(rawQty);
       if (!Number.isNaN(parsed)) return parsed;
     }
-
     return 999;
   }
-
+  /** Resolve the active variant: full in-stock match → full match → best score
+   * (2 per mapped option match, 1 per title match, +0.5 if in stock). */
   selectedVariant() {
-    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) return null;
+    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) {
+      return null;
+    }
     const sel = this.selectedOptions;
     const entries = Object.entries(sel);
     if (entries.length === 0) return this.product.variants[0] ?? null;
-
     const fullInStock = this.product.variants.find(
       (v2) => this.variantMatchesSelection(v2, sel) && this.getVariantQty(v2) > 0
     );
     if (fullInStock) return fullInStock;
-
-    const full = this.product.variants.find(
-      (v2) => this.variantMatchesSelection(v2, sel)
-    );
+    const full = this.product.variants.find((v2) => this.variantMatchesSelection(v2, sel));
     if (full) return full;
-
     let bestVariant = null;
     let maxScore = -1;
-
     for (const v2 of this.product.variants) {
       const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
-      const titlePartsLower = titleParts.map((t) => t.toLowerCase());
+      const titlePartsLower = titleParts.map((t4) => t4.toLowerCase());
       let score = 0;
-
       for (const [optName, val] of entries) {
         const key = optName.trim().toLowerCase();
         const targetVal = String(val).trim().toLowerCase();
@@ -9243,24 +9246,21 @@ var VioProductDetail = class extends i4 {
           score += 1;
         }
       }
-
       if (this.getVariantQty(v2) > 0) score += 0.5;
-
       if (score > maxScore) {
         maxScore = score;
         bestVariant = v2;
       }
     }
-
     return bestVariant ?? this.product.variants[0] ?? null;
   }
-
+  /** True if some in-stock variant carries this option value. */
   isValueAvailable(optionName, value) {
-    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) return true;
-
+    if (!this.product || !Array.isArray(this.product.variants) || this.product.variants.length === 0) {
+      return true;
+    }
     const valLower = String(value).trim().toLowerCase();
     const key = optionName.trim().toLowerCase();
-
     return this.product.variants.some((v2) => {
       const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
       if (this.getVariantQty(v2) <= 0) return false;
@@ -9268,32 +9268,30 @@ var VioProductDetail = class extends i4 {
       return titleParts.some((part) => this.partMatchesValue(part.toLowerCase(), valLower));
     });
   }
-
   get unitPrice() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
     return price?.amount_incl_taxes ?? price?.amount ?? 0;
   }
-
   get compareAt() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
     return price?.compare_at_incl_taxes ?? price?.compare_at ?? null;
   }
-
   get availableQuantity() {
     const v2 = this.selectedVariant();
     if (v2) return this.getVariantQty(v2);
     return this.product?.quantity ?? 0;
   }
-
   stockLabel() {
     const qty = this.availableQuantity;
     if (qty <= 0) return { text: "Utsolgt", cls: "out-of-stock" };
     if (qty <= 3) return { text: `F\xE5 igjen \u2014 ${qty} stk`, cls: "low-stock" };
     return { text: "P\xE5 lager", cls: "in-stock" };
   }
-
+  /** Pick an option value. If the exact combination doesn't exist, jump to an
+   * in-stock variant that carries the value and adopt its full option map
+   * (keeps the selection always resolvable to a real variant). */
   selectOption(optionName, value) {
     const newSelection = { ...this.selectedOptions, [optionName]: value };
     const exactInStock = this.product?.variants?.find(
@@ -9310,24 +9308,22 @@ var VioProductDetail = class extends i4 {
       this.selectedOptions = newSelection;
       return;
     }
-
     const valLower = String(value).trim().toLowerCase();
     const key = optionName.trim().toLowerCase();
     const anyInStockWithVal = this.product?.variants?.find((v2) => {
       const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
       if (this.getVariantQty(v2) <= 0) return false;
       if (map[key]) return this.partMatchesValue(map[key], valLower);
-      return titleParts.some((p) => this.partMatchesValue(p.toLowerCase(), valLower));
+      return titleParts.some((p3) => this.partMatchesValue(p3.toLowerCase(), valLower));
     });
-
     if (anyInStockWithVal) {
       const { map } = this.getVariantOptionMap(anyInStockWithVal, this.product?.options);
       const updated = { ...newSelection };
       for (const opt of this.product?.options ?? []) {
-        const k = opt.name.toLowerCase();
-        if (map[k]) {
+        const k2 = opt.name.toLowerCase();
+        if (map[k2]) {
           const optValues = normalizeValues(opt.values);
-          const origCase = optValues.find((v) => v.toLowerCase() === map[k]) || map[k];
+          const origCase = optValues.find((val) => val.toLowerCase() === map[k2]) || map[k2];
           updated[opt.name] = origCase;
         }
       }
@@ -9336,6 +9332,7 @@ var VioProductDetail = class extends i4 {
       this.selectedOptions = newSelection;
     }
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   allImages() {
     if (!this.product) return [];
     const variantImages = this.selectedVariant()?.images ?? [];
@@ -10435,7 +10432,9 @@ __decorateClass([
 ], VioCart.prototype, "confirmedOrder", 2);
 
 // src/ui/components/vio-checkout.ts
-var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent('<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>');
+var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
+);
 var VioCheckout = class extends i4 {
   constructor() {
     super(...arguments);
@@ -10860,6 +10859,8 @@ var VioCheckout = class extends i4 {
       color: var(--vio-color-accent, #c14a3b);
       text-align: center;
     }
+    /* "Betal" CTA — sits full-width below the method grid once a method is
+       picked. Reuses .payment-btn.primary (its grid-column spans the row). */
     .complete-cta {
       width: 100% !important;
       box-sizing: border-box !important;
@@ -11094,7 +11095,7 @@ var VioCheckout = class extends i4 {
     super.disconnectedCallback();
   }
   updated(changed) {
-    if (changed?.has && changed.has("open") && this.open && this.availableShippingsList.length === 0) {
+    if (changed.has("open") && this.open && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
     void this.mountKlarnaIfNeeded();
@@ -11110,7 +11111,7 @@ var VioCheckout = class extends i4 {
       void this.loadAvailableShippings();
     }
   }
-  /** Fetch available shippings via GetLineItemsBySupplier and update state. */
+  /** Fetch the real per-supplier shippings and preselect + persist the first. */
   async loadAvailableShippings() {
     const spId = this.checkoutState?.sponsorId;
     if (!spId) return;
@@ -11121,7 +11122,7 @@ var VioCheckout = class extends i4 {
         if (!this.selectedShipping || !shippings.some((s4) => s4.id === this.selectedShipping)) {
           const firstOpt = shippings[0];
           this.selectedShipping = firstOpt.id;
-          if (firstOpt?.supplierId) {
+          if (firstOpt.supplierId) {
             void Vio.checkout.updateShippingsBySupplier(
               [{ shipping_id: firstOpt.id, supplier_id: Number(firstOpt.supplierId) }],
               spId
@@ -11134,6 +11135,21 @@ var VioCheckout = class extends i4 {
         console.warn("[VioCheckout] loadAvailableShippings failed:", err);
       }
     }
+  }
+  /** Whether all mandatory Leveringsadresse fields are filled. */
+  get isAddressValid() {
+    const f3 = this.form;
+    if (!f3) return false;
+    return Boolean(
+      f3.firstName && String(f3.firstName).trim().length > 0 && f3.lastName && String(f3.lastName).trim().length > 0 && f3.email && String(f3.email).trim().length > 0 && String(f3.email).includes("@") && f3.address && String(f3.address).trim().length > 0 && f3.postalCode && String(f3.postalCode).trim().length > 0 && f3.city && String(f3.city).trim().length > 0
+    );
+  }
+  /** Whether a valid shipping option is selected (when shippings exist). */
+  get hasSelectedShipping() {
+    if (this.availableShippingsList.length === 0) return true;
+    return Boolean(
+      this.selectedShipping && this.shippingList.some((s4) => s4.id === this.selectedShipping)
+    );
   }
   /** Which payment buttons to render — backend-configured per sponsor. */
   async loadAvailablePaymentMethods() {
@@ -11232,24 +11248,6 @@ var VioCheckout = class extends i4 {
   get shippingOption() {
     const list = this.shippingList;
     return list.find((o7) => o7.id === this.selectedShipping) ?? list[0] ?? null;
-  }
-  /** Whether all mandatory fields in Leveringsadresse are filled. */
-  get isAddressValid() {
-    const f = this.form;
-    if (!f) return false;
-    return Boolean(
-      f.firstName && String(f.firstName).trim().length > 0 &&
-      f.lastName && String(f.lastName).trim().length > 0 &&
-      f.email && String(f.email).trim().length > 0 && String(f.email).includes("@") &&
-      f.address && String(f.address).trim().length > 0 &&
-      f.postalCode && String(f.postalCode).trim().length > 0 &&
-      f.city && String(f.city).trim().length > 0
-    );
-  }
-  /** Whether a valid shipping option is selected (when shippings are available). */
-  get hasSelectedShipping() {
-    if (this.availableShippingsList.length === 0) return true;
-    return Boolean(this.selectedShipping && this.shippingList.some((s4) => s4.id === this.selectedShipping));
   }
   /** Pick a shipping option → re-mounts the Klarna widget with the new total.
    * Also persists the choice on the backend cart (per supplier). */
@@ -11370,7 +11368,7 @@ var VioCheckout = class extends i4 {
       return;
     }
     if (s4.paymentMethod === "stripe" || s4.paymentMethod === "vipps") {
-      this.onPay(s4.paymentMethod);
+      void this.onPay(s4.paymentMethod);
       return;
     }
     this.confirmOrder(s4.paymentMethod, s4.sponsorId);
@@ -11578,100 +11576,103 @@ var VioCheckout = class extends i4 {
     const isVipps = method === "vipps";
     return b2`
           ${!isVipps ? b2`
-            <section class="section">
-              <div class="section-label">Steg 1</div>
-              <h3 class="section-heading">Leveringsadresse</h3>
-              <div class="form-row">
-                <div class="field">
-                  <label>Fornavn *</label>
-                  <input
-                    type="text"
-                    required
-                    autocomplete="given-name"
-                    .value=${this.form.firstName}
-                    @input=${(e7) => this.onFieldChange("firstName", e7.target.value)}
-                  />
-                </div>
-                <div class="field">
-                  <label>Etternavn *</label>
-                  <input
-                    type="text"
-                    required
-                    autocomplete="family-name"
-                    .value=${this.form.lastName}
-                    @input=${(e7) => this.onFieldChange("lastName", e7.target.value)}
-                  />
-                </div>
-              </div>
+          <section class="section">
+            <div class="section-label">Steg 1</div>
+            <h3 class="section-heading">Leveringsadresse</h3>
+            <div class="form-row">
               <div class="field">
-                <label>E-post *</label>
-                <input
-                  type="email"
-                  required
-                  autocomplete="email"
-                  .value=${this.form.email}
-                  @input=${(e7) => this.onFieldChange("email", e7.target.value)}
-                />
-              </div>
-              <div class="field">
-                <label>Adresse *</label>
+                <label>Fornavn *</label>
                 <input
                   type="text"
                   required
-                  autocomplete="street-address"
-                  .value=${this.form.address}
-                  @input=${(e7) => this.onFieldChange("address", e7.target.value)}
+                  autocomplete="given-name"
+                  .value=${this.form.firstName}
+                  @input=${(e7) => this.onFieldChange("firstName", e7.target.value)}
                 />
               </div>
-              <div class="form-row">
-                <div class="field">
-                  <label>Postnummer *</label>
-                  <input
-                    type="text"
-                    required
-                    autocomplete="postal-code"
-                    .value=${this.form.postalCode}
-                    @input=${(e7) => this.onFieldChange("postalCode", e7.target.value)}
-                  />
-                </div>
-                <div class="field">
-                  <label>Sted *</label>
-                  <input
-                    type="text"
-                    required
-                    autocomplete="address-level2"
-                    .value=${this.form.city}
-                    @input=${(e7) => this.onFieldChange("city", e7.target.value)}
-                  />
-                </div>
+              <div class="field">
+                <label>Etternavn *</label>
+                <input
+                  type="text"
+                  required
+                  autocomplete="family-name"
+                  .value=${this.form.lastName}
+                  @input=${(e7) => this.onFieldChange("lastName", e7.target.value)}
+                />
               </div>
-              ${this.availableShippingsList.length > 0 ? b2`
-                <div style="margin-top: 16px;">
-                  <label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px;">
-                    Fraktmetode *
-                  </label>
-                  <div class="ship-select">
-                    ${this.availableShippingsList.map(
-                      (o7) => b2`
-                        <button
-                          type="button"
-                          class="ship-opt ${this.selectedShipping === o7.id ? "active" : ""}"
-                          @click=${() => void this.onSelectShipping(o7.id)}
-                        >
-                          <span class="ship-meta">
-                            <b>${o7.method || o7.name}</b>
-                            ${o7.description ? b2`<span>${o7.description}</span>` : ""}
-                          </span>
-                          <span class="ship-price">
-                            ${formatPrice(o7.priceMajor ?? (o7.price / 100), o7.currency || this.checkoutState?.currency || "NOK")}
-                          </span>
-                        </button>
-                      `
-                    )}
+            </div>
+            <div class="field">
+              <label>E-post *</label>
+              <input
+                type="email"
+                required
+                autocomplete="email"
+                .value=${this.form.email}
+                @input=${(e7) => this.onFieldChange("email", e7.target.value)}
+              />
+            </div>
+            <div class="field">
+              <label>Adresse *</label>
+              <input
+                type="text"
+                required
+                autocomplete="street-address"
+                .value=${this.form.address}
+                @input=${(e7) => this.onFieldChange("address", e7.target.value)}
+              />
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label>Postnummer *</label>
+                <input
+                  type="text"
+                  required
+                  autocomplete="postal-code"
+                  .value=${this.form.postalCode}
+                  @input=${(e7) => this.onFieldChange("postalCode", e7.target.value)}
+                />
+              </div>
+              <div class="field">
+                <label>Sted *</label>
+                <input
+                  type="text"
+                  required
+                  autocomplete="address-level2"
+                  .value=${this.form.city}
+                  @input=${(e7) => this.onFieldChange("city", e7.target.value)}
+                />
+              </div>
+            </div>
+            ${this.availableShippingsList.length > 0 ? b2`
+                  <div style="margin-top: 16px;">
+                    <label style="display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px;">
+                      Fraktmetode *
+                    </label>
+                    <div class="ship-select">
+                      ${this.availableShippingsList.map(
+      (o7) => b2`
+                          <button
+                            type="button"
+                            class="ship-opt ${this.selectedShipping === o7.id ? "active" : ""}"
+                            @click=${() => void this.onSelectShipping(o7.id)}
+                          >
+                            <span class="ship-meta">
+                              <b>${o7.method || o7.name}</b>
+                              ${o7.description ? b2`<span>${o7.description}</span>` : ""}
+                            </span>
+                            <span class="ship-price">
+                              ${formatPrice(
+        o7.priceMajor ?? o7.price / 100,
+        o7.currency || this.checkoutState?.currency || "NOK"
+      )}
+                            </span>
+                          </button>
+                        `
+    )}
+                    </div>
                   </div>
-                </div>
-              ` : ""}
-            </section>
+                ` : ""}
+          </section>
           ` : ""}
 
           <section class="section">
@@ -11694,8 +11695,7 @@ var VioCheckout = class extends i4 {
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
-                          style="width: 100%; box-sizing: border-box;"
-                          @click=${() => this.onPay("stripe")}
+                          @click=${() => void this.onPay("stripe")}
                           ?disabled=${this.stripeLoading || !this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
@@ -11705,8 +11705,7 @@ var VioCheckout = class extends i4 {
                   ${method === "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
-                          style="width: 100%; box-sizing: border-box;"
-                          @click=${() => this.onPay("vipps")}
+                          @click=${() => void this.onPay("vipps")}
                           ?disabled=${this.vippsLoading}
                         >
                           ${this.vippsLoading ? "G\xE5r til Vipps\u2026" : `Betal ${this.orderTotal()} med Vipps`}
@@ -11715,8 +11714,7 @@ var VioCheckout = class extends i4 {
                   ${method === "apple-pay" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
-                          style="width: 100%; box-sizing: border-box;"
-                          @click=${() => this.onPay("apple-pay")}
+                          @click=${() => void this.onPay("apple-pay")}
                           ?disabled=${this.applePayInProgress || !this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
@@ -11726,7 +11724,6 @@ var VioCheckout = class extends i4 {
                   ${showCompleteCta && method !== "stripe" && method !== "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
-                          style="width: 100%; box-sizing: border-box;"
                           @click=${this.onCompleteOrder}
                           ?disabled=${!this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
@@ -11739,10 +11736,10 @@ var VioCheckout = class extends i4 {
                           Vennligst fyll ut leveringsadresse for å fullføre betalingen
                         </div>
                       ` : !isVipps && !this.hasSelectedShipping ? b2`
-                        <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
-                          Vennligst velg en fraktmetode for å fullføre betalingen
-                        </div>
-                      ` : ""}
+                          <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
+                            Vennligst velg en fraktmetode for å fullføre betalingen
+                          </div>
+                        ` : ""}
                 ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
                   <div class="payment-grid">
