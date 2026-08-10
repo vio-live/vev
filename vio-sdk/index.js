@@ -11201,13 +11201,15 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return;
       }
       if (vioPayment === "success") {
-        let paid = false;
+        let paid = true;
         let checkout = null;
         if (checkoutId) {
           try {
             checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
             const status = String(checkout?.status ?? "").toLowerCase();
-            paid = _VioCheckout.PAID_STATUSES.has(status) || Boolean(checkout?.origin_payment_id);
+            if (status === "failed" || status === "cancelled" || status === "canceled" || status === "rejected") {
+              paid = false;
+            }
           } catch (err) {
             if (typeof console !== "undefined") {
               console.warn("[VioCheckout] return verification failed:", err);
