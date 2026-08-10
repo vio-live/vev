@@ -80,7 +80,9 @@ export function productToItem(p: any, extra?: Partial<VioItemInput>): VioItemInp
     productId: p?.id,
     name: p?.title,
     brand: p?.brand,
-    price: num(p?.price?.amount),
+    // Consumer-facing price (incl. taxes) — same base the cart uses, so the
+    // GA4 funnel (view_item -> purchase) stays consistent.
+    price: num(p?.price?.amount_incl_taxes ?? p?.price?.amount),
     currency: p?.price?.currency_code,
     ...extra,
   };

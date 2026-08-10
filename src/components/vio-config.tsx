@@ -593,6 +593,11 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
   );
 }
 
+// Launch scope (decisión 2026-08-10): UN mercado, NO/NOK. Volver a true expone
+// el selector de país — ANTES de activarlo, resolver la tarea #4 / handbook
+// §8.3 (la currency del carrito backend no se realinea al cambiar de mercado).
+const MULTI_MARKET_ENABLED = false;
+
 registerVevComponent(VioConfig, {
   name: "Vio Config (SDK)",
   size: { width: 320, height: "auto" },
@@ -610,19 +615,23 @@ registerVevComponent(VioConfig, {
       type: "number",
       component: VioSponsorSelector as any,
     },
-    {
-      name: "country",
-      title: "Country",
-      type: "select",
-      initialValue: "NO",
-      options: {
-        display: "dropdown",
-        items: SUPPORTED_COUNTRIES.map((c) => ({
-          value: c.code,
-          label: c.name,
-        })),
-      },
-    } as any,
+    ...(MULTI_MARKET_ENABLED
+      ? [
+          {
+            name: "country",
+            title: "Country",
+            type: "select",
+            initialValue: "NO",
+            options: {
+              display: "dropdown",
+              items: SUPPORTED_COUNTRIES.map((c) => ({
+                value: c.code,
+                label: c.name,
+              })),
+            },
+          } as any,
+        ]
+      : []),
     { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
     { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },
     { name: "stripePublishableKey", title: "Stripe PK", type: "string", initialValue: DEFAULT_STRIPE_PK },

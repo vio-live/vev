@@ -7125,7 +7125,13 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
             state,
             // chargedTotal in MAJOR units (incl. shipping for express) for the
             // confirmation screen. ctx.orderAmount is minor (øre) → /100.
-            result: { ...result, order: orderData, chargedTotal: ctx.orderAmount / 100 }
+            // Prefer the amount Klarna actually charged (includes shipping in
+            // every flow); the local ctx misses shipping outside express.
+            result: {
+              ...result,
+              order: orderData,
+              chargedTotal: typeof orderData?.order_amount === "number" ? orderData.order_amount / 100 : ctx.orderAmount / 100
+            }
           }
         })
       );
@@ -9146,7 +9152,13 @@ var VioProductDetail = class extends i4 {
       for (const opt of productOptions) {
         const key = opt.name.toLowerCase();
         if (!map[key]) {
-          const rawValues = normalizeValues(opt.values);
+          const rawValues = normalizeValues(opt.values).filter(
+            (val) => !productOptions.some(
+              (other) => other !== opt && normalizeValues(other.values).some(
+                (ov) => ov.trim().toLowerCase() === val.trim().toLowerCase()
+              )
+            )
+          );
           const sortedVals = [...rawValues].sort((a3, b3) => b3.length - a3.length);
           for (const valStr of sortedVals) {
             const valLower = valStr.trim().toLowerCase();
@@ -9178,13 +9190,16 @@ var VioProductDetail = class extends i4 {
     for (const val of Object.values(map)) set.add(val);
     return Array.from(set);
   }
-  /** Does a variant part represent this option value? Whole-token match, so the
-   * value "30" matches the part "30 ml" but "M" does NOT match "Medium". */
+  /** Does a variant part represent this option value? Exact match, plus a
+   * whole-token match ONLY for numeric values ("30" matches "30 ml") — word
+   * subsets of text values are not matches ("Large" must NOT match
+   * "Extra Large"). */
   partMatchesValue(part, value) {
     if (!part || !value) return false;
     const p3 = String(part).trim().toLowerCase();
     const v2 = String(value).trim().toLowerCase();
     if (p3 === v2) return true;
+    if (!/^[\d.,]+$/.test(v2)) return false;
     return p3.split(/\s+/).includes(v2);
   }
   /** Does a variant satisfy every currently-selected option value? */
@@ -9204,7 +9219,9 @@ var VioProductDetail = class extends i4 {
     });
   }
   /** Sellable quantity for a variant, across the stock field zoo. Boolean
-   * availability flags win; unknown stock is treated as sellable (999). */
+   * availability flags win; a numeric field wins next; `null` = the feed does
+   * not report stock for this variant (callers fall back to product stock —
+   * never assume "in stock" from absent data). */
   getVariantQty(v2) {
     if (!v2) return 0;
     if (v2.available === false || v2.in_stock === false || v2.is_available === false) return 0;
@@ -9214,7 +9231,13 @@ var VioProductDetail = class extends i4 {
       const parsed = Number(rawQty);
       if (!Number.isNaN(parsed)) return parsed;
     }
-    return 999;
+    return null;
+  }
+  /** Variant stock with the product-level fallback applied (0 = not sellable). */
+  variantSellableQty(v2) {
+    const q = this.getVariantQty(v2);
+    if (q !== null) return q;
+    return this.product?.quantity ?? 0;
   }
   /** Resolve the active variant: full in-stock match → full match → best score
    * (2 per mapped option match, 1 per title match, +0.5 if in stock). */
@@ -9226,7 +9249,7 @@ var VioProductDetail = class extends i4 {
     const entries = Object.entries(sel);
     if (entries.length === 0) return this.product.variants[0] ?? null;
     const fullInStock = this.product.variants.find(
-      (v2) => this.variantMatchesSelection(v2, sel) && this.getVariantQty(v2) > 0
+      (v2) => this.variantMatchesSelection(v2, sel) && this.variantSellableQty(v2) > 0
     );
     if (fullInStock) return fullInStock;
     const full = this.product.variants.find((v2) => this.variantMatchesSelection(v2, sel));
@@ -9246,7 +9269,7 @@ var VioProductDetail = class extends i4 {
           score += 1;
         }
       }
-      if (this.getVariantQty(v2) > 0) score += 0.5;
+      if (this.variantSellableQty(v2) > 0) score += 0.5;
       if (score > maxScore) {
         maxScore = score;
         bestVariant = v2;
@@ -9263,7 +9286,7 @@ var VioProductDetail = class extends i4 {
     const key = optionName.trim().toLowerCase();
     return this.product.variants.some((v2) => {
       const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
-      if (this.getVariantQty(v2) <= 0) return false;
+      if (this.variantSellableQty(v2) <= 0) return false;
       if (map[key]) return this.partMatchesValue(map[key], valLower);
       return titleParts.some((part) => this.partMatchesValue(part.toLowerCase(), valLower));
     });
@@ -9280,7 +9303,7 @@ var VioProductDetail = class extends i4 {
   }
   get availableQuantity() {
     const v2 = this.selectedVariant();
-    if (v2) return this.getVariantQty(v2);
+    if (v2) return this.variantSellableQty(v2);
     return this.product?.quantity ?? 0;
   }
   stockLabel() {
@@ -9295,7 +9318,7 @@ var VioProductDetail = class extends i4 {
   selectOption(optionName, value) {
     const newSelection = { ...this.selectedOptions, [optionName]: value };
     const exactInStock = this.product?.variants?.find(
-      (v2) => this.variantMatchesSelection(v2, newSelection) && this.getVariantQty(v2) > 0
+      (v2) => this.variantMatchesSelection(v2, newSelection) && this.variantSellableQty(v2) > 0
     );
     if (exactInStock) {
       this.selectedOptions = newSelection;
@@ -9312,7 +9335,7 @@ var VioProductDetail = class extends i4 {
     const key = optionName.trim().toLowerCase();
     const anyInStockWithVal = this.product?.variants?.find((v2) => {
       const { map, titleParts } = this.getVariantOptionMap(v2, this.product?.options);
-      if (this.getVariantQty(v2) <= 0) return false;
+      if (this.variantSellableQty(v2) <= 0) return false;
       if (map[key]) return this.partMatchesValue(map[key], valLower);
       return titleParts.some((p3) => this.partMatchesValue(p3.toLowerCase(), valLower));
     });
@@ -11011,10 +11034,10 @@ var VioCheckout = class extends i4 {
     if (typeof window === "undefined" || !window.location || !window.location.search) return;
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const vioPayment = urlParams.get("vio_payment") || urlParams.get("payment_status") || urlParams.get("payment");
-      const vioMethod = urlParams.get("vio_method") || urlParams.get("payment_method") || urlParams.get("method") || "stripe";
-      const sponsorId = Number(urlParams.get("vio_sponsor") || urlParams.get("sponsor_id") || 0);
-      const orderId = urlParams.get("order_id") || urlParams.get("checkout_id") || "";
+      const vioPayment = urlParams.get("vio_payment");
+      const vioMethod = urlParams.get("vio_method") || "stripe";
+      const sponsorId = Number(urlParams.get("vio_sponsor") || 0);
+      const orderId = urlParams.get("checkout_id") || "";
       if (vioPayment === "success") {
         if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
         this.confirmedOrder = {
@@ -11033,33 +11056,11 @@ var VioCheckout = class extends i4 {
             detail: { method: vioMethod, sponsorId, orderId }
           })
         );
-        this.cleanReturnQueryParams([
-          "vio_payment",
-          "payment_status",
-          "payment",
-          "vio_method",
-          "payment_method",
-          "method",
-          "vio_sponsor",
-          "sponsor_id",
-          "order_id",
-          "checkout_id"
-        ]);
+        this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
       } else if (vioPayment === "cancel" || vioPayment === "error") {
         this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
         this.open = true;
-        this.cleanReturnQueryParams([
-          "vio_payment",
-          "payment_status",
-          "payment",
-          "vio_method",
-          "payment_method",
-          "method",
-          "vio_sponsor",
-          "sponsor_id",
-          "order_id",
-          "checkout_id"
-        ]);
+        this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
       }
     } catch (err) {
       if (typeof console !== "undefined") {
@@ -11369,6 +11370,10 @@ var VioCheckout = class extends i4 {
     }
     if (s4.paymentMethod === "stripe" || s4.paymentMethod === "vipps") {
       void this.onPay(s4.paymentMethod);
+      return;
+    }
+    if (s4.paymentMethod !== "klarna" && s4.paymentMethod !== "apple-pay") {
+      this.paymentError = "Betalingsmetoden er ikke tilgjengelig enn\xE5.";
       return;
     }
     this.confirmOrder(s4.paymentMethod, s4.sponsorId);
@@ -11685,7 +11690,10 @@ var VioCheckout = class extends i4 {
                     <button
                       type="button"
                       style="background:none; border:none; color:var(--vio-color-accent, #c14a3b); text-decoration:underline; font-size:13px; cursor:pointer;"
-                      @click=${() => Vio.checkout.selectPaymentMethod("")}
+                      @click=${() => {
+      this.unmountKlarna();
+      Vio.checkout.selectPaymentMethod("");
+    }}
                     >
                       Endre
                     </button>
