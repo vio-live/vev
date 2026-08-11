@@ -171,3 +171,14 @@ vev.json                  # package key — never delete
 - The widget id in the editor equals the **function name** passed to
   `registerVevComponent` — renaming the function re-registers the block and orphans
   existing placements.
+
+## Package policy (2026-08-11)
+
+**`cq1lXld-TA9` (team Vio) is the ONLY package.** Alan's personal test package
+(`czGNimhyDCi`, was `vev-alan.json`) is deprecated: it carried stale copies of the
+same 7 components (frozen 2026-07-28, pre-hardening) under identical names, making
+it easy to drop an outdated block into a page. Vev limitation: that package lives in
+Alan's personal account, so only Alan can unshare it (`"shareWithAccount": false` +
+redeploy) — until he does, ignore any duplicate "Vio …" components that are not from
+this package. Development happens in `vio-web-sdk/src` + this repo; deploys of the
+package are coordinated (no lock on `vev deploy` — last writer wins).
