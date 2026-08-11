@@ -10613,6 +10613,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.orderConfirmed = false;
     this.confirmedMethod = null;
     this.paymentError = null;
+    this.paymentNotice = null;
     this.confirmedOrder = null;
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
@@ -10663,6 +10664,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.confirmedMethod = null;
         this.confirmedOrder = null;
         this.paymentError = null;
+        this.paymentNotice = null;
         this.express = false;
         this.availableMethods = null;
         this.unmountKlarna();
@@ -11026,6 +11028,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
       color: var(--vio-color-accent, #c14a3b);
       text-align: center;
     }
+    .payment-notice {
+      grid-column: 1 / -1;
+      padding: 12px 16px;
+      background: #f4f4f2;
+      border: 1px solid var(--vio-color-border, #ddd);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--vio-color-text, #1a1a1a);
+      text-align: center;
+    }
     /* "Betal" CTA — sits full-width below the method grid once a method is
        picked. Reuses .payment-btn.primary (its grid-column spans the row). */
     .complete-cta {
@@ -11187,6 +11199,25 @@ var _VioCheckout = class _VioCheckout extends i4 {
       "captured"
     ]);
   }
+  static {
+    /** Statuses that mean the payment definitively did NOT go through. */
+    this.FAILED_STATUSES = /* @__PURE__ */ new Set([
+      "failed",
+      "cancelled",
+      "canceled",
+      "rejected",
+      "declined",
+      "expired",
+      "aborted",
+      "terminated"
+    ]);
+  }
+  static {
+    /** Waits between GetCheckout attempts — PSP webhooks (Vipps especially) can
+     * land seconds after the shopper is redirected back, so a single immediate
+     * check misreads a successful charge as unpaid. ~20s total. */
+    this.RETURN_VERIFY_DELAYS_MS = [0, 2e3, 4e3, 6e3, 8e3];
+  }
   async checkReturnPaymentStatus() {
     if (typeof window === "undefined" || !window.location || !window.location.search) return;
     try {
@@ -11201,22 +11232,34 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return;
       }
       if (vioPayment === "success") {
-        let paid = true;
-        let checkout = null;
+        let outcome = "pending";
+        let sawStatus = false;
         if (checkoutId) {
-          try {
-            checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
-            const status = String(checkout?.status ?? "").toLowerCase();
-            if (status === "failed" || status === "cancelled" || status === "canceled" || status === "rejected") {
-              paid = false;
-            }
-          } catch (err) {
-            if (typeof console !== "undefined") {
-              console.warn("[VioCheckout] return verification failed:", err);
+          this.open = true;
+          this.paymentNotice = "Bekrefter betalingen\u2026";
+          for (const delayMs of _VioCheckout.RETURN_VERIFY_DELAYS_MS) {
+            if (delayMs > 0) await new Promise((r6) => setTimeout(r6, delayMs));
+            try {
+              const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
+              const status = String(checkout?.status ?? "").toLowerCase();
+              sawStatus = true;
+              if (_VioCheckout.PAID_STATUSES.has(status) || Boolean(checkout?.origin_payment_id)) {
+                outcome = "paid";
+                break;
+              }
+              if (_VioCheckout.FAILED_STATUSES.has(status)) {
+                outcome = "failed";
+                break;
+              }
+            } catch (err) {
+              if (typeof console !== "undefined") {
+                console.warn("[VioCheckout] return verification attempt failed:", err);
+              }
             }
           }
+          this.paymentNotice = null;
         }
-        if (paid) {
+        if (outcome === "paid") {
           if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
           this.confirmedOrder = {
             items: [],
@@ -11234,6 +11277,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
               detail: { method: vioMethod, sponsorId, orderId: checkoutId }
             })
           );
+        } else if (outcome === "failed") {
+          this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
+          this.open = true;
+        } else if (sawStatus) {
+          this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
+          this.open = true;
         } else {
           this.paymentError = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
           this.open = true;
@@ -11475,6 +11524,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   async onKlarnaAuthorize() {
     if (!this.klarnaHandle || this.klarnaAuthorizing) return;
     this.paymentError = null;
+    this.paymentNotice = null;
     this.klarnaAuthorizing = true;
     try {
       await this.klarnaHandle.authorize();
@@ -11501,6 +11551,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   async onPay(method) {
     this.paymentError = null;
+    this.paymentNotice = null;
     if (method === "vipps") {
       const email = String(this.form.email ?? "").trim();
       if (!email || !email.includes("@")) {
@@ -11790,6 +11841,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               </div>
             ` : ""}
         ${this.renderKlarnaPanel()}
+        ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
         ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
       </section>
     `;
@@ -12021,6 +12073,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                         ` : ""}
                   </div>
                 `}
+            ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
             ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
           </section>
 
@@ -12096,6 +12149,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "paymentError", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "paymentNotice", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "confirmedOrder", 2);
