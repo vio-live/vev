@@ -226,6 +226,17 @@ export default function VioConfig({
     void connect(resolvedKey);
   }, [isOwner, resolvedKey, connect]);
 
+  // Explicit "Connect" from the properties panel: (re)connect with the key in
+  // the field right now, without waiting for a prop change.
+  useEffect(() => {
+    if (!isOwner) return;
+    const onConnectRequest = (e: any) => {
+      void connect(e?.detail?.key ?? resolvedKey);
+    };
+    window.addEventListener("vio:connect-request", onConnectRequest);
+    return () => window.removeEventListener("vio:connect-request", onConnectRequest);
+  }, [isOwner, connect, resolvedKey]);
+
   // Set the dynamic runtime sponsor ID and notify listeners
   const resolvedSponsorId = sponsorId || primarySponsorId || 4;
   useEffect(() => {
@@ -453,11 +464,23 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
     setLocalKey(value || "");
   }, [value]);
 
+  const trimmed = localKey.trim();
+  const dirty = trimmed !== (value || "");
+
+  /** Persist the key to the Vev prop (+ localStorage). A CHANGED key auto-
+   * connects via VioConfig's key effect; an unchanged key is a no-op. */
   const handleSave = () => {
-    const key = localKey.trim();
-    persistApiKey(key);
-    setRuntimeApiKey(key);
-    onChange(key);
+    persistApiKey(trimmed);
+    setRuntimeApiKey(trimmed);
+    onChange(trimmed);
+  };
+
+  /** (Re)connect NOW with the key in the field, without touching the saved
+   * prop — lets you test a key (or recover from an error) independently. */
+  const handleConnect = () => {
+    if (!trimmed) return;
+    setRuntimeApiKey(trimmed);
+    window.dispatchEvent(new CustomEvent("vio:connect-request", { detail: { key: trimmed } }));
   };
 
   const handleClear = () => {
@@ -478,10 +501,10 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
           boxSizing: "border-box",
           width: "100%",
           padding: "8px 10px",
-          fontSize: 13,
+          fontSize: 12,
           fontFamily: "ui-monospace, Menlo, monospace",
           color: "#0a0a0a",
-          border: "1px solid #ddd",
+          border: dirty ? "1px solid #2a6df5" : "1px solid #ddd",
           borderRadius: 6,
           outline: "none",
           background: "#fafafa",
@@ -489,21 +512,29 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
       />
       <SilkeBox gap="xs" style={{ width: "100%" }}>
         <SilkeButton
-          label="Save & Connect"
+          label={dirty ? "Save •" : "Save"}
           size="s"
           kind="primary"
           onClick={handleSave}
           style={{ flex: 1 }}
         />
-        {value ? (
-          <SilkeButton
-            label="Disconnect"
-            size="s"
-            kind="secondary"
-            onClick={handleClear}
-          />
-        ) : null}
+        <SilkeButton
+          label="Connect"
+          size="s"
+          kind="secondary"
+          onClick={handleConnect}
+          style={{ flex: 1 }}
+        />
       </SilkeBox>
+      {value ? (
+        <SilkeButton
+          label="Disconnect"
+          size="s"
+          kind="tertiary"
+          onClick={handleClear}
+          style={{ width: "100%" }}
+        />
+      ) : null}
     </SilkeBox>
   );
 }
@@ -534,10 +565,7 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
   }, []);
 
   useEffect(() => {
-    console.log("1")
-
     const handleSponsorsUpdate = (e: any) => {
-    console.log("2")
       const detail = e.detail || [];
       setSponsors(detail);
     };
@@ -549,9 +577,7 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
 
   // Auto-select primary sponsor by default if no value is set
   useEffect(() => {
-      console.log("1 Auto-select primary sponsor by default if no value is set")
     if (!value && sponsors.length > 0) {
-      console.log("2 Auto-select primary sponsor by default if no value is set")
       const primary = sponsors.find((s: any) => s.isPrimary);
       if (primary) {
         onChange(primary.id);
