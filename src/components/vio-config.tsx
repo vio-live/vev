@@ -452,6 +452,46 @@ export default function VioConfig({
   );
 }
 
+// Properties-panel inputs: match Vev's dark panel (native fields are dark
+// gray + light text). Injected once per document; ::placeholder/:focus need a
+// real stylesheet, inline styles can't express them.
+const PANEL_STYLE_ID = "vio-panel-input-styles";
+function injectPanelStyles() {
+  if (typeof document === "undefined" || document.getElementById(PANEL_STYLE_ID)) return;
+  const el = document.createElement("style");
+  el.id = PANEL_STYLE_ID;
+  el.textContent = `
+    .vio-cfg-input, .vio-cfg-select {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #f2f2f2;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.12s ease, background 0.12s ease;
+      color-scheme: dark;
+    }
+    .vio-cfg-input { font-family: ui-monospace, Menlo, monospace; }
+    .vio-cfg-input::placeholder { color: rgba(255, 255, 255, 0.35); }
+    .vio-cfg-input:focus, .vio-cfg-select:focus {
+      border-color: #4a7dff;
+      background: rgba(255, 255, 255, 0.09);
+    }
+    .vio-cfg-input.dirty { border-color: #4a7dff; }
+    .vio-cfg-select option { background: #1e1e1e; color: #f2f2f2; }
+    .vio-cfg-hint {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.45);
+      font-style: italic;
+      padding: 4px 0;
+    }
+  `;
+  document.head.appendChild(el);
+}
+
 type ApiKeyEditorProps = {
   value?: string;
   onChange: (value: string) => void;
@@ -459,6 +499,10 @@ type ApiKeyEditorProps = {
 
 export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
   const [localKey, setLocalKey] = useState(value || "");
+
+  useEffect(() => {
+    injectPanelStyles();
+  }, []);
 
   useEffect(() => {
     setLocalKey(value || "");
@@ -493,22 +537,11 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
   return (
     <SilkeBox column gap="s" style={{ width: "100%" }}>
       <input
+        className={dirty ? "vio-cfg-input dirty" : "vio-cfg-input"}
         value={localKey}
         onChange={(e: any) => setLocalKey(e.target.value)}
         placeholder="vg-demo_api_key_…"
         spellCheck={false}
-        style={{
-          boxSizing: "border-box",
-          width: "100%",
-          padding: "8px 10px",
-          fontSize: 12,
-          fontFamily: "ui-monospace, Menlo, monospace",
-          color: "#0a0a0a",
-          border: dirty ? "1px solid #2a6df5" : "1px solid #ddd",
-          borderRadius: 6,
-          outline: "none",
-          background: "#fafafa",
-        }}
       />
       <SilkeBox gap="xs" style={{ width: "100%" }}>
         <SilkeButton
@@ -585,29 +618,19 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
     }
   }, [value, sponsors, onChange]);
 
+  useEffect(() => {
+    injectPanelStyles();
+  }, []);
+
   if (sponsors.length === 0) {
-    return (
-      <div style={{ fontSize: 12, color: "#777", fontStyle: "italic", padding: "4px 0" }}>
-        Connect API Key to select sponsor
-      </div>
-    );
+    return <div className="vio-cfg-hint">Connect API Key to select sponsor</div>;
   }
 
   return (
     <select
+      className="vio-cfg-select"
       value={value || ""}
       onChange={(e: any) => onChange(Number(e.target.value))}
-      style={{
-        boxSizing: "border-box",
-        width: "100%",
-        padding: "8px 10px",
-        fontSize: 13,
-        border: "1px solid #ddd",
-        borderRadius: 6,
-        background: "#fafafa",
-        outline: "none",
-        color: "#0a0a0a",
-      }}
     >
       <option value="" disabled>Select a sponsor...</option>
       {sponsors.map((s: any) => (
