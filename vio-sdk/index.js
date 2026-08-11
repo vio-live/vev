@@ -6011,10 +6011,28 @@ async function isKlarnaPaymentsAvailable() {
     return false;
   }
 }
+function findPayNowCategory(categories) {
+  if (!Array.isArray(categories) || categories.length === 0) return null;
+  let cat = categories.find((c) => c?.identifier === "pay_now");
+  if (cat) return cat.identifier;
+  cat = categories.find((c) => c?.name && /betal\s*n[åa]|pay\s*now/i.test(c.name));
+  if (cat) return cat.identifier;
+  cat = categories.find((c) => c?.identifier && /pay_now|direct_debit|direct_bank_transfer|pay_in_full|klarna_pay_now/i.test(c.identifier));
+  if (cat) return cat.identifier;
+  cat = categories.find((c) => c?.name && /direkte|bank|kort|straks|sofort/i.test(c.name));
+  if (cat) return cat.identifier;
+  cat = categories.find((c) => c?.identifier && !/pay_later|pay_over_time|slice_it/i.test(c.identifier));
+  if (cat) return cat.identifier;
+  return null;
+}
 async function createKlarnaPaymentsWidget(input) {
   const Klarna = await loadKpLib();
   Klarna.Payments.init({ client_token: input.clientToken });
-  let selected = input.category ?? input.categories[0]?.identifier ?? "pay_later";
+  const payNowCat = findPayNowCategory(input.categories);
+  let selected = input.category ?? payNowCat ?? "pay_now";
+  if (typeof console !== "undefined") {
+    console.log("[VioKlarna] Categories:", input.categories, "Selected category:", selected);
+  }
   return {
     categories: input.categories,
     get selected() {
@@ -6037,12 +6055,24 @@ async function createKlarnaPaymentsWidget(input) {
         }
       });
     },
-    authorize(data) {
+    authorize(categoryOrData, data) {
+      let cat = selected;
+      let payload = {};
+      if (typeof categoryOrData === "string" && categoryOrData.length > 0) {
+        cat = categoryOrData;
+        payload = data ?? {};
+      } else if (categoryOrData && typeof categoryOrData === "object") {
+        payload = categoryOrData;
+      }
+      selected = cat;
+      if (typeof console !== "undefined") {
+        console.log("[VioKlarna] Authorizing category:", cat);
+      }
       return new Promise((resolve, reject) => {
         try {
           Klarna.Payments.authorize(
-            { payment_method_category: selected, auto_finalize: true },
-            data ?? {},
+            { payment_method_category: cat, auto_finalize: true },
+            payload,
             (res) => {
               if (res?.approved && res.authorization_token) {
                 resolve(res.authorization_token);
@@ -6949,6 +6979,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       clientToken: nativeRes.client_token,
       sessionId: nativeRes.session_id,
       categories: nativeRes.payment_method_categories ?? [],
+      category: opts?.category,
       container
     });
     await widget.load();
@@ -6959,9 +6990,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         return widget.selected;
       },
       load: (category) => widget.load(category),
-      authorize: async () => {
+      authorize: async (category, data) => {
         try {
-          const token = await widget.authorize();
+          const cat = (typeof category === "string" && category.length > 0) ? category : (widget.selected || "pay_now");
+          const token = await widget.authorize(cat, data);
           await this.completeKlarnaOrder(token, ctx, { authorizationToken: token });
         } catch (err) {
           if (typeof console !== "undefined") {
@@ -7101,6 +7133,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         clientToken,
         sessionId: ctx.sessionId,
         categories,
+        category: opts?.category,
         container
       });
       await widget.load();
@@ -11477,7 +11510,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.paymentError = null;
     this.klarnaAuthorizing = true;
     try {
-      await this.klarnaHandle.authorize();
+      const cat = this.klarnaSelectedCat || this.klarnaHandle.selected || "pay_now";
+      await this.klarnaHandle.authorize(cat);
     } finally {
       this.klarnaAuthorizing = false;
     }
