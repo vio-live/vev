@@ -10492,7 +10492,7 @@ var VioCart = class extends i4 {
                     ${formatPrice(this.totalAcrossSponsors, this.primaryCurrency)}
                   </span>
                 </div>
-                ${this.applePayAvailable ? b2`
+                ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                       <button
                         class="applepay-btn"
                         @click=${this.onApplePay}
@@ -12038,7 +12038,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
                   <div class="payment-grid">
-                    ${this.applePayAvailable ? b2`
+                    ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                           <button
                             class="payment-btn primary"
                             @click=${() => this.onPay("apple-pay")}
@@ -12066,7 +12066,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
                           </button>
                         ` : ""}
-                    ${!this.applePayAvailable ? b2`
+                    ${this.methodEnabled("apple-pay") && !this.applePayAvailable ? b2`
                           <div class="apple-pay-note">
                              Pay krever Safari på iOS eller macOS med Apple Pay konfigurert.
                           </div>
