@@ -47,7 +47,6 @@ for everyone with access:
 | **Vio Product Carousel** | Horizontal scroll-snapped row of cards. Multi-select products, heading/kicker, arrows. |
 | **Vio Product Grid** | Responsive grid of cards (2–5 columns, collapses to 2 on mobile). |
 | **Vio · Open Product Info** | Action addon: click opens the product detail drawer. |
-| **Vio · Open Cart** | Action addon: click opens the cart drawer. |
 
 Card/carousel/grid share one card view — layouts (`standard`, `image-only`, `overlay`,
 `horizontal`), button styles, badge/discount options and `editableCSS` styling are
@@ -90,7 +89,6 @@ Per block:
 - **Vio Product Grid** — product picker (multi), `Kicker`, `Heading`,
   `Columns` (2–5, collapses to 2 on mobile), `Gap` + card options.
 - **Vio · Open Product Info** — product picker. Attach to any element.
-- **Vio · Open Cart** — no props. Attach to any element.
 
 ## Development
 
@@ -150,7 +148,6 @@ src/components/
   product-picker.tsx      # modal product picker (single + multi select)
   product-select.tsx      # picker form component
   action-open-product.tsx # Vio · Open Product Info (action addon)
-  action-open-cart.tsx    # Vio · Open Cart (action addon)
   vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag)
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
