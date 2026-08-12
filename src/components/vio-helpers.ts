@@ -10,15 +10,12 @@ import { Vio } from "../../vio-sdk";
 // Flip to true to see [Vio] diagnostics in the console.
 const DEBUG = false;
 
+/** UI-facing label — the SDK's own Environment type says "testing", not
+ * "staging" (parity with the iOS SDK's naming). apiBase/graphQLBase per
+ * environment are NOT duplicated here — the SDK owns that map
+ * (`configuration.ts: DEFAULT_URLS`); we only pass `environment` to
+ * `Vio.init()` and let it resolve the URLs. Single source of truth. */
 export type VioEnvironment = "development" | "staging" | "production";
-
-/** apiBase (bootstrap/config) + graphQLBase (commerce gateway) per environment.
- * GraphQL has no separate staging deployment yet — staging reuses dev's. */
-export const ENVIRONMENT_CONFIG: Record<VioEnvironment, { apiBase: string; graphQLBase: string }> = {
-  development: { apiBase: "https://api-dev.vio.live", graphQLBase: "https://graph-ql-dev.vio.live" },
-  staging: { apiBase: "https://api-staging.vio.live", graphQLBase: "https://graph-ql-dev.vio.live" },
-  production: { apiBase: "https://api.vio.live", graphQLBase: "https://graph-ql.vio.live" },
-};
 export const DEFAULT_ENVIRONMENT: VioEnvironment = "staging";
 
 /** Panel "Save" persists the host API key here (per browser). */

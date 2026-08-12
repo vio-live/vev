@@ -8,7 +8,6 @@ import AnalyticsInspector from "./analytics-inspector";
 import {
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
-  ENVIRONMENT_CONFIG,
   persistApiKey,
   resolveApiKey,
   setRuntimeApiKey,
@@ -126,9 +125,11 @@ export default function VioConfig({
   // duplicate copies — the others render nothing (avoids N drawers / N inits).
   const [isOwner, setIsOwner] = useState(false);
 
-  const envConfig = ENVIRONMENT_CONFIG[environment] ?? ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT];
-  const resolvedBase = envConfig.apiBase;
-  const resolvedGql = envConfig.graphQLBase;
+  // Maps our UI label ("Staging") to the SDK's own Environment type
+  // ("testing" — parity with the iOS SDK's naming). The SDK resolves
+  // apiBase/graphQLBase from this internally (configuration.ts: DEFAULT_URLS)
+  // — no URL map duplicated here.
+  const sdkEnvironment = environment === "staging" ? "testing" : environment;
   const resolvedKey = resolveApiKey(apiKey);
 
   // Connection panel state.
@@ -158,12 +159,7 @@ export default function VioConfig({
         setRuntimeApiKey(key);
         Vio.init({
           apiKey: key,
-          // The SDK's own Environment type says "testing", not "staging" —
-          // metadata only (apiBase/graphQLBase are always overridden below
-          // with our own per-environment map, so this never affects URLs).
-          environment: environment === "staging" ? "testing" : environment,
-          apiBase: resolvedBase,
-          graphQLBase: resolvedGql,
+          environment: sdkEnvironment,
         });
         const boot = await Vio.bootstrap();
         
@@ -195,7 +191,7 @@ export default function VioConfig({
         window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
       }
     },
-    [resolvedBase, resolvedGql, environment]
+    [sdkEnvironment]
   );
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.

@@ -15,8 +15,9 @@ var DEFAULT_URLS = {
     apiBase: "https://api-dev.vio.live",
     graphQLBase: "https://graph-ql-dev.vio.live"
   },
+  // No separate staging GraphQL deployment yet — shares dev's.
   testing: {
-    apiBase: "https://api-dev.vio.live",
+    apiBase: "https://api-staging.vio.live",
     graphQLBase: "https://graph-ql-dev.vio.live"
   },
   production: {
