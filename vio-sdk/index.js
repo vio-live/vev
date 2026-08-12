@@ -5046,6 +5046,24 @@ query Config {
 `;
 async function getCartGraphQLOptions(sponsorId) {
   const facade = globalThis.__VIO_FACADE__;
+  const fallbackKey =
+    (typeof globalThis !== "undefined" && globalThis.__VIO_API_KEY__) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("vio.apiKey")) ||
+    undefined;
+
+  if (!Configuration.isInitialized && fallbackKey) {
+    try {
+      const env =
+        (typeof globalThis !== "undefined" && globalThis.__VIO_ENVIRONMENT__) ||
+        (typeof localStorage !== "undefined" && localStorage.getItem("vio.environment")) ||
+        "staging";
+      const sdkEnv = env === "staging" ? "testing" : env;
+      Configuration.init({ apiKey: fallbackKey, environment: sdkEnv });
+    } catch {
+      /* noop */
+    }
+  }
+
   if (facade && typeof facade.bootstrap === "function" && !facade.bootstrapCache) {
     try {
       await facade.bootstrap();
@@ -5055,20 +5073,21 @@ async function getCartGraphQLOptions(sponsorId) {
       }
     }
   }
-  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: void 0, graphQLBase: "https://graph-ql-dev.vio.live" };
+  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: fallbackKey, graphQLBase: "https://graph-ql-dev.vio.live" };
   const anyCfg = cfg;
-  let commerceKey = anyCfg.apiKey;
+  let commerceKey = anyCfg.apiKey || fallbackKey;
   let sponsorResolved = false;
   if (sponsorId && typeof facade?.findSponsor === "function") {
     const sponsor = facade.findSponsor(sponsorId);
-    if (sponsor?.commerce?.apiKey) {
-      commerceKey = sponsor.commerce.apiKey;
+    const keyFromSponsor = sponsor?.commerce?.apiKey || sponsor?.commerce?.api_key || sponsor?.commerceKey || sponsor?.apiKey;
+    if (keyFromSponsor) {
+      commerceKey = keyFromSponsor;
       sponsorResolved = true;
     }
   }
   return {
     endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
-    apiKey: anyCfg.apiKey,
+    apiKey: anyCfg.apiKey || fallbackKey,
     commerceKey,
     sponsorResolved
   };
@@ -5084,7 +5103,14 @@ function getCustomerSessionId() {
   return id;
 }
 async function executeCartGraphQL(query, variables, options = {}) {
-  const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = options;
+  let opts = options;
+  if (typeof opts === "number" || typeof opts === "string") {
+    opts = await getCartGraphQLOptions(opts);
+  } else if (!opts || (!opts.apiKey && !opts.commerceKey)) {
+    const resolvedOpts = await getCartGraphQLOptions();
+    opts = { ...resolvedOpts, ...(opts || {}) };
+  }
+  const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = opts;
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["X-API-Key"] = apiKey;
   if (commerceKey || apiKey) headers["Authorization"] = commerceKey || apiKey;
@@ -5157,7 +5183,11 @@ async function getCheckout(checkoutId, options) {
   return json?.data?.Checkout?.GetCheckout;
 }
 async function getAvailablePaymentMethods(options) {
-  const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, options);
+  let opts = options;
+  if (typeof opts === "number" || typeof opts === "string" || !opts || (!opts.apiKey && !opts.commerceKey)) {
+    opts = await getCartGraphQLOptions(typeof opts === "number" || typeof opts === "string" ? opts : undefined);
+  }
+  const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, opts);
   return json?.data?.Payment?.GetAvailablePaymentMethods;
 }
 var CREATE_PAYMENT_STRIPE_MUTATION = `
