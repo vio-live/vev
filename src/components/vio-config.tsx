@@ -8,6 +8,7 @@ import AnalyticsInspector from "./analytics-inspector";
 import {
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
+  getPersistedApiKey,
   persistApiKey,
   resolveApiKey,
   setRuntimeApiKey,
@@ -438,14 +439,23 @@ type ApiKeyEditorProps = {
 };
 
 export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
-  const [localKey, setLocalKey] = useState(value || "");
+  // The block's canvas side (VioConfig) resolves its key as
+  // localStorage → runtime → this prop (see resolveApiKey). Showing only the
+  // raw prop here — and only offering Disconnect when the PROP is set — hid
+  // a real gap: a key left over in localStorage from an earlier test kept
+  // the block connected while this panel showed an empty field with no way
+  // to clear it. Mirror that same precedence here so the field always shows
+  // what's actually in effect, and Disconnect is offered whenever there's
+  // anything (prop OR persisted) to clear.
+  const effectiveKey = value || getPersistedApiKey() || "";
+  const [localKey, setLocalKey] = useState(effectiveKey);
 
   useEffect(() => {
-    setLocalKey(value || "");
-  }, [value]);
+    setLocalKey(effectiveKey);
+  }, [effectiveKey]);
 
   const trimmed = localKey.trim();
-  const dirty = trimmed !== (value || "");
+  const dirty = trimmed !== effectiveKey;
 
   /** Persist the key to the Vev prop (+ localStorage). A CHANGED key auto-
    * connects via VioConfig's key effect; an unchanged key is a no-op. */
@@ -507,7 +517,7 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
           style={{ flex: 1 }}
         />
       </SilkeBox>
-      {value ? (
+      {effectiveKey ? (
         <SilkeButton
           label="Disconnect"
           size="s"
