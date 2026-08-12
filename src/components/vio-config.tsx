@@ -150,7 +150,6 @@ export default function VioConfig({
         }
         (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
         setPrimarySponsorId(null);
-        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
         return;
       }
       setStatus("connecting");
@@ -175,7 +174,6 @@ export default function VioConfig({
         }
         (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = primary.id;
         setPrimarySponsorId(primary.id);
-        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: sponsorList }));
 
         setStatus("connected");
         setStatusMsg(primary?.name ?? "");
@@ -188,7 +186,6 @@ export default function VioConfig({
         }
         (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
         setPrimarySponsorId(null);
-        window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
       }
     },
     [sdkEnvironment]
@@ -211,17 +208,6 @@ export default function VioConfig({
     if (!isOwner) return;
     void connect(resolvedKey);
   }, [isOwner, resolvedKey, connect]);
-
-  // Explicit "Connect" from the properties panel: (re)connect with the key in
-  // the field right now, without waiting for a prop change.
-  useEffect(() => {
-    if (!isOwner) return;
-    const onConnectRequest = (e: any) => {
-      void connect(e?.detail?.key ?? resolvedKey);
-    };
-    window.addEventListener("vio:connect-request", onConnectRequest);
-    return () => window.removeEventListener("vio:connect-request", onConnectRequest);
-  }, [isOwner, connect, resolvedKey]);
 
   // Set the dynamic runtime sponsor ID and notify listeners
   const resolvedSponsorId = sponsorId || primarySponsorId || 4;
@@ -469,12 +455,22 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
     onChange(trimmed);
   };
 
-  /** (Re)connect NOW with the key in the field, without touching the saved
-   * prop — lets you test a key (or recover from an error) independently. */
+  /** (Re)connect NOW with the key in the field, WITHOUT persisting it to
+   * localStorage — lets you test a key (or recover from an error) without
+   * making it the browser-wide default for other blocks/projects.
+   *
+   * MUST go through the Vev prop (`onChange`), not a same-window custom
+   * event: this field editor renders in the properties panel, while
+   * VioConfig (the widget that owns `connect()`) renders inside the
+   * canvas — a DIFFERENT `window` (Vev's canvas is an iframe; confirmed via
+   * @vev/react's own use of `window.postMessage` for panel↔canvas
+   * communication). `window.dispatchEvent` never crosses that boundary, so
+   * events dispatched here are simply never seen there. The prop channel is
+   * the only bridge Vev guarantees — it's what makes Save work today. */
   const handleConnect = () => {
     if (!trimmed) return;
     setRuntimeApiKey(trimmed);
-    window.dispatchEvent(new CustomEvent("vio:connect-request", { detail: { key: trimmed } }));
+    onChange(trimmed);
   };
 
   const handleClear = () => {
@@ -533,29 +529,33 @@ type SponsorItem = {
   isPrimary: boolean;
 };
 
+function readPersistedSponsors(): SponsorItem[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const listStr = localStorage.getItem("vio.sponsors");
+    return listStr ? JSON.parse(listStr) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
-  const [sponsors, setSponsors] = useState<SponsorItem[]>([]);
+  const [sponsors, setSponsors] = useState<SponsorItem[]>(() => readPersistedSponsors());
 
+  // This field editor renders in the properties panel, while VioConfig (the
+  // one that writes "vio.sponsors" after a successful connect) renders in the
+  // canvas — a DIFFERENT window (Vev's canvas is an iframe). A same-window
+  // CustomEvent never reaches across that boundary, so we rely on the native
+  // cross-window `storage` event instead — it fires in every OTHER window of
+  // the same origin whenever localStorage changes (never in the window that
+  // made the change, which is fine: that's VioConfig's own canvas state).
   useEffect(() => {
-    const listStr = typeof localStorage !== "undefined" ? localStorage.getItem("vio.sponsors") : null;
-    if (listStr) {
-      try {
-        setSponsors(JSON.parse(listStr));
-      } catch {
-        /* noop */
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const handleSponsorsUpdate = (e: any) => {
-      const detail = e.detail || [];
-      setSponsors(detail);
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== "vio.sponsors") return;
+      setSponsors(readPersistedSponsors());
     };
-    window.addEventListener("vio:sponsors-updated", handleSponsorsUpdate);
-    return () => {
-      window.removeEventListener("vio:sponsors-updated", handleSponsorsUpdate);
-    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   // Auto-select primary sponsor by default if no value is set
