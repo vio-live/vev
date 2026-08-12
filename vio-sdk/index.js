@@ -5166,32 +5166,6 @@ async function createPaymentStripe(variables, options) {
   const json = await executeCartGraphQL(CREATE_PAYMENT_STRIPE_MUTATION, variables, options);
   return json?.data?.Payment?.CreatePaymentStripe;
 }
-var CREATE_PAYMENT_VIPPS_MUTATION = `
-mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
-  Payment {
-    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
-      payment_url
-    }
-  }
-}
-`;
-async function createPaymentVipps(variables, options) {
-  const json = await executeCartGraphQL(CREATE_PAYMENT_VIPPS_MUTATION, variables, options);
-  return json?.data?.Payment?.CreatePaymentVipps;
-}
-async function resolveGraphQLOptions(options) {
-  if (!options) return await getCartGraphQLOptions();
-  if (typeof options === "number" || typeof options === "string") {
-    return await getCartGraphQLOptions(options);
-  }
-  if (options.sponsorId && !options.commerceKey && !options.apiKey) {
-    return await getCartGraphQLOptions(options.sponsorId);
-  }
-  if (!options.commerceKey && !options.apiKey) {
-    return await getCartGraphQLOptions(options.sponsorId);
-  }
-  return options;
-}
 var CREATE_PAYMENT_APPLE_PAY_MUTATION = `
 mutation CreatePaymentApplePay($checkoutId: String!) {
   Payment {
@@ -5203,8 +5177,7 @@ mutation CreatePaymentApplePay($checkoutId: String!) {
 }
 `;
 async function createPaymentApplePay(variables, options) {
-  const opts = await resolveGraphQLOptions(options);
-  const json = await executeCartGraphQL(CREATE_PAYMENT_APPLE_PAY_MUTATION, variables, opts);
+  const json = await executeCartGraphQL(CREATE_PAYMENT_APPLE_PAY_MUTATION, variables, options);
   return json?.data?.Payment?.CreatePaymentApplePay;
 }
 var CONFIRM_PAYMENT_APPLE_PAY_MUTATION = `
@@ -5218,9 +5191,21 @@ mutation ConfirmPaymentApplePay($checkoutId: String!, $applePayToken: String!, $
 }
 `;
 async function confirmPaymentApplePay(variables, options) {
-  const opts = await resolveGraphQLOptions(options);
-  const json = await executeCartGraphQL(CONFIRM_PAYMENT_APPLE_PAY_MUTATION, variables, opts);
+  const json = await executeCartGraphQL(CONFIRM_PAYMENT_APPLE_PAY_MUTATION, variables, options);
   return json?.data?.Payment?.ConfirmPaymentApplePay;
+}
+var CREATE_PAYMENT_VIPPS_MUTATION = `
+mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
+  Payment {
+    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
+      payment_url
+    }
+  }
+}
+`;
+async function createPaymentVipps(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_VIPPS_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentVipps;
 }
 
 // src/core/cart/cart-manager.ts
@@ -5649,6 +5634,11 @@ var CartManager = class extends EventTarget {
 // src/core/checkout/payments/apple-pay.ts
 var STRIPE_JS_URL = "https://js.stripe.com/v3";
 var stripeJsPromise = null;
+function preloadStripeJs() {
+  if (typeof window === "undefined") return;
+  void loadStripeJs().catch(() => {
+  });
+}
 function loadStripeJs() {
   if (stripeJsPromise) return stripeJsPromise;
   if (typeof document === "undefined") {
@@ -5704,13 +5694,6 @@ function buildRequestOptions(config) {
     disableWallets: ["link", "googlePay"]
   };
 }
-function isSafari() {
-  if (typeof window === "undefined") return false;
-  if (typeof window.ApplePaySession !== "undefined") return true;
-  const ua = window.navigator?.userAgent || "";
-  const vendor = window.navigator?.vendor || "";
-  return /Safari/i.test(ua) && /Apple/i.test(vendor) && !/Chrome/i.test(ua) && !/Edg/i.test(ua) && !/Android/i.test(ua);
-}
 async function checkApplePayAvailability(config) {
   if (typeof window === "undefined") return false;
   if (typeof window.ApplePaySession === "undefined") {
@@ -5729,144 +5712,47 @@ async function checkApplePayAvailability(config) {
     return false;
   }
 }
-function showApplePaySheet(config) {
-  if (typeof window !== "undefined" && typeof window.ApplePaySession !== "undefined" && window.ApplePaySession.canMakePayments()) {
-    return launchNativeApplePaySession(config);
-  }
+async function showApplePaySheet(config) {
   if (!config.publishableKey) {
-    throw new Error("[VioApplePay] publishableKey is required for Stripe Apple Pay");
+    throw new Error("[VioApplePay] publishableKey is required");
   }
-  const Stripe = typeof window !== "undefined" ? window.Stripe : null;
-  if (!Stripe) {
-    throw new Error("[VioApplePay] Stripe.js is not loaded");
-  }
-  const stripe = Stripe(
-    config.publishableKey,
-    config.connectedAccount ? { stripeAccount: config.connectedAccount } : void 0
-  );
+  const stripe = await getStripe(config);
   const pr = stripe.paymentRequest(buildRequestOptions(config));
-
+  const canMake = await pr.canMakePayment();
+  if (!canMake?.applePay) {
+    throw new Error("[VioApplePay] Apple Pay is not available on this device");
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
-
-    pr.on("shippingaddresschange", (ev) => {
+    pr.on("shippingaddresschange", (raw) => {
+      const ev = raw;
       ev.updateWith({ status: "success" });
     });
-
-    if (config.shippingOptions && config.shippingOptions.length > 0) {
-      pr.on("shippingoptionchange", (ev) => {
-        const opt = config.shippingOptions?.find((o7) => o7.id === ev.shippingOption?.id);
-        ev.updateWith({
-          status: "success",
-          total: { label: config.label, amount: config.amount + (opt?.amount ?? 0) }
-        });
-      });
-    }
-
-    pr.on("paymentmethod", async (raw) => {
+    pr.on("paymentmethod", (raw) => {
       const ev = raw;
       settled = true;
-      const rawResult = {
+      const result = {
         paymentMethodId: ev.paymentMethod.id,
         payerName: ev.payerName,
         payerEmail: ev.payerEmail,
         payerPhone: ev.payerPhone,
         shippingAddress: ev.shippingAddress
       };
-      try {
-        let confirmRes = null;
-        if (typeof config.onAuthorize === "function") {
-          confirmRes = await config.onAuthorize(rawResult);
+      void (async () => {
+        try {
+          const confirmation = config.onAuthorize ? await config.onAuthorize(result) : void 0;
+          ev.complete("success");
+          resolve({ ...result, confirmation });
+        } catch (err) {
+          ev.complete("fail");
+          reject(err);
         }
-        ev.complete("success");
-        resolve({ ...rawResult, confirmRes });
-      } catch (err) {
-        ev.complete("fail");
-        reject(err);
-      }
+      })();
     });
-
     pr.on("cancel", () => {
       if (!settled) resolve(null);
     });
-
     pr.show();
-  });
-}
-function launchNativeApplePaySession(options) {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined" || typeof window.ApplePaySession === "undefined") {
-      return reject(new Error("[VioApplePay] ApplePaySession not available"));
-    }
-    const amountVal = typeof options.amount === "number"
-      ? (options.amount > 100 ? (options.amount / 100).toFixed(2) : options.amount.toFixed(2))
-      : String(options.amount || "0.00");
-    const request = {
-      countryCode: options.country || "NO",
-      currencyCode: options.currency || "NOK",
-      supportedNetworks: ["visa", "masterCard", "amex", "carteBancaire"],
-      merchantCapabilities: ["supports3DS"],
-      total: {
-        label: options.label || "Vio",
-        amount: amountVal
-      },
-      requiredShippingContactFields: ["postalAddress", "name", "email", "phone"]
-    };
-    try {
-      const session = new window.ApplePaySession(3, request);
-      session.onvalidatemerchant = (event) => {
-        try {
-          session.completeMerchantValidation({});
-        } catch (e) {}
-      };
-      session.onshippingcontactselected = (event) => {
-        try {
-          session.completeShippingContactSelection(
-            window.ApplePaySession.STATUS_SUCCESS,
-            [],
-            request.total,
-            []
-          );
-        } catch (e) {}
-      };
-      session.onpaymentauthorized = async (event) => {
-        const payment = event.payment;
-        const tokenStr = typeof payment.token === "object" ? JSON.stringify(payment.token) : String(payment.token);
-        const rawResult = {
-          paymentMethodId: tokenStr,
-          payerEmail: payment.shippingContact?.emailAddress,
-          payerName: [payment.shippingContact?.givenName, payment.shippingContact?.familyName].filter(Boolean).join(" "),
-          payerPhone: payment.shippingContact?.phoneNumber,
-          shippingAddress: {
-            givenName: payment.shippingContact?.givenName,
-            familyName: payment.shippingContact?.familyName,
-            addressLine: payment.shippingContact?.addressLines,
-            locality: payment.shippingContact?.locality,
-            administrativeArea: payment.shippingContact?.administrativeArea,
-            postalCode: payment.shippingContact?.postalCode,
-            country: payment.shippingContact?.country,
-            countryCode: payment.shippingContact?.countryCode
-          }
-        };
-        try {
-          let confirmRes = null;
-          if (typeof options.onAuthorize === "function") {
-            confirmRes = await options.onAuthorize(rawResult);
-          }
-          session.completePayment(window.ApplePaySession.STATUS_SUCCESS);
-          resolve({ ...rawResult, confirmRes });
-        } catch (err) {
-          session.completePayment(window.ApplePaySession.STATUS_FAILURE);
-          reject(err);
-        }
-      };
-      session.oncancel = () => {
-        reject(new Error("[VioApplePay] User cancelled Apple Pay"));
-      };
-      session.begin();
-    } catch (err) {
-      reject(err);
-    }
   });
 }
 async function prepareApplePay(config) {
@@ -5874,30 +5760,18 @@ async function prepareApplePay(config) {
     available: false,
     show: () => Promise.reject(new Error(msg))
   });
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !config.publishableKey) {
     return unavailable("[VioApplePay] unavailable");
   }
   if (typeof window.ApplePaySession === "undefined") {
     return unavailable("[VioApplePay] ApplePaySession not available");
   }
-  if (!config.publishableKey) {
-    return {
-      available: true,
-      show() {
-        return launchNativeApplePaySession(config);
-      }
-    };
-  }
   try {
     const stripe = await getStripe(config);
     const pr = stripe.paymentRequest(buildRequestOptions(config));
-
-    pr.on("shippingaddresschange", (ev) => {
-      ev.updateWith({ status: "success" });
-    });
-
     if (config.shippingOptions && config.shippingOptions.length > 0) {
-      pr.on("shippingoptionchange", (ev) => {
+      pr.on("shippingoptionchange", (raw) => {
+        const ev = raw;
         const opt = config.shippingOptions?.find((o7) => o7.id === ev.shippingOption?.id);
         ev.updateWith({
           status: "success",
@@ -5905,43 +5779,37 @@ async function prepareApplePay(config) {
         });
       });
     }
-
+    pr.on("shippingaddresschange", (raw) => {
+      const ev = raw;
+      ev.updateWith({ status: "success" });
+    });
     const result = await pr.canMakePayment();
-    if (!result?.applePay) {
-      return {
-        available: true,
-        show() {
-          return launchNativeApplePaySession(config);
-        }
-      };
-    }
-
+    if (!result?.applePay) return unavailable("[VioApplePay] Apple Pay not available");
     return {
       available: true,
       show() {
         return new Promise((resolve, reject) => {
           let settled = false;
-          pr.on("paymentmethod", async (raw) => {
+          pr.on("paymentmethod", (raw) => {
             const ev = raw;
             settled = true;
-            const rawResult = {
+            const res = {
               paymentMethodId: ev.paymentMethod.id,
               payerName: ev.payerName,
               payerEmail: ev.payerEmail,
               payerPhone: ev.payerPhone,
               shippingAddress: ev.shippingAddress
             };
-            try {
-              let confirmRes = null;
-              if (typeof config.onAuthorize === "function") {
-                confirmRes = await config.onAuthorize(rawResult);
+            void (async () => {
+              try {
+                const confirmation = config.onAuthorize ? await config.onAuthorize(res) : void 0;
+                ev.complete("success");
+                resolve({ ...res, confirmation });
+              } catch (err) {
+                ev.complete("fail");
+                reject(err);
               }
-              ev.complete("success");
-              resolve({ ...rawResult, confirmRes });
-            } catch (err) {
-              ev.complete("fail");
-              reject(err);
-            }
+            })();
           });
           pr.on("cancel", () => {
             if (!settled) reject(new Error("[VioApplePay] User cancelled Apple Pay"));
@@ -5950,13 +5818,11 @@ async function prepareApplePay(config) {
         });
       }
     };
-  } catch {
-    return {
-      available: true,
-      show() {
-        return launchNativeApplePaySession(config);
-      }
-    };
+  } catch (err) {
+    if (typeof console !== "undefined") {
+      console.warn("[VioApplePay] prepare failed:", err);
+    }
+    return unavailable("[VioApplePay] prepare failed");
   }
 }
 
@@ -6205,26 +6071,15 @@ async function isKlarnaPaymentsAvailable() {
 }
 function findPayNowCategory(categories) {
   if (!Array.isArray(categories) || categories.length === 0) return null;
-  let cat = categories.find((c) => c?.identifier === "pay_now");
-  if (cat) return cat.identifier;
-  cat = categories.find((c) => c?.name && /betal\s*n[åa]|pay\s*now/i.test(c.name));
-  if (cat) return cat.identifier;
-  cat = categories.find((c) => c?.identifier && /pay_now|direct_debit|direct_bank_transfer|pay_in_full|klarna_pay_now/i.test(c.identifier));
-  if (cat) return cat.identifier;
-  cat = categories.find((c) => c?.name && /direkte|bank|kort|straks|sofort/i.test(c.name));
-  if (cat) return cat.identifier;
-  cat = categories.find((c) => c?.identifier && !/pay_later|pay_over_time|slice_it/i.test(c.identifier));
-  if (cat) return cat.identifier;
-  return null;
+  const byId = (re) => categories.find((c4) => c4?.identifier && re.test(c4.identifier));
+  const byName = (re) => categories.find((c4) => c4?.name && re.test(c4.name));
+  const cat = categories.find((c4) => c4?.identifier === "pay_now") ?? byName(/betal\s*n[åa]|pay\s*now/i) ?? byId(/pay_now|direct_debit|direct_bank_transfer|pay_in_full|klarna_pay_now/i) ?? byName(/direkte|bank|kort|straks|sofort/i) ?? categories.find((c4) => c4?.identifier && !/pay_later|pay_over_time|slice_it/.test(c4.identifier));
+  return cat?.identifier ?? null;
 }
 async function createKlarnaPaymentsWidget(input) {
   const Klarna = await loadKpLib();
   Klarna.Payments.init({ client_token: input.clientToken });
-  const payNowCat = findPayNowCategory(input.categories);
-  let selected = input.category ?? payNowCat ?? "pay_now";
-  if (typeof console !== "undefined") {
-    console.log("[VioKlarna] Categories:", input.categories, "Selected category:", selected);
-  }
+  let selected = input.category ?? findPayNowCategory(input.categories) ?? input.categories[0]?.identifier ?? "pay_now";
   return {
     categories: input.categories,
     get selected() {
@@ -6247,24 +6102,12 @@ async function createKlarnaPaymentsWidget(input) {
         }
       });
     },
-    authorize(categoryOrData, data) {
-      let cat = selected;
-      let payload = {};
-      if (typeof categoryOrData === "string" && categoryOrData.length > 0) {
-        cat = categoryOrData;
-        payload = data ?? {};
-      } else if (categoryOrData && typeof categoryOrData === "object") {
-        payload = categoryOrData;
-      }
-      selected = cat;
-      if (typeof console !== "undefined") {
-        console.log("[VioKlarna] Authorizing category:", cat);
-      }
+    authorize(data) {
       return new Promise((resolve, reject) => {
         try {
           Klarna.Payments.authorize(
-            { payment_method_category: cat, auto_finalize: true },
-            payload,
+            { payment_method_category: selected, auto_finalize: true },
+            data ?? {},
             (res) => {
               if (res?.approved && res.authorization_token) {
                 resolve(res.authorization_token);
@@ -6513,6 +6356,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.cartManager = cartManager;
     this.state = null;
     this.applePayAvailableCache = null;
+    /** Gateway hints learned from CreatePaymentApplePay (per session). The
+     * backend's gateway_merchant_id may be a publishable key (pk_…) or a Stripe
+     * Connect account (acct_…) — stored defensively by prefix. */
+    this.applePayPublishableKey = null;
+    this.applePayConnectedAccount = null;
     this.klarnaAvailableCache = null;
     this.klarnaOrderInFlight = false;
     /** Last backend shippings fetched (per-supplier), for UI reuse. */
@@ -6522,9 +6370,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.paymentMethodsCache = /* @__PURE__ */ new Map();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.paymentMethodsPromises = /* @__PURE__ */ new Map();
-    if (typeof window !== "undefined") {
-      void loadStripeJs().catch(() => {});
-    }
+    preloadStripeJs();
   }
   open(sponsorId) {
     const cart = this.cartManager.getCart(sponsorId);
@@ -6539,37 +6385,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       currency: getGlobalCurrency()
     };
     this.emit();
-    void this.ensureCheckoutAndApplePay(sponsorId);
     return this.state;
-  }
-  async ensureCheckoutAndApplePay(sponsorId) {
-    try {
-      let checkoutId = this.state?.checkoutId;
-      if (!checkoutId) {
-        const created = await this.createCheckout(sponsorId);
-        checkoutId = created?.id || this.state?.checkoutId;
-      }
-      if (checkoutId) {
-        await this.updateCheckout(
-          {
-            checkoutId,
-            paymentMethod: "Apple Pay",
-            buyerAcceptsPurchaseConditions: true,
-            buyerAcceptsTermsConditions: true
-          },
-          sponsorId
-        );
-        const gqlOpts = await getCartGraphQLOptions(sponsorId);
-        const createRes = await createPaymentApplePay({ checkoutId }, gqlOpts);
-        if (createRes?.gateway_merchant_id) {
-          this.stripePublishableKey = createRes.gateway_merchant_id;
-        }
-      }
-    } catch (err) {
-      if (typeof console !== "undefined") {
-        console.warn("[CheckoutManager] Background ensureCheckoutAndApplePay failed:", err);
-      }
-    }
   }
   close() {
     this.state = null;
@@ -6885,10 +6701,6 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    */
   async isApplePayAvailable(country = "NO") {
     if (this.applePayAvailableCache !== null) return this.applePayAvailableCache;
-    if (isSafari()) {
-      this.applePayAvailableCache = true;
-      return true;
-    }
     const cfg = Configuration.isInitialized ? Configuration.get() : null;
     const publishableKey = cfg?.stripePublishableKey ?? "";
     if (!publishableKey || !this.state) {
@@ -6920,10 +6732,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    */
   async prepareApplePayFor(amount, currency, country = "NO") {
     const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    if (!cfg?.stripePublishableKey) return { available: false, show: async () => {
+    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    if (!publishableKey) return { available: false, show: async () => {
     } };
     const prepared = await prepareApplePay({
-      publishableKey: cfg.stripePublishableKey,
+      publishableKey,
+      connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
       amount: toSmallestUnit(amount, currency),
       currency,
       country,
@@ -6934,7 +6748,16 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         label: o7.method,
         detail: o7.description,
         amount: o7.price
-      }))
+      })),
+      // The real backend charge — sponsor resolved at authorize-time (the
+      // product-detail button calls checkout.open() before show()).
+      onAuthorize: (raw) => {
+        const spId = this.state?.sponsorId ?? [...this.cartManager.getAllCarts().keys()][0];
+        if (spId == null) {
+          return Promise.reject(new Error("[VioCheckout] no sponsor for Apple Pay"));
+        }
+        return this.buildApplePayAuthorize(spId)(raw);
+      }
     });
     return {
       available: prepared.available,
@@ -6969,11 +6792,14 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * The caller (the cart drawer) renders its own confirmation. `show()` must be
    * called synchronously inside the tap (Apple's user-gesture rule).
    */
-  async prepareApplePayExpress(amount, currency, country = "NO") {
+  async prepareApplePayExpress(amount, currency, country = "NO", sponsorId) {
     const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    if (!cfg?.stripePublishableKey) return { available: false, show: async () => null };
+    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    if (!publishableKey) return { available: false, show: async () => null };
+    const spId = sponsorId ?? this.state?.sponsorId ?? [...this.cartManager.getAllCarts().keys()][0];
     const prepared = await prepareApplePay({
-      publishableKey: cfg.stripePublishableKey,
+      publishableKey,
+      connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
       amount: toSmallestUnit(amount, currency),
       currency,
       country,
@@ -6985,7 +6811,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         label: o7.method,
         detail: o7.description,
         amount: o7.price
-      }))
+      })),
+      // The real backend charge, run inside the sheet's authorize event.
+      ...spId != null ? { onAuthorize: this.buildApplePayAuthorize(spId) } : {}
     });
     return {
       available: prepared.available,
@@ -7001,116 +6829,120 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
     };
   }
-  /**
-   * Launches the Apple Pay sheet. Resolves with the Stripe PaymentMethod
-   * id once the user authorises — the backend then confirms the
-   * PaymentIntent with that id to actually capture the funds.
-   */
-  async startApplePay(options = {}) {
-    const spId = options.sponsorId ?? this.state?.sponsorId ?? [...this.cartManager.getAllCarts().keys()][0] ?? 1;
-    const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    const publishableKey = this.stripePublishableKey || cfg?.stripePublishableKey || "";
-    const amount = toSmallestUnit(this.state?.subtotal ?? 0, this.state?.currency ?? "NOK");
-
-    const onAuthorize = async (rawResult) => {
+  /** The charge closure run inside the Apple Pay sheet's authorize event —
+   * shared by the checkout button and the cart's express button. Fail-closed:
+   * any failure throws and the sheet closes with failure, nothing confirmed. */
+  buildApplePayAuthorize(spId) {
+    return async (raw) => {
       let checkoutId = this.state?.checkoutId;
       if (!checkoutId) {
         const created = await this.createCheckout(spId);
-        checkoutId = created?.id || this.state?.checkoutId;
+        checkoutId = created?.id ?? this.state?.checkoutId;
       }
       if (!checkoutId) {
-        throw new Error("[VioCheckout] Could not obtain or create checkout_id for Apple Pay");
+        throw new Error("[VioCheckout] could not obtain a checkout for Apple Pay");
       }
-
+      const email = raw.payerEmail || this.state?.address?.email || "";
       try {
         await this.updateCheckout(
-          {
-            checkoutId,
-            paymentMethod: "Apple Pay",
-            buyerAcceptsPurchaseConditions: true,
-            buyerAcceptsTermsConditions: true
-          },
+          { checkoutId, paymentMethod: "Apple Pay", ...email ? { email } : {} },
           spId
         );
       } catch (err) {
         if (typeof console !== "undefined") {
-          console.warn("[VioCheckout] updateCheckout for Apple Pay failed:", err);
+          console.warn("[VioCheckout] updateCheckout before Apple Pay confirm failed:", err);
         }
       }
-
       const gqlOpts = await getCartGraphQLOptions(spId);
       const createRes = await createPaymentApplePay({ checkoutId }, gqlOpts);
-      if (createRes?.gateway_merchant_id) {
-        this.stripePublishableKey = createRes.gateway_merchant_id;
-      }
-
-      const applePayToken = rawResult.paymentMethodId || rawResult.token || "";
-      const email = rawResult.payerEmail || this.form?.email || "";
-      const rawAddr = rawResult.shippingAddress || {};
-
+      const gatewayId = String(createRes?.gateway_merchant_id ?? "");
+      if (gatewayId.startsWith("pk_")) this.applePayPublishableKey = gatewayId;
+      else if (gatewayId.startsWith("acct_")) this.applePayConnectedAccount = gatewayId;
+      const addr = raw.shippingAddress ?? {};
+      const str = (v2) => typeof v2 === "string" ? v2 : "";
+      const lines = Array.isArray(addr.addressLine) ? addr.addressLine : [];
+      const fullName = str(addr.name) || raw.payerName || "";
       const shippingAddress = {
-        address1: rawAddr.addressLine?.[0] || rawAddr.address1 || this.form?.address1 || "",
-        address2: rawAddr.addressLine?.[1] || rawAddr.address2 || this.form?.address2 || "",
-        city: rawAddr.locality || rawAddr.city || this.form?.city || "",
-        company: rawAddr.company || "",
-        country: rawAddr.country || this.form?.country || "",
-        country_code: rawAddr.countryCode || rawAddr.country_code || "NO",
-        first_name: rawAddr.givenName || rawAddr.first_name || this.form?.first_name || (rawAddr.name ? rawAddr.name.split(" ")[0] : ""),
-        last_name: rawAddr.familyName || rawAddr.last_name || this.form?.last_name || (rawAddr.name ? rawAddr.name.split(" ").slice(1).join(" ") : ""),
-        phone: rawAddr.phone || rawAddr.phoneNumber || this.form?.phone || "",
-        phone_code: rawAddr.phone_code || "",
-        province: rawAddr.administrativeArea || rawAddr.province || "",
-        province_code: rawAddr.province_code || "",
-        zip: rawAddr.postalCode || rawAddr.zip || this.form?.zip || ""
+        address1: lines[0] || str(addr.line1) || "",
+        address2: lines[1] || str(addr.line2) || "",
+        city: str(addr.locality) || str(addr.city) || "",
+        company: "",
+        country: str(addr.country) || "",
+        country_code: str(addr.countryCode) || getGlobalCountryCode(),
+        first_name: str(addr.givenName) || fullName.split(" ")[0] || "",
+        last_name: str(addr.familyName) || fullName.split(" ").slice(1).join(" ") || "",
+        phone: str(addr.phone) || str(addr.phoneNumber) || raw.payerPhone || "",
+        phone_code: "",
+        province: str(addr.administrativeArea) || str(addr.state) || "",
+        province_code: "",
+        zip: str(addr.postalCode) || str(addr.postal_code) || ""
       };
-
       const confirmRes = await confirmPaymentApplePay(
-        {
-          checkoutId,
-          applePayToken,
-          email,
-          shippingAddress
-        },
+        { checkoutId, applePayToken: raw.paymentMethodId, email, shippingAddress },
         gqlOpts
       );
-
-      return confirmRes;
-    };
-
-    const keyToUse = this.stripePublishableKey || cfg?.stripePublishableKey || "";
-
-    try {
-      const appleResult = await showApplePaySheet({
-        publishableKey: keyToUse,
-        connectedAccount: this.findStripeConnectAccount() ?? void 0,
-        amount,
-        currency: this.state?.currency ?? "NOK",
-        country: options.country ?? "NO",
-        label: options.label ?? "Vio",
-        onAuthorize
-      });
-
-      if (!appleResult) return null;
-
-      this.selectPaymentMethod("apple-pay");
-      const result = {
-        order: { orderId: appleResult.confirmRes?.order_id },
-        chargedTotal: this.state?.subtotal ?? 0,
-        status: appleResult.confirmRes?.status || "CONFIRMED"
-      };
-
-      this.dispatchEvent(
-        new CustomEvent("payment-complete", {
-          detail: { method: "apple-pay", state: this.state, result }
-        })
-      );
-      return result;
-    } catch (err) {
-      if (typeof console !== "undefined") {
-        console.warn("[VioCheckout] Stripe Apple Pay failed:", err);
+      const status = String(confirmRes?.status ?? "").toLowerCase();
+      if (!confirmRes || _CheckoutManager.APPLE_PAY_FAILED_STATUSES.has(status)) {
+        throw new Error(
+          `[VioCheckout] Apple Pay confirmation failed (status: ${confirmRes?.status ?? "none"})`
+        );
       }
-      return null;
+      return { orderId: confirmRes?.order_id, status: confirmRes?.status };
+    };
+  }
+  static {
+    /** Backend statuses from ConfirmPaymentApplePay that mean the charge did
+     * NOT go through — anything here fails the sheet (fail-closed). */
+    this.APPLE_PAY_FAILED_STATUSES = /* @__PURE__ */ new Set([
+      "failed",
+      "declined",
+      "rejected",
+      "cancelled",
+      "canceled",
+      "error",
+      "expired"
+    ]);
+  }
+  /**
+   * Launches the Apple Pay sheet and charges server-side INSIDE the sheet's
+   * authorize event (round-5 wiring, contract from the commerce backend):
+   *   1. ensure a backend checkout exists (create if missing)
+   *   2. UpdateCheckout(paymentMethod: "Apple Pay" + payer email)
+   *   3. CreatePaymentApplePay → gateway hints (pk_/acct_ stored by prefix)
+   *   4. ConfirmPaymentApplePay(token, email, shipping) → the REAL charge;
+   *      a failed/absent confirmation throws → the sheet closes with failure
+   * Resolves null if the user closes the sheet. On success, dispatches
+   * `payment-complete` with the backend order id in `result.confirmation`.
+   */
+  async startApplePay(options = {}) {
+    if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
+    const spId = options.sponsorId ?? this.state.sponsorId;
+    const cfg = Configuration.isInitialized ? Configuration.get() : null;
+    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    if (!publishableKey) {
+      throw new Error(
+        "[VioCheckout] No Stripe publishable key configured. Pass `stripePublishableKey` to Vio.init({ ... })."
+      );
     }
+    const amount = toSmallestUnit(this.state.subtotal, this.state.currency);
+    const onAuthorize = this.buildApplePayAuthorize(spId);
+    const result = await showApplePaySheet({
+      publishableKey,
+      connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
+      amount,
+      currency: this.state.currency,
+      country: options.country ?? "NO",
+      label: options.label ?? "Vio",
+      onAuthorize
+    });
+    if (!result) return null;
+    this.selectPaymentMethod("apple-pay");
+    this.dispatchEvent(
+      new CustomEvent("payment-complete", {
+        detail: { method: "apple-pay", state: this.state, result }
+      })
+    );
+    return result;
   }
   // MARK: - Klarna Express Checkout (Klarna Web SDK v2)
   /**
@@ -7300,10 +7132,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         return widget.selected;
       },
       load: (category) => widget.load(category),
-      authorize: async (category, data) => {
+      authorize: async () => {
         try {
-          const cat = (typeof category === "string" && category.length > 0) ? category : (widget.selected || "pay_now");
-          const token = await widget.authorize(cat, data);
+          const token = await widget.authorize();
           await this.completeKlarnaOrder(token, ctx, { authorizationToken: token });
         } catch (err) {
           if (typeof console !== "undefined") {
@@ -7443,7 +7274,6 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         clientToken,
         sessionId: ctx.sessionId,
         categories,
-        category: opts?.category,
         container
       });
       await widget.load();
@@ -9557,10 +9387,10 @@ var VioProductDetail = class extends i4 {
       this.selectedOptions = initial;
       void Vio.checkout.prepareApplePayFor(this.unitPrice * this.quantity, this.currency).then((handle) => {
         this.applePayHandle = handle;
-        this.applePayOk = handle.available || isSafari();
+        this.applePayOk = handle.available;
       }).catch(() => {
         this.applePayHandle = null;
-        this.applePayOk = isSafari();
+        this.applePayOk = false;
       });
       void this.loadAvailablePaymentMethods();
     }
@@ -9939,17 +9769,18 @@ var VioProductDetail = class extends i4 {
    * confirmation drawer (same path as the in-checkout Apple Pay button).
    */
   buyWithApplePay() {
-    if (!this.product || this.availableQuantity <= 0) return;
+    if (!this.product || this.availableQuantity <= 0 || !this.applePayHandle) return;
     this.addCurrentToCart();
     try {
       Vio.checkout.open(this.sponsorId);
-      this.close();
-      void Vio.checkout.startApplePay({ country: "NO", label: "Vio" });
     } catch (err) {
       if (typeof console !== "undefined") {
-        console.warn("[VioProductDetail] Apple Pay failed:", err);
+        console.warn("[VioProductDetail] checkout open failed:", err);
       }
+      return;
     }
+    void this.applePayHandle.show();
+    this.close();
   }
   render() {
     return b2`
@@ -10055,7 +9886,7 @@ var VioProductDetail = class extends i4 {
             </button>
           </div>
 
-          ${this.availableQuantity > 0 && (this.applePayOk || isSafari()) && this.methodEnabled("apple-pay", "applepay", "apple_pay") ? b2`
+          ${this.availableQuantity > 0 && this.applePayOk && this.methodEnabled("apple-pay", "applepay") ? b2`
                 <button
                   class="buy-applepay"
                   @click=${this.buyWithApplePay}
@@ -10623,10 +10454,10 @@ var VioCart = class extends i4 {
     }
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
-  methodEnabled(...names) {
+  methodEnabled(name) {
     if (this.availableMethods === null) return true;
     const norm = (s4) => s4.toLowerCase().replace(/[^a-z]/g, "");
-    return this.availableMethods.some((m2) => names.some((n6) => norm(m2) === norm(n6)));
+    return this.availableMethods.some((m2) => norm(m2) === norm(name));
   }
   updated(changed) {
     if (changed.has("open") && this.open) {
@@ -10652,25 +10483,31 @@ var VioCart = class extends i4 {
       const handle = await Vio.checkout.prepareApplePayExpress(total, this.primaryCurrency);
       if (this.preparedTotal !== total) return;
       this.applePayHandle = handle;
-      this.applePayAvailable = handle.available || isSafari();
+      this.applePayAvailable = handle.available;
     } catch {
       this.applePayHandle = null;
-      this.applePayAvailable = isSafari();
+      this.applePayAvailable = false;
     }
   }
   /** Apple Pay express — pay the whole cart, then show the confirmation. */
   onApplePay() {
-    if (this.itemCount === 0) return;
-    const sponsorId = [...this.carts.keys()][0] ?? 0;
-    try {
-      this.open = false;
-      Vio.checkout.open(sponsorId);
-      void Vio.checkout.startApplePay({ country: "NO", label: "Vio" });
-    } catch (err) {
-      if (typeof console !== "undefined") {
-        console.warn("[VioCart] Apple Pay failed:", err);
+    const handle = this.applePayHandle;
+    if (!handle || !handle.available || this.itemCount === 0) return;
+    const snapshot = this.buildConfirmation();
+    void handle.show().then((result) => {
+      if (!result) return;
+      this.confirmedOrder = snapshot;
+      for (const sponsorId of [...this.carts.keys()]) {
+        Vio.cart.clearSponsorCart(sponsorId);
       }
-    }
+      this.dispatchEvent(
+        new CustomEvent("vio:payment-success", {
+          bubbles: true,
+          composed: true,
+          detail: { method: "apple-pay", result }
+        })
+      );
+    });
   }
   buildConfirmation() {
     const items = [];
@@ -10828,7 +10665,7 @@ var VioCart = class extends i4 {
                     ${formatPrice(this.totalAcrossSponsors, this.primaryCurrency)}
                   </span>
                 </div>
-                ${this.methodEnabled("apple-pay", "applepay", "apple_pay") && (this.applePayAvailable || isSafari()) ? b2`
+                ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                       <button
                         class="applepay-btn"
                         @click=${this.onApplePay}
@@ -11748,10 +11585,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
-  methodEnabled(...names) {
+  methodEnabled(name) {
     if (this.availableMethods === null) return true;
     const norm = (s4) => s4.toLowerCase().replace(/[^a-z]/g, "");
-    return this.availableMethods.some((m2) => names.some((n6) => norm(m2) === norm(n6)));
+    return this.availableMethods.some((m2) => norm(m2) === norm(name));
   }
   async refreshApplePay() {
     Vio.checkout.clearApplePayCache();
@@ -11863,8 +11700,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.paymentNotice = null;
     this.klarnaAuthorizing = true;
     try {
-      const cat = this.klarnaSelectedCat || this.klarnaHandle.selected || "pay_now";
-      await this.klarnaHandle.authorize(cat);
+      await this.klarnaHandle.authorize();
     } finally {
       this.klarnaAuthorizing = false;
     }
@@ -12375,7 +12211,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
                   <div class="payment-grid">
-                    ${this.methodEnabled("apple-pay", "applepay", "apple_pay") && (this.applePayAvailable || isSafari()) ? b2`
+                    ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                           <button
                             class="payment-btn primary"
                             @click=${() => this.onPay("apple-pay")}
@@ -12403,7 +12239,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
                           </button>
                         ` : ""}
-                    ${this.methodEnabled("apple-pay", "applepay", "apple_pay") && !(this.applePayAvailable || isSafari()) ? b2`
+                    ${this.methodEnabled("apple-pay") && !this.applePayAvailable ? b2`
                           <div class="apple-pay-note">
                              Pay krever Safari på iOS eller macOS med Apple Pay konfigurert.
                           </div>
@@ -12611,8 +12447,6 @@ export {
   createCart,
   createCheckout,
   createCommerceClient,
-  createPaymentApplePay,
-  confirmPaymentApplePay,
   createPaymentStripe,
   createPaymentVipps,
   createVioApi,
