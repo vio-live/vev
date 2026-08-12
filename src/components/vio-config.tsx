@@ -495,6 +495,7 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
           size="s"
           kind="primary"
           onClick={handleSave}
+          disabled={!trimmed}
           style={{ flex: 1 }}
         />
         <SilkeButton
@@ -502,6 +503,7 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
           size="s"
           kind="secondary"
           onClick={handleConnect}
+          disabled={!trimmed}
           style={{ flex: 1 }}
         />
       </SilkeBox>
