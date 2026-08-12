@@ -12,6 +12,8 @@ import {
   persistApiKey,
   resolveApiKey,
   setRuntimeApiKey,
+  persistEnvironment,
+  setRuntimeEnvironment,
   resetCatalogCache,
   persistSponsorId,
   persistCountry,
@@ -157,6 +159,8 @@ export default function VioConfig({
       setStatusMsg("");
       try {
         setRuntimeApiKey(key);
+        setRuntimeEnvironment(environment);
+        persistEnvironment(environment);
         Vio.init({
           apiKey: key,
           environment: sdkEnvironment,

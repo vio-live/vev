@@ -22,6 +22,37 @@ export const DEFAULT_ENVIRONMENT: VioEnvironment = "staging";
 export const VIO_API_KEY_STORAGE = "vio.apiKey";
 
 let lastInitKey: string | null = null;
+let lastInitEnv: string | null = null;
+
+export const VIO_ENVIRONMENT_STORAGE = "vio.environment";
+
+export function getPersistedEnvironment(): VioEnvironment | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const env = localStorage.getItem(VIO_ENVIRONMENT_STORAGE);
+    return (env as VioEnvironment) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistEnvironment(env: VioEnvironment): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(VIO_ENVIRONMENT_STORAGE, env);
+  } catch {
+    /* noop */
+  }
+}
+
+export function setRuntimeEnvironment(env: VioEnvironment): void {
+  (globalThis as { __VIO_ENVIRONMENT__?: VioEnvironment }).__VIO_ENVIRONMENT__ = env;
+}
+
+export function resolveEnvironment(propEnv?: VioEnvironment): VioEnvironment {
+  const runtime = (globalThis as { __VIO_ENVIRONMENT__?: VioEnvironment }).__VIO_ENVIRONMENT__;
+  return getPersistedEnvironment() || runtime || propEnv || DEFAULT_ENVIRONMENT;
+}
 
 export function getPersistedApiKey(): string | null {
   if (typeof localStorage === "undefined") return null;
@@ -265,16 +296,17 @@ export function checkHasVariants(p: any): boolean {
   return false;
 }
 
-export function ensureVioInit(propKey?: string): void {
+export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void {
   const key = resolveApiKey(propKey);
-  if (!Vio.isInitialized || lastInitKey !== key) {
+  const env = resolveEnvironment(propEnv);
+  const sdkEnv = env === "staging" ? "testing" : env;
+  if (!Vio.isInitialized || lastInitKey !== key || lastInitEnv !== sdkEnv) {
     Vio.init({
       apiKey: key,
-      environment: "development",
-      apiBase: DEFAULT_API_BASE,
-      graphQLBase: DEFAULT_GQL_BASE,
+      environment: sdkEnv as any,
     });
     lastInitKey = key;
+    lastInitEnv = sdkEnv;
     resetCatalogCache();
   }
 }
