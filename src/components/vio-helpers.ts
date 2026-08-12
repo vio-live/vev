@@ -10,9 +10,16 @@ import { Vio } from "../../vio-sdk";
 // Flip to true to see [Vio] diagnostics in the console.
 const DEBUG = false;
 
-export const DEFAULT_API_KEY = "vg-demo_api_key_57a3038c06434330";
-export const DEFAULT_API_BASE = "https://api-staging.vio.live";
-export const DEFAULT_GQL_BASE = "https://graph-ql-dev.vio.live";
+export type VioEnvironment = "development" | "staging" | "production";
+
+/** apiBase (bootstrap/config) + graphQLBase (commerce gateway) per environment.
+ * GraphQL has no separate staging deployment yet — staging reuses dev's. */
+export const ENVIRONMENT_CONFIG: Record<VioEnvironment, { apiBase: string; graphQLBase: string }> = {
+  development: { apiBase: "https://api-dev.vio.live", graphQLBase: "https://graph-ql-dev.vio.live" },
+  staging: { apiBase: "https://api-staging.vio.live", graphQLBase: "https://graph-ql-dev.vio.live" },
+  production: { apiBase: "https://api.vio.live", graphQLBase: "https://graph-ql.vio.live" },
+};
+export const DEFAULT_ENVIRONMENT: VioEnvironment = "staging";
 
 /** Panel "Save" persists the host API key here (per browser). */
 export const VIO_API_KEY_STORAGE = "vio.apiKey";
@@ -44,10 +51,11 @@ export function clearPersistedApiKey(): void {
   }
 }
 
-/** Host API key precedence: panel save → runtime (Vio Config) → Vev prop → default. */
+/** Host API key precedence: panel save → runtime (Vio Config) → Vev prop.
+ * No default — a page must have its own key pasted before it can connect. */
 export function resolveApiKey(propKey?: string): string {
   const runtime = (globalThis as { __VIO_API_KEY__?: string }).__VIO_API_KEY__;
-  return getPersistedApiKey() || runtime || propKey || DEFAULT_API_KEY;
+  return getPersistedApiKey() || runtime || propKey || "";
 }
 
 export function setRuntimeApiKey(key: string): void {

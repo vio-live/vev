@@ -7,9 +7,8 @@ import { configureAnalytics, initVioAnalytics } from "./analytics";
 import AnalyticsInspector from "./analytics-inspector";
 import {
   clearPersistedApiKey,
-  DEFAULT_API_BASE,
-  DEFAULT_API_KEY,
-  DEFAULT_GQL_BASE,
+  DEFAULT_ENVIRONMENT,
+  ENVIRONMENT_CONFIG,
   persistApiKey,
   resolveApiKey,
   setRuntimeApiKey,
@@ -18,6 +17,7 @@ import {
   persistCountry,
   SUPPORTED_COUNTRIES,
   getCountryConfig,
+  type VioEnvironment,
 } from "./vio-helpers";
 
 /**
@@ -29,14 +29,6 @@ import {
  *  - editor-only connection panel: status dot + API key + Save + Disconnect
  * Place ONE of these + your product blocks/addons.
  */
-
-// Ready-to-go defaults: URLs + Stripe publishable key are pre-filled so dropping
-// the block needs zero config. The host API key comes from the Vev prop / panel
-// (dynamic). The commerce key is resolved by bootstrap (sponsor.commerce.apiKey).
-// Stripe PUBLISHABLE key (public, safe in the bundle). Enables card + Apple Pay.
-// Apple Pay also requires registering the article domain in this Stripe account.
-const DEFAULT_STRIPE_PK =
-  "pk_test_51TMTbsECwcLH8wcPAkKSPs0GtSap2rLexnYFQ2PP8j07RLNCO9It5r4SR0RbU5jJ5gxtd7GMCJ5HlK9K77dQLhCr00DdDSr23y";
 
 type Status = "connecting" | "connected" | "error" | "disconnected";
 
@@ -91,9 +83,7 @@ function CartIcon({ kind }: { kind: string }) {
 
 type Props = {
   apiKey?: string;
-  apiBase?: string;
-  graphQLBase?: string;
-  stripePublishableKey?: string;
+  environment?: VioEnvironment;
   sponsorId?: number;
   country?: string;
   currency?: string;
@@ -111,9 +101,7 @@ type Props = {
 
 export default function VioConfig({
   apiKey,
-  apiBase,
-  graphQLBase,
-  stripePublishableKey,
+  environment = DEFAULT_ENVIRONMENT,
   sponsorId,
   country = "NO",
   currency,
@@ -138,9 +126,9 @@ export default function VioConfig({
   // duplicate copies — the others render nothing (avoids N drawers / N inits).
   const [isOwner, setIsOwner] = useState(false);
 
-  const resolvedBase = apiBase || DEFAULT_API_BASE;
-  const resolvedGql = graphQLBase || DEFAULT_GQL_BASE;
-  const resolvedStripe = stripePublishableKey || DEFAULT_STRIPE_PK;
+  const envConfig = ENVIRONMENT_CONFIG[environment] ?? ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT];
+  const resolvedBase = envConfig.apiBase;
+  const resolvedGql = envConfig.graphQLBase;
   const resolvedKey = resolveApiKey(apiKey);
 
   // Connection panel state.
@@ -170,10 +158,12 @@ export default function VioConfig({
         setRuntimeApiKey(key);
         Vio.init({
           apiKey: key,
-          environment: "development",
+          // The SDK's own Environment type says "testing", not "staging" —
+          // metadata only (apiBase/graphQLBase are always overridden below
+          // with our own per-environment map, so this never affects URLs).
+          environment: environment === "staging" ? "testing" : environment,
           apiBase: resolvedBase,
           graphQLBase: resolvedGql,
-          stripePublishableKey: resolvedStripe,
         });
         const boot = await Vio.bootstrap();
         
@@ -205,7 +195,7 @@ export default function VioConfig({
         window.dispatchEvent(new CustomEvent("vio:sponsors-updated", { detail: [] }));
       }
     },
-    [resolvedBase, resolvedGql, resolvedStripe]
+    [resolvedBase, resolvedGql, environment]
   );
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
@@ -617,7 +607,7 @@ registerVevComponent(VioConfig, {
       name: "apiKey",
       title: "Vio API Key",
       type: "string",
-      initialValue: DEFAULT_API_KEY,
+      initialValue: "",
       component: VioApiKeyEditor as any,
     },
     {
@@ -643,9 +633,20 @@ registerVevComponent(VioConfig, {
           } as any,
         ]
       : []),
-    { name: "apiBase", title: "API Base", type: "string", initialValue: DEFAULT_API_BASE },
-    { name: "graphQLBase", title: "GraphQL Base", type: "string", initialValue: DEFAULT_GQL_BASE },
-    { name: "stripePublishableKey", title: "Stripe PK", type: "string", initialValue: DEFAULT_STRIPE_PK },
+    {
+      name: "environment",
+      title: "Environment",
+      type: "select",
+      initialValue: DEFAULT_ENVIRONMENT,
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "development", label: "Development" },
+          { value: "staging", label: "Staging" },
+          { value: "production", label: "Production" },
+        ],
+      },
+    } as any,
     { name: "cartButton", title: "Cart button", type: "boolean", initialValue: true },
     {
       name: "cartPosition",
