@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { registerVevComponent, useEditorState } from "@vev/react";
-import { SilkeBox, SilkeButton } from "@vev/silke";
+import { SilkeBox, SilkeButton, SilkeSelectFieldNative, SilkeTextField } from "@vev/silke";
 import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
 import { configureAnalytics, initVioAnalytics } from "./analytics";
 import AnalyticsInspector from "./analytics-inspector";
@@ -452,45 +452,13 @@ export default function VioConfig({
   );
 }
 
-// Properties-panel inputs: match Vev's dark panel (native fields are dark
-// gray + light text). Injected once per document; ::placeholder/:focus need a
-// real stylesheet, inline styles can't express them.
-const PANEL_STYLE_ID = "vio-panel-input-styles";
-function injectPanelStyles() {
-  if (typeof document === "undefined" || document.getElementById(PANEL_STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = PANEL_STYLE_ID;
-  el.textContent = `
-    .vio-cfg-input, .vio-cfg-select {
-      box-sizing: border-box;
-      width: 100%;
-      padding: 8px 10px;
-      font-size: 12px;
-      color: #f2f2f2;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: 6px;
-      outline: none;
-      transition: border-color 0.12s ease, background 0.12s ease;
-      color-scheme: dark;
-    }
-    .vio-cfg-input { font-family: ui-monospace, Menlo, monospace; }
-    .vio-cfg-input::placeholder { color: rgba(255, 255, 255, 0.35); }
-    .vio-cfg-input:focus, .vio-cfg-select:focus {
-      border-color: #4a7dff;
-      background: rgba(255, 255, 255, 0.09);
-    }
-    .vio-cfg-input.dirty { border-color: #4a7dff; }
-    .vio-cfg-select option { background: #1e1e1e; color: #f2f2f2; }
-    .vio-cfg-hint {
-      font-size: 12px;
-      color: rgba(255, 255, 255, 0.45);
-      font-style: italic;
-      padding: 4px 0;
-    }
-  `;
-  document.head.appendChild(el);
-}
+// Properties-panel inputs use Vev's own Silke components (SilkeTextField /
+// SilkeSelectFieldNative) — the SAME components Vev's native "string"/"select"
+// prop fields render with (e.g. API Base, Cart position). That's what makes
+// them pick up the panel's dark theme automatically, popover-based dropdown
+// included — a raw <input>/<select> with a hand-written stylesheet loses to
+// Vev's own (higher-specificity) panel CSS and renders as a plain white
+// browser control instead.
 
 type ApiKeyEditorProps = {
   value?: string;
@@ -499,10 +467,6 @@ type ApiKeyEditorProps = {
 
 export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
   const [localKey, setLocalKey] = useState(value || "");
-
-  useEffect(() => {
-    injectPanelStyles();
-  }, []);
 
   useEffect(() => {
     setLocalKey(value || "");
@@ -536,12 +500,12 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
 
   return (
     <SilkeBox column gap="s" style={{ width: "100%" }}>
-      <input
-        className={dirty ? "vio-cfg-input dirty" : "vio-cfg-input"}
+      <SilkeTextField
         value={localKey}
-        onChange={(e: any) => setLocalKey(e.target.value)}
+        onChange={(v: string) => setLocalKey(v)}
         placeholder="vg-demo_api_key_…"
-        spellCheck={false}
+        autocomplete={false}
+        size="s"
       />
       <SilkeBox gap="xs" style={{ width: "100%" }}>
         <SilkeButton
@@ -618,27 +582,25 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
     }
   }, [value, sponsors, onChange]);
 
-  useEffect(() => {
-    injectPanelStyles();
-  }, []);
-
   if (sponsors.length === 0) {
-    return <div className="vio-cfg-hint">Connect API Key to select sponsor</div>;
+    return (
+      <SilkeBox style={{ fontSize: 12, opacity: 0.55, fontStyle: "italic", padding: "4px 0" }}>
+        Connect API Key to select sponsor
+      </SilkeBox>
+    );
   }
 
   return (
-    <select
-      className="vio-cfg-select"
-      value={value || ""}
-      onChange={(e: any) => onChange(Number(e.target.value))}
-    >
-      <option value="" disabled>Select a sponsor...</option>
-      {sponsors.map((s: any) => (
-        <option key={s.id} value={s.id}>
-          {s.name} {s.isPrimary ? "(Primary)" : ""}
-        </option>
-      ))}
-    </select>
+    <SilkeSelectFieldNative
+      size="s"
+      value={value ?? undefined}
+      onChange={(v: number) => onChange(v)}
+      placeholder="Select a sponsor…"
+      items={sponsors.map((s: SponsorItem) => ({
+        value: s.id,
+        label: s.isPrimary ? `${s.name} (Primary)` : s.name,
+      }))}
+    />
   );
 }
 
