@@ -6,6 +6,7 @@ import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
 import { configureAnalytics, initVioAnalytics } from "./analytics";
 import AnalyticsInspector from "./analytics-inspector";
 import {
+  ensureVioInit,
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
   getPersistedApiKey,
@@ -128,11 +129,9 @@ export default function VioConfig({
   // duplicate copies — the others render nothing (avoids N drawers / N inits).
   const [isOwner, setIsOwner] = useState(false);
 
-  // Maps our UI label ("Staging") to the SDK's own Environment type
-  // ("testing" — parity with the iOS SDK's naming). The SDK resolves
-  // apiBase/graphQLBase from this internally (configuration.ts: DEFAULT_URLS)
-  // — no URL map duplicated here.
-  const sdkEnvironment = environment === "staging" ? "testing" : environment;
+  // Active environment selected via Vev inspector prop (or runtime/persisted fallback).
+  const activeEnvironment = environment || DEFAULT_ENVIRONMENT;
+  const sdkEnvironment = activeEnvironment === "staging" ? "testing" : activeEnvironment;
   const resolvedKey = resolveApiKey(apiKey);
 
   // Connection panel state.
@@ -159,12 +158,7 @@ export default function VioConfig({
       setStatusMsg("");
       try {
         setRuntimeApiKey(key);
-        setRuntimeEnvironment(environment);
-        persistEnvironment(environment);
-        Vio.init({
-          apiKey: key,
-          environment: sdkEnvironment,
-        });
+        ensureVioInit(key, activeEnvironment);
         const boot = await Vio.bootstrap();
         
         const b = boot as any;
@@ -193,7 +187,7 @@ export default function VioConfig({
         setPrimarySponsorId(null);
       }
     },
-    [sdkEnvironment]
+    [sdkEnvironment, activeEnvironment]
   );
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.

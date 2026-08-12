@@ -15,6 +15,10 @@ var DEFAULT_URLS = {
     apiBase: "https://api-dev.vio.live",
     graphQLBase: "https://graph-ql-dev.vio.live"
   },
+  staging: {
+    apiBase: "https://api-staging.vio.live",
+    graphQLBase: "https://graph-ql-dev.vio.live"
+  },
   // No separate staging GraphQL deployment yet — shares dev's.
   testing: {
     apiBase: "https://api-staging.vio.live",
@@ -34,7 +38,10 @@ var ConfigurationSingleton = class {
       throw new Error("[Vio] apiKey is required in Vio.init({ apiKey })");
     }
     const env = input.environment ?? "development";
-    const defaults = DEFAULT_URLS[env];
+    console.info("ConfigurationSingleton init env", env)
+    const defaults = DEFAULT_URLS[env] ?? DEFAULT_URLS.development;
+    console.info("ConfigurationSingleton init defaults", defaults)
+
     this.resolved = {
       apiKey: input.apiKey,
       environment: env,

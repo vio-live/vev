@@ -51,7 +51,7 @@ export function setRuntimeEnvironment(env: VioEnvironment): void {
 
 export function resolveEnvironment(propEnv?: VioEnvironment): VioEnvironment {
   const runtime = (globalThis as { __VIO_ENVIRONMENT__?: VioEnvironment }).__VIO_ENVIRONMENT__;
-  return getPersistedEnvironment() || runtime || propEnv || DEFAULT_ENVIRONMENT;
+  return propEnv || runtime || getPersistedEnvironment() || DEFAULT_ENVIRONMENT;
 }
 
 export function getPersistedApiKey(): string | null {
@@ -83,7 +83,7 @@ export function clearPersistedApiKey(): void {
  * No default — a page must have its own key pasted before it can connect. */
 export function resolveApiKey(propKey?: string): string {
   const runtime = (globalThis as { __VIO_API_KEY__?: string }).__VIO_API_KEY__;
-  return getPersistedApiKey() || runtime || propKey || "";
+  return runtime || getPersistedApiKey() || propKey || "";
 }
 
 export function setRuntimeApiKey(key: string): void {
@@ -261,6 +261,9 @@ export type CatalogProduct = {
   id: number | string;
   brand?: string;
   title?: string;
+  options_enabled?: boolean;
+  options?: Array<{ id?: string | number; name?: string; values?: string[] }>;
+  variants?: Array<{ id?: number | string; title?: string }>;
   price?: { amount?: number; amount_incl_taxes?: number; currency_code?: string };
   images?: Array<{ url?: string }>;
 };
@@ -286,7 +289,7 @@ export function getProductPriceAmount(p: any): number | undefined {
 
 export function checkHasVariants(p: any): boolean {
   if (!p) return false;
-  if (Boolean(p.options_enabled) || Boolean(p.hasVariants) || Boolean(p.has_variants)) return true;
+  if (Boolean(p.options_enabled) || Boolean(p.hasVariants) || Boolean(p.has_variants) || Boolean(p.has_options) || Boolean(p.hasOptions)) return true;
   if (Array.isArray(p.options) && p.options.length > 0) return true;
   if (Array.isArray(p.variants) && p.variants.length > 1) return true;
   if (Array.isArray(p.variants) && p.variants.length === 1) {
@@ -301,6 +304,8 @@ export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void 
   const env = resolveEnvironment(propEnv);
   const sdkEnv = env === "staging" ? "testing" : env;
   if (!Vio.isInitialized || lastInitKey !== key || lastInitEnv !== sdkEnv) {
+    setRuntimeEnvironment(env);
+    persistEnvironment(env);
     Vio.init({
       apiKey: key,
       environment: sdkEnv as any,
@@ -391,6 +396,9 @@ const PRODUCTS_QUERY = `
         id
         brand
         title
+        options_enabled
+        options { id name values }
+        variants { id title }
         price { amount amount_incl_taxes currency_code }
         images { url }
       }
