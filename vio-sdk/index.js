@@ -6776,8 +6776,22 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.emit();
   }
   selectPaymentMethod(method) {
-    if (!this.state) return;
-    this.state = { ...this.state, paymentMethod: method };
+    if (!this.state) {
+      const storedSpId = typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0;
+      const allCarts = this.cartManager.getAllCarts();
+      const firstSpId = allCarts.size > 0 ? Array.from(allCarts.keys())[0] : undefined;
+      const spId = storedSpId || firstSpId;
+      const cart = spId ? this.cartManager.getCart(spId) : undefined;
+      const subtotal = spId ? this.cartManager.subtotalForSponsor(spId) : this.cartManager.totalAcrossSponsors;
+      this.state = {
+        sponsorId: spId,
+        paymentMethod: method,
+        subtotal: subtotal || 0,
+        currency: cart?.currency || getGlobalCurrency()
+      };
+    } else {
+      this.state = { ...this.state, paymentMethod: method };
+    }
     this.emit();
     this.dispatchEvent(
       new CustomEvent("payment-select", {
@@ -11499,6 +11513,25 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return;
       }
       if (vioMethod === "vipps" && checkoutId) {
+        const storedSpId = typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0;
+        const allCarts = Vio.cart.getAllCarts();
+        const firstSpId = allCarts.size > 0 ? Array.from(allCarts.keys())[0] : undefined;
+        const spIdToUse = sponsorId || storedSpId || firstSpId;
+        if (spIdToUse) {
+          try {
+            Vio.checkout.open(spIdToUse);
+          } catch {
+            /* noop */
+          }
+        }
+        Vio.checkout.selectPaymentMethod("vipps");
+        this.checkoutState = Vio.checkout.currentState || {
+          sponsorId: spIdToUse,
+          paymentMethod: "vipps",
+          subtotal: spIdToUse ? Vio.cart.subtotalForSponsor(spIdToUse) : Vio.cart.totalAcrossSponsors,
+          currency: getGlobalCurrency()
+        };
+        this.items = Vio.checkout.items.length > 0 ? Vio.checkout.items : (spIdToUse ? Vio.cart.getCart(spIdToUse)?.items || [] : []);
         this.open = true;
         this.paymentNotice = "Bekrefter betalingen med Vipps\u2026";
         let outcome = "pending";
@@ -11547,6 +11580,21 @@ var _VioCheckout = class _VioCheckout extends i4 {
             })
           );
         } else {
+          if (spIdToUse && !Vio.checkout.currentState) {
+            try {
+              Vio.checkout.open(spIdToUse);
+            } catch {
+              /* noop */
+            }
+          }
+          Vio.checkout.selectPaymentMethod("vipps");
+          this.checkoutState = Vio.checkout.currentState || {
+            sponsorId: spIdToUse,
+            paymentMethod: "vipps",
+            subtotal: spIdToUse ? Vio.cart.subtotalForSponsor(spIdToUse) : Vio.cart.totalAcrossSponsors,
+            currency: getGlobalCurrency()
+          };
+          this.items = Vio.checkout.items.length > 0 ? Vio.checkout.items : (spIdToUse ? Vio.cart.getCart(spIdToUse)?.items || [] : []);
           this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
           this.open = true;
         }
