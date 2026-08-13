@@ -15,10 +15,6 @@ var DEFAULT_URLS = {
     apiBase: "https://api-dev.vio.live",
     graphQLBase: "https://graph-ql-dev.vio.live"
   },
-  staging: {
-    apiBase: "https://api-staging.vio.live",
-    graphQLBase: "https://graph-ql-dev.vio.live"
-  },
   // No separate staging GraphQL deployment yet — shares dev's.
   testing: {
     apiBase: "https://api-staging.vio.live",
@@ -32,16 +28,14 @@ var DEFAULT_URLS = {
 var ConfigurationSingleton = class {
   constructor() {
     this.resolved = null;
+    this.readyWaiters = [];
   }
   init(input) {
     if (!input.apiKey || typeof input.apiKey !== "string") {
       throw new Error("[Vio] apiKey is required in Vio.init({ apiKey })");
     }
     const env = input.environment ?? "development";
-    console.info("ConfigurationSingleton init env", env)
-    const defaults = DEFAULT_URLS[env] ?? DEFAULT_URLS.development;
-    console.info("ConfigurationSingleton init defaults", defaults)
-
+    const defaults = DEFAULT_URLS[env];
     this.resolved = {
       apiKey: input.apiKey,
       environment: env,
@@ -63,6 +57,9 @@ var ConfigurationSingleton = class {
         klarnaEnvironment: this.resolved.klarnaEnvironment
       });
     }
+    const waiters = this.readyWaiters;
+    this.readyWaiters = [];
+    for (const waiter of waiters) waiter();
   }
   get() {
     if (!this.resolved) {
@@ -75,9 +72,29 @@ var ConfigurationSingleton = class {
   get isInitialized() {
     return this.resolved !== null;
   }
+  /**
+   * Resolves once `Vio.init()` has run, or after `timeoutMs` — whichever
+   * comes first. Hosts that mount several independent components (e.g. Vev
+   * blocks, which mount in no guaranteed order) may have one fire a GraphQL
+   * call before another has called `Vio.init()`. Awaiting this briefly lets
+   * that race resolve instead of silently sending an unauthenticated
+   * request. Resolves `true` if init happened in time, `false` on timeout —
+   * callers should still degrade gracefully either way.
+   */
+  whenReady(timeoutMs = 2e3) {
+    if (this.resolved) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      this.readyWaiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
   /** For tests only. */
   reset() {
     this.resolved = null;
+    this.readyWaiters = [];
   }
 };
 var Configuration = /* @__PURE__ */ new ConfigurationSingleton();
@@ -5046,28 +5063,6 @@ query Config {
 `;
 async function getCartGraphQLOptions(sponsorId) {
   const facade = globalThis.__VIO_FACADE__;
-  const storedCommerceKey =
-    (typeof localStorage !== "undefined" && (localStorage.getItem("vio.lastCommerceKey") || localStorage.getItem("vio.commerceKey"))) ||
-    (typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.lastCommerceKey")) ||
-    undefined;
-  const apiKey =
-    (typeof globalThis !== "undefined" && globalThis.__VIO_API_KEY__) ||
-    (typeof localStorage !== "undefined" && (localStorage.getItem("vio.apiKey") || localStorage.getItem("vio.lastApiKey"))) ||
-    undefined;
-
-  if (!Configuration.isInitialized && apiKey) {
-    try {
-      const env =
-        (typeof globalThis !== "undefined" && globalThis.__VIO_ENVIRONMENT__) ||
-        (typeof localStorage !== "undefined" && localStorage.getItem("vio.environment")) ||
-        "staging";
-      const sdkEnv = env === "staging" ? "testing" : env;
-      Configuration.init({ apiKey, environment: sdkEnv });
-    } catch {
-      /* noop */
-    }
-  }
-
   if (facade && typeof facade.bootstrap === "function" && !facade.bootstrapCache) {
     try {
       await facade.bootstrap();
@@ -5077,33 +5072,24 @@ async function getCartGraphQLOptions(sponsorId) {
       }
     }
   }
-  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey, graphQLBase: "https://graph-ql-dev.vio.live" };
-  const anyCfg = cfg;
-  let commerceKey = storedCommerceKey;
-  let sponsorResolved = false;
-  const spIdToUse = sponsorId || (typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0) || (facade?.sponsors?.length ? facade.sponsors[0]?.id || facade.sponsors[0]?.sponsor_id : undefined);
-  if (spIdToUse && typeof facade?.findSponsor === "function") {
-    const sponsor = facade.findSponsor(spIdToUse);
-    const keyFromSponsor = sponsor?.commerce?.apiKey || sponsor?.commerce?.api_key || sponsor?.commerceKey;
-    if (keyFromSponsor) {
-      commerceKey = keyFromSponsor;
-      sponsorResolved = true;
-    }
+  if (!Configuration.isInitialized) {
+    await Configuration.whenReady();
   }
-  if (!commerceKey && facade?.sponsors?.length) {
-    for (const sp of facade.sponsors) {
-      const k = sp?.commerce?.apiKey || sp?.commerce?.api_key || sp?.commerceKey;
-      if (k) {
-        commerceKey = k;
-        sponsorResolved = true;
-        break;
-      }
+  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: void 0, graphQLBase: "https://graph-ql-dev.vio.live" };
+  const anyCfg = cfg;
+  let commerceKey = anyCfg.apiKey;
+  let sponsorResolved = false;
+  if (sponsorId && typeof facade?.findSponsor === "function") {
+    const sponsor = facade.findSponsor(sponsorId);
+    if (sponsor?.commerce?.apiKey) {
+      commerceKey = sponsor.commerce.apiKey;
+      sponsorResolved = true;
     }
   }
   return {
     endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
-    apiKey: anyCfg.apiKey || apiKey,
-    commerceKey: commerceKey || storedCommerceKey || anyCfg.apiKey || apiKey,
+    apiKey: anyCfg.apiKey,
+    commerceKey,
     sponsorResolved
   };
 }
@@ -5118,23 +5104,11 @@ function getCustomerSessionId() {
   return id;
 }
 async function executeCartGraphQL(query, variables, options = {}) {
-  let opts = options;
-  if (typeof opts === "number" || typeof opts === "string") {
-    opts = await getCartGraphQLOptions(opts);
-  } else if (!opts || (!opts.apiKey && !opts.commerceKey)) {
-    const resolvedOpts = await getCartGraphQLOptions(opts?.sponsorId);
-    opts = { ...resolvedOpts, ...(opts || {}) };
-  }
-  let { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = opts;
-  if (!commerceKey) {
-    const fallbackOpts = await getCartGraphQLOptions(opts?.sponsorId);
-    commerceKey = fallbackOpts.commerceKey;
-    apiKey = apiKey || fallbackOpts.apiKey;
-  }
+  const resolvedOptions = typeof options === "number" ? await getCartGraphQLOptions(options) : !options.apiKey && !options.commerceKey ? { ...await getCartGraphQLOptions(), ...options } : options;
+  const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = resolvedOptions;
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["X-API-Key"] = apiKey;
-  if (commerceKey) headers["Authorization"] = commerceKey;
-  else if (apiKey) headers["Authorization"] = apiKey;
+  if (commerceKey || apiKey) headers["Authorization"] = commerceKey || apiKey;
   const res = await fetch(endpoint, {
     method: "POST",
     headers,
@@ -5204,11 +5178,7 @@ async function getCheckout(checkoutId, options) {
   return json?.data?.Checkout?.GetCheckout;
 }
 async function getAvailablePaymentMethods(options) {
-  let opts = options;
-  if (typeof opts === "number" || typeof opts === "string" || !opts || (!opts.apiKey && !opts.commerceKey)) {
-    opts = await getCartGraphQLOptions(typeof opts === "number" || typeof opts === "string" ? opts : undefined);
-  }
-  const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, opts);
+  const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, options);
   return json?.data?.Payment?.GetAvailablePaymentMethods;
 }
 var CREATE_PAYMENT_STRIPE_MUTATION = `
@@ -5276,13 +5246,7 @@ query GetVippsStatus($checkoutId: String!) {
 }
 `;
 async function getVippsStatus(variables, options) {
-  let opts = options;
-  if (typeof opts === "number" || typeof opts === "string") {
-    opts = await getCartGraphQLOptions(opts);
-  } else if (!opts || (!opts.apiKey && !opts.commerceKey)) {
-    opts = await getCartGraphQLOptions();
-  }
-  const json = await executeCartGraphQL(GET_VIPPS_STATUS_QUERY, variables, opts);
+  const json = await executeCartGraphQL(GET_VIPPS_STATUS_QUERY, variables, options);
   return json?.data?.Payment?.GetVippsStatus;
 }
 
@@ -6751,22 +6715,15 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       opts
     );
     if (vippsRes?.payment_url) {
-      if (typeof localStorage !== "undefined") {
-        if (opts?.commerceKey) localStorage.setItem("vio.lastCommerceKey", opts.commerceKey);
-        if (opts?.apiKey) localStorage.setItem("vio.lastApiKey", opts.apiKey);
-        if (spId) localStorage.setItem("vio.lastSponsorId", String(spId));
-      }
-      if (typeof sessionStorage !== "undefined") {
-        if (opts?.commerceKey) sessionStorage.setItem("vio.lastCommerceKey", opts.commerceKey);
-        if (opts?.apiKey) sessionStorage.setItem("vio.lastApiKey", opts.apiKey);
-      }
       _CheckoutManager.redirectTo(vippsRes.payment_url);
       return vippsRes;
     }
     throw new Error("Vipps payment link generation failed: missing payment_url");
   }
+  /** Vipps' own payment state for the checkout — see getVippsStatus in
+   * cart-queries.ts for why this exists instead of trusting GetCheckout. */
   async getVippsStatus(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId);
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getVippsStatus({ checkoutId }, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -6776,22 +6733,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.emit();
   }
   selectPaymentMethod(method) {
-    if (!this.state) {
-      const storedSpId = typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0;
-      const allCarts = this.cartManager.getAllCarts();
-      const firstSpId = allCarts.size > 0 ? Array.from(allCarts.keys())[0] : undefined;
-      const spId = storedSpId || firstSpId;
-      const cart = spId ? this.cartManager.getCart(spId) : undefined;
-      const subtotal = spId ? this.cartManager.subtotalForSponsor(spId) : this.cartManager.totalAcrossSponsors;
-      this.state = {
-        sponsorId: spId,
-        paymentMethod: method,
-        subtotal: subtotal || 0,
-        currency: cart?.currency || getGlobalCurrency()
-      };
-    } else {
-      this.state = { ...this.state, paymentMethod: method };
-    }
+    if (!this.state) return;
+    this.state = { ...this.state, paymentMethod: method };
     this.emit();
     this.dispatchEvent(
       new CustomEvent("payment-select", {
@@ -11499,6 +11442,75 @@ var _VioCheckout = class _VioCheckout extends i4 {
      * check misreads a successful charge as unpaid. ~20s total. */
     this.RETURN_VERIFY_DELAYS_MS = [0, 2e3, 4e3, 6e3, 8e3];
   }
+  static {
+    /** Vipps polling cadence — up to 2 minutes. Its webhook can lag well behind
+     * the redirect; this window was verified against a live checkout. */
+    this.VIPPS_STATUS_MAX_ATTEMPTS = 24;
+  }
+  static {
+    this.VIPPS_STATUS_DELAY_MS = 5e3;
+  }
+  /**
+   * Vipps redirects to our return URL the same way on cancel as on success —
+   * the URL alone can't tell them apart, and the generic checkout status can
+   * lag behind Vipps' own webhook. Poll Vipps' own state directly instead:
+   * AUTHORIZED confirms, CREATED means still processing (keep polling),
+   * anything else (including an unrecognized state) is treated as failed —
+   * fail-closed by default rather than guessing.
+   */
+  async pollVippsStatus(checkoutId, sponsorId) {
+    let sawStatus = false;
+    for (let attempt = 0; attempt < _VioCheckout.VIPPS_STATUS_MAX_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r6) => setTimeout(r6, _VioCheckout.VIPPS_STATUS_DELAY_MS));
+      }
+      try {
+        const vippsStatus = await Vio.checkout.getVippsStatus(checkoutId, sponsorId || void 0);
+        const state = String(vippsStatus?.state ?? "").toUpperCase();
+        sawStatus = true;
+        if (state === "AUTHORIZED") return { outcome: "paid", sawStatus };
+        if (state === "CREATED") continue;
+        return { outcome: "failed", sawStatus };
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.warn("[VioCheckout] GetVippsStatus attempt failed:", err);
+        }
+      }
+    }
+    return { outcome: "pending", sawStatus };
+  }
+  /** Shared outcome handler for both the generic (GetCheckout) and the
+   * Vipps-specific (GetVippsStatus) return-verification paths. */
+  applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId) {
+    if (outcome === "paid") {
+      if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
+      this.confirmedOrder = {
+        items: [],
+        currency: getGlobalCurrency(),
+        total: 0,
+        orderId: checkoutId || void 0
+      };
+      this.confirmedMethod = vioMethod;
+      this.orderConfirmed = true;
+      this.open = true;
+      this.dispatchEvent(
+        new CustomEvent("vio:payment-success", {
+          bubbles: true,
+          composed: true,
+          detail: { method: vioMethod, sponsorId, orderId: checkoutId }
+        })
+      );
+    } else if (outcome === "failed") {
+      this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
+      this.open = true;
+    } else if (sawStatus) {
+      this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
+      this.open = true;
+    } else {
+      this.paymentError = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
+      this.open = true;
+    }
+  }
   async checkReturnPaymentStatus() {
     if (typeof window === "undefined" || !window.location || !window.location.search) return;
     try {
@@ -11512,96 +11524,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
       }
-      if (vioMethod === "vipps" && checkoutId) {
-        const storedSpId = typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0;
-        const allCarts = Vio.cart.getAllCarts();
-        const firstSpId = allCarts.size > 0 ? Array.from(allCarts.keys())[0] : undefined;
-        const spIdToUse = sponsorId || storedSpId || firstSpId;
-        if (spIdToUse) {
-          try {
-            Vio.checkout.open(spIdToUse);
-          } catch {
-            /* noop */
-          }
-        }
-        Vio.checkout.selectPaymentMethod("vipps");
-        this.checkoutState = Vio.checkout.currentState || {
-          sponsorId: spIdToUse,
-          paymentMethod: "vipps",
-          subtotal: spIdToUse ? Vio.cart.subtotalForSponsor(spIdToUse) : Vio.cart.totalAcrossSponsors,
-          currency: getGlobalCurrency()
-        };
-        this.items = Vio.checkout.items.length > 0 ? Vio.checkout.items : (spIdToUse ? Vio.cart.getCart(spIdToUse)?.items || [] : []);
+      if (vioPayment === "success" && vioMethod === "vipps" && checkoutId) {
         this.open = true;
         this.paymentNotice = "Bekrefter betalingen med Vipps\u2026";
-        let outcome = "pending";
-        const maxAttempts = 24;
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          if (attempt > 0) {
-            await new Promise((r6) => setTimeout(r6, 5000));
-          }
-          try {
-            const vippsStatus = await Vio.checkout.getVippsStatus(checkoutId, sponsorId || void 0);
-            const state = String(vippsStatus?.state ?? "").toUpperCase();
-            if (state === "AUTHORIZED") {
-              outcome = "paid";
-              break;
-            } else if (state === "CREATED") {
-              continue;
-            } else {
-              outcome = "failed";
-              break;
-            }
-          } catch (err) {
-            if (typeof console !== "undefined") {
-              console.warn("[VioCheckout] GetVippsStatus failed:", err);
-            }
-            outcome = "failed";
-            break;
-          }
-        }
+        const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
         this.paymentNotice = null;
-        if (outcome === "paid") {
-          if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
-          this.confirmedOrder = {
-            items: [],
-            currency: getGlobalCurrency(),
-            total: 0,
-            orderId: checkoutId || void 0
-          };
-          this.confirmedMethod = "vipps";
-          this.orderConfirmed = true;
-          this.open = true;
-          this.dispatchEvent(
-            new CustomEvent("vio:payment-success", {
-              bubbles: true,
-              composed: true,
-              detail: { method: "vipps", sponsorId, orderId: checkoutId }
-            })
-          );
-        } else {
-          if (spIdToUse && !Vio.checkout.currentState) {
-            try {
-              Vio.checkout.open(spIdToUse);
-            } catch {
-              /* noop */
-            }
-          }
-          Vio.checkout.selectPaymentMethod("vipps");
-          this.checkoutState = Vio.checkout.currentState || {
-            sponsorId: spIdToUse,
-            paymentMethod: "vipps",
-            subtotal: spIdToUse ? Vio.cart.subtotalForSponsor(spIdToUse) : Vio.cart.totalAcrossSponsors,
-            currency: getGlobalCurrency()
-          };
-          this.items = Vio.checkout.items.length > 0 ? Vio.checkout.items : (spIdToUse ? Vio.cart.getCart(spIdToUse)?.items || [] : []);
-          this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
-          this.open = true;
-        }
+        this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
-        return;
-      }
-      if (vioPayment === "success") {
+      } else if (vioPayment === "success") {
         let outcome = "pending";
         let sawStatus = false;
         if (checkoutId) {
@@ -11617,7 +11547,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 outcome = "failed";
                 break;
               }
-              if (_VioCheckout.PAID_STATUSES.has(status)) {
+              if (_VioCheckout.PAID_STATUSES.has(status) || Boolean(checkout?.origin_payment_id)) {
                 outcome = "paid";
                 break;
               }
@@ -11629,34 +11559,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
           this.paymentNotice = null;
         }
-        if (outcome === "paid") {
-          if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
-          this.confirmedOrder = {
-            items: [],
-            currency: getGlobalCurrency(),
-            total: 0,
-            orderId: checkoutId || void 0
-          };
-          this.confirmedMethod = vioMethod;
-          this.orderConfirmed = true;
-          this.open = true;
-          this.dispatchEvent(
-            new CustomEvent("vio:payment-success", {
-              bubbles: true,
-              composed: true,
-              detail: { method: vioMethod, sponsorId, orderId: checkoutId }
-            })
-          );
-        } else if (outcome === "failed") {
-          this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
-          this.open = true;
-        } else if (sawStatus) {
-          this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
-          this.open = true;
-        } else {
-          this.paymentError = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
-          this.open = true;
-        }
+        this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
       } else if (vioPayment === "cancel" || vioPayment === "error") {
         this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
@@ -12658,7 +12561,6 @@ export {
   getCustomerSessionId,
   getGlobalCurrency,
   getLineItemsBySupplier,
-  getVippsStatus,
   primaryImageUrl,
   showApplePaySheet,
   updateCheckout,
