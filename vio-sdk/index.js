@@ -5046,19 +5046,23 @@ query Config {
 `;
 async function getCartGraphQLOptions(sponsorId) {
   const facade = globalThis.__VIO_FACADE__;
-  const fallbackKey =
+  const storedCommerceKey =
+    (typeof localStorage !== "undefined" && (localStorage.getItem("vio.lastCommerceKey") || localStorage.getItem("vio.commerceKey"))) ||
+    (typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.lastCommerceKey")) ||
+    undefined;
+  const apiKey =
     (typeof globalThis !== "undefined" && globalThis.__VIO_API_KEY__) ||
-    (typeof localStorage !== "undefined" && localStorage.getItem("vio.apiKey")) ||
+    (typeof localStorage !== "undefined" && (localStorage.getItem("vio.apiKey") || localStorage.getItem("vio.lastApiKey"))) ||
     undefined;
 
-  if (!Configuration.isInitialized && fallbackKey) {
+  if (!Configuration.isInitialized && apiKey) {
     try {
       const env =
         (typeof globalThis !== "undefined" && globalThis.__VIO_ENVIRONMENT__) ||
         (typeof localStorage !== "undefined" && localStorage.getItem("vio.environment")) ||
         "staging";
       const sdkEnv = env === "staging" ? "testing" : env;
-      Configuration.init({ apiKey: fallbackKey, environment: sdkEnv });
+      Configuration.init({ apiKey, environment: sdkEnv });
     } catch {
       /* noop */
     }
@@ -5073,22 +5077,33 @@ async function getCartGraphQLOptions(sponsorId) {
       }
     }
   }
-  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: fallbackKey, graphQLBase: "https://graph-ql-dev.vio.live" };
+  const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey, graphQLBase: "https://graph-ql-dev.vio.live" };
   const anyCfg = cfg;
-  let commerceKey = anyCfg.apiKey || fallbackKey;
+  let commerceKey = storedCommerceKey;
   let sponsorResolved = false;
-  if (sponsorId && typeof facade?.findSponsor === "function") {
-    const sponsor = facade.findSponsor(sponsorId);
-    const keyFromSponsor = sponsor?.commerce?.apiKey || sponsor?.commerce?.api_key || sponsor?.commerceKey || sponsor?.apiKey;
+  const spIdToUse = sponsorId || (typeof localStorage !== "undefined" ? Number(localStorage.getItem("vio.lastSponsorId") || 0) : 0) || (facade?.sponsors?.length ? facade.sponsors[0]?.id || facade.sponsors[0]?.sponsor_id : undefined);
+  if (spIdToUse && typeof facade?.findSponsor === "function") {
+    const sponsor = facade.findSponsor(spIdToUse);
+    const keyFromSponsor = sponsor?.commerce?.apiKey || sponsor?.commerce?.api_key || sponsor?.commerceKey;
     if (keyFromSponsor) {
       commerceKey = keyFromSponsor;
       sponsorResolved = true;
     }
   }
+  if (!commerceKey && facade?.sponsors?.length) {
+    for (const sp of facade.sponsors) {
+      const k = sp?.commerce?.apiKey || sp?.commerce?.api_key || sp?.commerceKey;
+      if (k) {
+        commerceKey = k;
+        sponsorResolved = true;
+        break;
+      }
+    }
+  }
   return {
     endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
-    apiKey: anyCfg.apiKey || fallbackKey,
-    commerceKey,
+    apiKey: anyCfg.apiKey || apiKey,
+    commerceKey: commerceKey || storedCommerceKey || anyCfg.apiKey || apiKey,
     sponsorResolved
   };
 }
@@ -5107,13 +5122,19 @@ async function executeCartGraphQL(query, variables, options = {}) {
   if (typeof opts === "number" || typeof opts === "string") {
     opts = await getCartGraphQLOptions(opts);
   } else if (!opts || (!opts.apiKey && !opts.commerceKey)) {
-    const resolvedOpts = await getCartGraphQLOptions();
+    const resolvedOpts = await getCartGraphQLOptions(opts?.sponsorId);
     opts = { ...resolvedOpts, ...(opts || {}) };
   }
-  const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = opts;
+  let { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = opts;
+  if (!commerceKey) {
+    const fallbackOpts = await getCartGraphQLOptions(opts?.sponsorId);
+    commerceKey = fallbackOpts.commerceKey;
+    apiKey = apiKey || fallbackOpts.apiKey;
+  }
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["X-API-Key"] = apiKey;
-  if (commerceKey || apiKey) headers["Authorization"] = commerceKey || apiKey;
+  if (commerceKey) headers["Authorization"] = commerceKey;
+  else if (apiKey) headers["Authorization"] = apiKey;
   const res = await fetch(endpoint, {
     method: "POST",
     headers,
@@ -5244,6 +5265,25 @@ mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: S
 async function createPaymentVipps(variables, options) {
   const json = await executeCartGraphQL(CREATE_PAYMENT_VIPPS_MUTATION, variables, options);
   return json?.data?.Payment?.CreatePaymentVipps;
+}
+var GET_VIPPS_STATUS_QUERY = `
+query GetVippsStatus($checkoutId: String!) {
+  Payment {
+    GetVippsStatus(checkout_id: $checkoutId) {
+      state
+    }
+  }
+}
+`;
+async function getVippsStatus(variables, options) {
+  let opts = options;
+  if (typeof opts === "number" || typeof opts === "string") {
+    opts = await getCartGraphQLOptions(opts);
+  } else if (!opts || (!opts.apiKey && !opts.commerceKey)) {
+    opts = await getCartGraphQLOptions();
+  }
+  const json = await executeCartGraphQL(GET_VIPPS_STATUS_QUERY, variables, opts);
+  return json?.data?.Payment?.GetVippsStatus;
 }
 
 // src/core/cart/cart-manager.ts
@@ -6711,10 +6751,23 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       opts
     );
     if (vippsRes?.payment_url) {
+      if (typeof localStorage !== "undefined") {
+        if (opts?.commerceKey) localStorage.setItem("vio.lastCommerceKey", opts.commerceKey);
+        if (opts?.apiKey) localStorage.setItem("vio.lastApiKey", opts.apiKey);
+        if (spId) localStorage.setItem("vio.lastSponsorId", String(spId));
+      }
+      if (typeof sessionStorage !== "undefined") {
+        if (opts?.commerceKey) sessionStorage.setItem("vio.lastCommerceKey", opts.commerceKey);
+        if (opts?.apiKey) sessionStorage.setItem("vio.lastApiKey", opts.apiKey);
+      }
       _CheckoutManager.redirectTo(vippsRes.payment_url);
       return vippsRes;
     }
     throw new Error("Vipps payment link generation failed: missing payment_url");
+  }
+  async getVippsStatus(checkoutId, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId);
+    return getVippsStatus({ checkoutId }, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
@@ -11420,7 +11473,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       "declined",
       "expired",
       "aborted",
-      "terminated"
+      "terminated",
+      "error",
+      "voided",
+      "unpaid"
     ]);
   }
   static {
@@ -11442,6 +11498,61 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
       }
+      if (vioMethod === "vipps" && checkoutId) {
+        this.open = true;
+        this.paymentNotice = "Bekrefter betalingen med Vipps\u2026";
+        let outcome = "pending";
+        const maxAttempts = 24;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          if (attempt > 0) {
+            await new Promise((r6) => setTimeout(r6, 5000));
+          }
+          try {
+            const vippsStatus = await Vio.checkout.getVippsStatus(checkoutId, sponsorId || void 0);
+            const state = String(vippsStatus?.state ?? "").toUpperCase();
+            if (state === "AUTHORIZED") {
+              outcome = "paid";
+              break;
+            } else if (state === "CREATED") {
+              continue;
+            } else {
+              outcome = "failed";
+              break;
+            }
+          } catch (err) {
+            if (typeof console !== "undefined") {
+              console.warn("[VioCheckout] GetVippsStatus failed:", err);
+            }
+            outcome = "failed";
+            break;
+          }
+        }
+        this.paymentNotice = null;
+        if (outcome === "paid") {
+          if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
+          this.confirmedOrder = {
+            items: [],
+            currency: getGlobalCurrency(),
+            total: 0,
+            orderId: checkoutId || void 0
+          };
+          this.confirmedMethod = "vipps";
+          this.orderConfirmed = true;
+          this.open = true;
+          this.dispatchEvent(
+            new CustomEvent("vio:payment-success", {
+              bubbles: true,
+              composed: true,
+              detail: { method: "vipps", sponsorId, orderId: checkoutId }
+            })
+          );
+        } else {
+          this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
+          this.open = true;
+        }
+        this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
+        return;
+      }
       if (vioPayment === "success") {
         let outcome = "pending";
         let sawStatus = false;
@@ -11454,12 +11565,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
               const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
               const status = String(checkout?.status ?? "").toLowerCase();
               sawStatus = true;
-              if (_VioCheckout.PAID_STATUSES.has(status) || Boolean(checkout?.origin_payment_id)) {
-                outcome = "paid";
-                break;
-              }
               if (_VioCheckout.FAILED_STATUSES.has(status)) {
                 outcome = "failed";
+                break;
+              }
+              if (_VioCheckout.PAID_STATUSES.has(status)) {
+                outcome = "paid";
                 break;
               }
             } catch (err) {
@@ -12499,6 +12610,7 @@ export {
   getCustomerSessionId,
   getGlobalCurrency,
   getLineItemsBySupplier,
+  getVippsStatus,
   primaryImageUrl,
   showApplePaySheet,
   updateCheckout,
