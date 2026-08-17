@@ -11519,12 +11519,22 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const vioMethod = urlParams.get("vio_method") || "stripe";
       const sponsorId = Number(urlParams.get("vio_sponsor") || 0);
       const checkoutId = urlParams.get("checkout_id") || "";
-      if (!vioPayment) return;
+      if (!vioPayment && !checkoutId) return;
       if (vioMethod === "klarna" && typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.klarna.pending.v1")) {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
       }
-      if (vioPayment === "success" && vioMethod === "vipps" && checkoutId) {
+      if (vioMethod === "vipps" && checkoutId) {
+        if (!this.checkoutState) {
+          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          if (spIdToUse) {
+            try {
+              Vio.checkout.open(spIdToUse);
+              Vio.checkout.selectPaymentMethod("vipps");
+            } catch {
+            }
+          }
+        }
         this.open = true;
         this.paymentNotice = "Bekrefter betalingen med Vipps\u2026";
         const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
