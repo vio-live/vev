@@ -4149,6 +4149,34 @@ function createCommerceClient(options) {
   return new CommerceClient(options);
 }
 
+// src/core/checkout/payments/vipps.ts
+var CREATE_PAYMENT_VIPPS_MUTATION = `
+mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
+  Payment {
+    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
+      payment_url
+    }
+  }
+}
+`;
+var GET_VIPPS_STATUS_QUERY = `
+query GetVippsStatus($checkoutId: String!) {
+  Payment {
+    GetVippsStatus(checkout_id: $checkoutId) {
+      state
+    }
+  }
+}
+`;
+async function createPaymentVipps(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_VIPPS_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentVipps ?? null;
+}
+async function getVippsStatus(variables, options) {
+  const json = await executeCartGraphQL(GET_VIPPS_STATUS_QUERY, variables, options);
+  return json?.data?.Payment?.GetVippsStatus ?? null;
+}
+
 // src/core/api/cart-queries.ts
 var CREATE_CART_MUTATION = `
 mutation CreateCart($customerSessionId: String!, $currency: String!, $shippingCountry: String) {
@@ -5222,32 +5250,6 @@ mutation ConfirmPaymentApplePay($checkoutId: String!, $applePayToken: String!, $
 async function confirmPaymentApplePay(variables, options) {
   const json = await executeCartGraphQL(CONFIRM_PAYMENT_APPLE_PAY_MUTATION, variables, options);
   return json?.data?.Payment?.ConfirmPaymentApplePay;
-}
-var CREATE_PAYMENT_VIPPS_MUTATION = `
-mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
-  Payment {
-    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
-      payment_url
-    }
-  }
-}
-`;
-async function createPaymentVipps(variables, options) {
-  const json = await executeCartGraphQL(CREATE_PAYMENT_VIPPS_MUTATION, variables, options);
-  return json?.data?.Payment?.CreatePaymentVipps;
-}
-var GET_VIPPS_STATUS_QUERY = `
-query GetVippsStatus($checkoutId: String!) {
-  Payment {
-    GetVippsStatus(checkout_id: $checkoutId) {
-      state
-    }
-  }
-}
-`;
-async function getVippsStatus(variables, options) {
-  const json = await executeCartGraphQL(GET_VIPPS_STATUS_QUERY, variables, options);
-  return json?.data?.Payment?.GetVippsStatus;
 }
 
 // src/core/cart/cart-manager.ts
@@ -12541,6 +12543,7 @@ export {
   GET_CART_QUERY,
   GET_CHECKOUT_QUERY,
   GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
+  GET_VIPPS_STATUS_QUERY,
   UPDATE_CHECKOUT_MUTATION,
   UPDATE_ITEM_MUTATION,
   UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
@@ -12571,6 +12574,7 @@ export {
   getCustomerSessionId,
   getGlobalCurrency,
   getLineItemsBySupplier,
+  getVippsStatus,
   primaryImageUrl,
   showApplePaySheet,
   updateCheckout,
