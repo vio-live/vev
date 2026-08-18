@@ -38,3 +38,7 @@ export function getCheckout(checkoutId: string, options?: any): Promise<any>;
 export function getAvailablePaymentMethods(options?: any): Promise<any>;
 export function createPaymentStripe(variables: any, options?: any): Promise<any>;
 export function createPaymentVipps(variables: any, options?: any): Promise<any>;
+export function getVippsStatus(variables: any, options?: any): Promise<any>;
+
+export const VioTokens: any;
+export function applyVioTheme(overrides: any, target?: any): void;

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { registerVevComponent, useEditorState } from "@vev/react";
 import { SilkeBox, SilkeButton, SilkeSelectFieldNative, SilkeTextField } from "@vev/silke";
-import { Vio, VioCart, VioCheckout, VioProductDetail } from "../../vio-sdk";
+import { Vio, VioCart, VioCheckout, VioProductDetail, applyVioTheme } from "../../vio-sdk";
 import { configureAnalytics, initVioAnalytics } from "./analytics";
 import AnalyticsInspector from "./analytics-inspector";
 import {
@@ -97,6 +97,12 @@ type Props = {
   cartColor?: string;
   cartEffect?: string; // none | scale | pulse
   cartSize?: number;
+  // Theme (colors/fonts) — applied via the SDK's applyVioTheme, see below.
+  // Empty/undefined means "use the SDK default", not "clear to blank".
+  themeColorAccent?: string;
+  themeColorText?: string;
+  themeFontSerif?: string;
+  themeFontSans?: string;
   // Analytics.
   analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
   analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
@@ -114,6 +120,10 @@ export default function VioConfig({
   cartColor,
   cartEffect = "scale",
   cartSize = 56,
+  themeColorAccent,
+  themeColorText,
+  themeFontSerif,
+  themeFontSans,
   analytics = true,
   analyticsDebug = false,
 }: Props) {
@@ -223,6 +233,18 @@ export default function VioConfig({
     persistCountry(resolvedCountryInput);
     resetCatalogCache();
   }, [resolvedCountryInput]);
+
+  // Theme (brand colors/fonts) — applies live in the editor canvas too (not
+  // gated on `disabled`/published), so a color/font pick shows immediately
+  // while configuring, same as any other Vev style property.
+  useEffect(() => {
+    applyVioTheme({
+      colorAccent: themeColorAccent || undefined,
+      colorText: themeColorText || undefined,
+      fontSerif: themeFontSerif || undefined,
+      fontSans: themeFontSans || undefined,
+    });
+  }, [themeColorAccent, themeColorText, themeFontSerif, themeFontSans]);
 
   // Cart badge count.
   useEffect(() => {
@@ -699,6 +721,12 @@ registerVevComponent(VioConfig, {
     } as any,
     { name: "cartColor", title: "Cart color", type: "string", initialValue: "" },
     { name: "cartSize", title: "Cart size (px)", type: "number", initialValue: 56 },
+    // Theme — leave blank to use the SDK default for each. Same pattern as
+    // Cart color above: a plain hex/CSS-value string, no custom picker.
+    { name: "themeColorAccent", title: "Theme · Accent color", type: "string", initialValue: "" },
+    { name: "themeColorText", title: "Theme · Text color", type: "string", initialValue: "" },
+    { name: "themeFontSerif", title: "Theme · Heading font", type: "string", initialValue: "" },
+    { name: "themeFontSans", title: "Theme · Body font", type: "string", initialValue: "" },
     { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
     { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
   ],
