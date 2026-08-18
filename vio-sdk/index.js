@@ -12485,6 +12485,159 @@ function registerVioElements() {
   }
 }
 
+// src/ui/tokens.ts
+var VioTokens = {
+  color: {
+    text: {
+      primary: "#0a0a0a",
+      secondary: "#666666",
+      tertiary: "#999999",
+      onPrimary: "#ffffff"
+    },
+    accent: {
+      editorial: "#c14a3b"
+      // "REDAKSJONENS FAVORITTER" red
+    },
+    surface: {
+      base: "#ffffff",
+      muted: "#f2f2f2",
+      // product image background
+      hover: "#fafafa"
+    },
+    border: {
+      subtle: "#e5e5e5",
+      default: "#cccccc"
+    }
+  },
+  font: {
+    serif: '"Tinos", "Playfair Display", Georgia, serif',
+    sans: '"Inter", -apple-system, "Helvetica Neue", Arial, sans-serif'
+  },
+  size: {
+    xs: "12px",
+    sm: "14px",
+    md: "16px",
+    lg: "20px",
+    xl: "24px",
+    "2xl": "32px",
+    "3xl": "40px"
+  },
+  weight: {
+    regular: 400,
+    medium: 500,
+    semibold: 600,
+    bold: 700
+  },
+  tracking: {
+    label: "0.1em",
+    // uppercase labels (BRAND, RETAILER, REDAKSJONENS FAVORITTER)
+    title: "0"
+  },
+  lineHeight: {
+    tight: 1.1,
+    snug: 1.3,
+    normal: 1.5
+  },
+  space: {
+    xs: "4px",
+    sm: "8px",
+    md: "16px",
+    lg: "24px",
+    xl: "32px",
+    "2xl": "48px",
+    "3xl": "64px"
+  },
+  radius: {
+    none: "0",
+    sm: "2px",
+    md: "4px",
+    lg: "8px",
+    full: "9999px"
+  }
+};
+var VIO_TOKENS_CSS = `
+  :root {
+    /* color \u2014 text */
+    --vio-color-text:           ${VioTokens.color.text.primary};
+    --vio-color-text-secondary: ${VioTokens.color.text.secondary};
+    --vio-color-text-tertiary:  ${VioTokens.color.text.tertiary};
+    --vio-color-text-on-primary:${VioTokens.color.text.onPrimary};
+
+    /* color \u2014 accent */
+    --vio-color-accent: ${VioTokens.color.accent.editorial};
+
+    /* color \u2014 surface */
+    --vio-color-surface:       ${VioTokens.color.surface.base};
+    --vio-color-surface-muted: ${VioTokens.color.surface.muted};
+    --vio-color-surface-hover: ${VioTokens.color.surface.hover};
+
+    /* color \u2014 border */
+    --vio-color-border:         ${VioTokens.color.border.subtle};
+    --vio-color-border-default: ${VioTokens.color.border.default};
+
+    /* font */
+    --vio-font-serif: ${VioTokens.font.serif};
+    --vio-font-sans:  ${VioTokens.font.sans};
+
+    /* size */
+    --vio-size-xs: ${VioTokens.size.xs};
+    --vio-size-sm: ${VioTokens.size.sm};
+    --vio-size-md: ${VioTokens.size.md};
+    --vio-size-lg: ${VioTokens.size.lg};
+    --vio-size-xl: ${VioTokens.size.xl};
+
+    /* tracking (uppercase letterspacing) */
+    --vio-tracking-label: ${VioTokens.tracking.label};
+
+    /* space */
+    --vio-space-xs: ${VioTokens.space.xs};
+    --vio-space-sm: ${VioTokens.space.sm};
+    --vio-space-md: ${VioTokens.space.md};
+    --vio-space-lg: ${VioTokens.space.lg};
+    --vio-space-xl: ${VioTokens.space.xl};
+
+    /* radius */
+    --vio-radius-sm: ${VioTokens.radius.sm};
+    --vio-radius-md: ${VioTokens.radius.md};
+    --vio-radius-lg: ${VioTokens.radius.lg};
+  }
+`;
+function injectTokens() {
+  if (typeof document === "undefined") return;
+  if (document.querySelector('style[data-vio="tokens"]') !== null) return;
+  const style = document.createElement("style");
+  style.setAttribute("data-vio", "tokens");
+  style.textContent = VIO_TOKENS_CSS;
+  document.head.appendChild(style);
+}
+injectTokens();
+var THEME_KEY_TO_CSS_VAR = {
+  colorText: "--vio-color-text",
+  colorTextSecondary: "--vio-color-text-secondary",
+  colorTextTertiary: "--vio-color-text-tertiary",
+  colorTextOnPrimary: "--vio-color-text-on-primary",
+  colorAccent: "--vio-color-accent",
+  colorSurface: "--vio-color-surface",
+  colorSurfaceMuted: "--vio-color-surface-muted",
+  colorSurfaceHover: "--vio-color-surface-hover",
+  colorBorder: "--vio-color-border",
+  colorBorderDefault: "--vio-color-border-default",
+  fontSerif: "--vio-font-serif",
+  fontSans: "--vio-font-sans"
+};
+function applyVioTheme(overrides, target = typeof document !== "undefined" ? document.documentElement : null) {
+  if (!target) return;
+  for (const key of Object.keys(THEME_KEY_TO_CSS_VAR)) {
+    const cssVar = THEME_KEY_TO_CSS_VAR[key];
+    const value = overrides[key];
+    if (value) {
+      target.style.setProperty(cssVar, value);
+    } else if (key in overrides) {
+      target.style.removeProperty(cssVar);
+    }
+  }
+}
+
 // src/react/index.ts
 registerVioElements();
 var VioProduct2 = o({
@@ -12555,7 +12708,9 @@ export {
   VioProduct2 as VioProduct,
   VioProductCarousel2 as VioProductCarousel,
   VioProductDetail2 as VioProductDetail,
+  VioTokens,
   addItem,
+  applyVioTheme,
   checkApplePayAvailability,
   createCart,
   createCheckout,
