@@ -5,7 +5,9 @@
   "scripts": {
     "login": "vev login",
     "start": "vev start",
-    "deploy": "vev deploy"
+    "deploy": "vev deploy",
+    "sandbox:on": "cp vev.angelo.json vev.json && echo '⚠️  vev.json now points at the SANDBOX package. Run npm run sandbox:off before any real deploy or commit.'",
+    "sandbox:off": "git checkout -- vev.json && echo 'vev.json restored to the SHARED package (cq1lXld-TA9).'"
   },
   "dependencies": {
     "@vev/react": "latest",

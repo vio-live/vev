@@ -2,3 +2,10 @@ node_modules
 .vev
 *.log
 .DS_Store
+
+# Personal sandbox package configs (see README "Personal sandbox package").
+# vev.json (no suffix) is the ONE shared/real package (cq1lXld-TA9) and MUST
+# stay committed — everyone builds toward the same key by default. Personal
+# configs are named vev.<name>.json and gitignored so nobody's local
+# experiments end up silently pointing teammates at the wrong package.
+vev.*.json
