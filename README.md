@@ -168,11 +168,50 @@ vev.json                  # package key — never delete
 
 ## Package policy (2026-08-11)
 
-**`cq1lXld-TA9` (team Vio) is the ONLY package.** Alan's personal test package
-(`czGNimhyDCi`, was `vev-alan.json`) is deprecated: it carried stale copies of the
-same 7 components (frozen 2026-07-28, pre-hardening) under identical names, making
-it easy to drop an outdated block into a page. Vev limitation: that package lives in
-Alan's personal account, so only Alan can unshare it (`"shareWithAccount": false` +
-redeploy) — until he does, ignore any duplicate "Vio …" components that are not from
-this package. Development happens in `vio-web-sdk/src` + this repo; deploys of the
-package are coordinated (no lock on `vev deploy` — last writer wins).
+**`cq1lXld-TA9` (team Vio) is the ONLY package real pages should use.** Alan's old
+personal test package (`czGNimhyDCi`, was `vev-alan.json`) is deprecated: it carried
+stale copies of the same 7 components (frozen 2026-07-28, pre-hardening) under
+identical names, making it easy to drop an outdated block into a page. Vev
+limitation: that package lives in Alan's personal account, so only Alan can unshare
+it (`"shareWithAccount": false` + redeploy) — until he does, ignore any duplicate
+"Vio …" components that are not from this package.
+
+## Personal sandbox package (2026-08-18)
+
+`vev deploy` has no staging concept — there's exactly one "current" version of
+`cq1lXld-TA9`, and every deploy overwrites it unconditionally, no matter who runs
+it. Two people iterating and deploying to it at the same time WILL overwrite each
+other's work (this has actually happened — see the handbook journal, 2026-08-17/18).
+
+If you want to deploy something to check it live in the Vev editor before it's
+ready to share, don't deploy it to `cq1lXld-TA9`. Use your own sandbox package
+instead, under your own Vev account (separate login, separate `vev.<name>.json`
+config, gitignored):
+
+```bash
+npx vev login            # your OWN account — NOT the shared team Vio login
+mkdir /tmp/my-sandbox-init && cd /tmp/my-sandbox-init
+npx vev init              # prints a new package key under whatever account is logged in
+# copy the resulting vev.json content into vio-vev/vev.<yourname>.json
+```
+
+Then, in this repo:
+
+```bash
+npm run sandbox:on        # copies vev.<yourname>.json over vev.json — now targets YOUR package
+npx vev start              # or: npx vev deploy, to check it live in your own sandbox editor project
+npm run sandbox:off       # restores vev.json to cq1lXld-TA9 (git checkout — always safe)
+```
+
+**Rules:**
+- `vev.json` (no suffix) is the ONE shared config, always committed, always points
+  at `cq1lXld-TA9`. Never commit a change to it that points somewhere else.
+- `vev.<name>.json` files are personal, gitignored (`vev.*.json` in `.gitignore`) —
+  each person's own sandbox, never shared, never meant to go live for real users.
+- Always run `sandbox:off` before deploying/committing anything real — don't leave
+  `vev.json` pointed at a sandbox. If in doubt, `git status` will show `vev.json` as
+  modified if it's currently swapped.
+- A sandbox package is for YOUR iteration/testing only. The only path to
+  `cq1lXld-TA9` going live is the normal one: merge to `vio-web-sdk`/`vio-vev`
+  `main`, rebundle, `vev deploy` from the real `vev.json` — same as always, this
+  doesn't change that, it just keeps *testing* out of the shared package's way.
