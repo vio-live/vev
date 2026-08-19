@@ -5273,6 +5273,13 @@ var CartManager = class extends EventTarget {
      * slow response can't overwrite the state of a newer one. */
     this.mutationSeq = /* @__PURE__ */ new Map();
     this.appliedSeq = /* @__PURE__ */ new Map();
+    /** In-flight AddItem/UpdateItem/DeleteItem per sponsor. Callers that need
+     * the backend cart to reflect a just-made change (e.g. fetching shippings
+     * right after an add) should `await waitForCartMutations(sponsorId)` first
+     * — otherwise they can race the mutation and see the cart from before it
+     * landed (Alan, 2026-08-18: shippings queried before AddItem settled,
+     * came back empty). */
+    this.inFlightMutations = /* @__PURE__ */ new Map();
     /** Quantity intents for lines whose backend id hasn't arrived yet — replayed
      * when the AddItem response reconciles (keyed by product::variant). */
     this.pendingQtyIntents = /* @__PURE__ */ new Map();
@@ -5282,6 +5289,16 @@ var CartManager = class extends EventTarget {
     const n6 = (this.mutationSeq.get(sponsorId) ?? 0) + 1;
     this.mutationSeq.set(sponsorId, n6);
     return n6;
+  }
+  /** Resolves once any in-flight AddItem/UpdateItem/DeleteItem for this
+   * sponsor has settled (success or failure). No-op if nothing is pending. */
+  async waitForCartMutations(sponsorId) {
+    const p3 = this.inFlightMutations.get(sponsorId);
+    if (!p3) return;
+    try {
+      await p3;
+    } catch {
+    }
   }
   /** Apply a backend response only if no newer response was applied already. */
   applyBackendCart(sponsorId, backendCart, seq) {
@@ -5496,7 +5513,7 @@ var CartManager = class extends EventTarget {
     const addedItem = existing ?? cart.items[cart.items.length - 1];
     const addedLineId = addedItem.id;
     const seq = this.nextSeq(opts.sponsorId);
-    void (async () => {
+    const mutation = (async () => {
       try {
         const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0);
         if (cartId) {
@@ -5526,6 +5543,12 @@ var CartManager = class extends EventTarget {
         this.emitError("AddItem rejected by the backend \u2014 item removed from the cart", err);
       }
     })();
+    this.inFlightMutations.set(opts.sponsorId, mutation);
+    void mutation.finally(() => {
+      if (this.inFlightMutations.get(opts.sponsorId) === mutation) {
+        this.inFlightMutations.delete(opts.sponsorId);
+      }
+    });
     return addedItem;
   }
   intentKey(productId, variantId) {
@@ -5552,7 +5575,7 @@ var CartManager = class extends EventTarget {
     }
     const backendCartId = cart.cartId;
     const seq = this.nextSeq(sponsorId);
-    void (async () => {
+    const mutation = (async () => {
       try {
         const gqlOpts = await getCartGraphQLOptions(sponsorId);
         const resCart = quantity <= 0 ? await deleteItem(backendCartId, targetItemId, gqlOpts) : await updateItem(backendCartId, targetItemId, null, quantity, gqlOpts);
@@ -5564,6 +5587,12 @@ var CartManager = class extends EventTarget {
         void this.fetchCartFromBackend(sponsorId);
       }
     })();
+    this.inFlightMutations.set(sponsorId, mutation);
+    void mutation.finally(() => {
+      if (this.inFlightMutations.get(sponsorId) === mutation) {
+        this.inFlightMutations.delete(sponsorId);
+      }
+    });
   }
   removeItem(lineItemId, sponsorId) {
     this.updateQuantity(lineItemId, sponsorId, 0);
@@ -6118,41 +6147,95 @@ function findPayNowCategory(categories) {
   const byId = (re) => categories.find((c4) => c4?.identifier && re.test(c4.identifier));
   const byName = (re) => categories.find((c4) => c4?.name && re.test(c4.name));
   const cat = categories.find((c4) => c4?.identifier === "pay_now") ?? byName(/betal\s*n[åa]|pay\s*now/i) ?? byId(/pay_now|direct_debit|direct_bank_transfer|pay_in_full|klarna_pay_now/i) ?? byName(/direkte|bank|kort|straks|sofort/i) ?? categories.find((c4) => c4?.identifier && !/pay_later|pay_over_time|slice_it/.test(c4.identifier));
+  console.log("findPayNowCategory - Selected: ", cat);
   return cat?.identifier ?? null;
 }
 async function createKlarnaPaymentsWidget(input) {
   const Klarna = await loadKpLib();
+  console.log("[DEBUG Klarna] Initializing Klarna Payments");
   Klarna.Payments.init({ client_token: input.clientToken });
+  console.log("[DEBUG Klarna] Klarna Payments initialized");
+  Klarna.Payments.on?.("fullscreenOverlayShown", () => {
+    console.log("[DEBUG Klarna] FULLSCREEN OVERLAY SHOWN");
+  });
+  Klarna.Payments.on?.("fullscreenOverlayHidden", () => {
+    console.log("[DEBUG Klarna] FULLSCREEN OVERLAY HIDDEN");
+  });
   let selected = input.category ?? findPayNowCategory(input.categories) ?? input.categories[0]?.identifier ?? "pay_now";
+  if (typeof console !== "undefined") {
+    console.log("[VioKlarna] Received payment_method_categories from backend:", input.categories);
+    console.log("[VioKlarna] Selected initial payment_method_category:", selected);
+  }
+  const load = (category) => {
+    if (category) selected = category;
+    if (typeof console !== "undefined") {
+      console.log(
+        "[VioKlarna] Klarna.Payments.load calling with payment_method_category:",
+        selected,
+        "container:",
+        input.container
+      );
+    }
+    if (input.container && "innerHTML" in input.container) {
+      input.container.innerHTML = "";
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        Klarna.Payments.load(
+          { container: input.container, payment_method_category: selected },
+          {},
+          (res) => {
+            if (typeof console !== "undefined") {
+              console.log(
+                "[VioKlarna] Klarna.Payments.load response for payment_method_category:",
+                selected,
+                res
+              );
+            }
+            if (res?.error) reject(res.error);
+            else resolve({ showForm: res?.show_form !== false });
+          }
+        );
+      } catch (err) {
+        reject(err);
+      }
+    });
+  };
   return {
     categories: input.categories,
     get selected() {
       return selected;
     },
-    load(category) {
-      if (category) selected = category;
+    load,
+    async authorize(category, data) {
+      const cat = category || selected;
+      if (typeof console !== "undefined") {
+        console.log("[DEBUG Klarna] BEFORE AUTHORIZE", {
+          argumentCategory: category,
+          argumentData: data,
+          selected,
+          resolvedCategory: cat
+        });
+      }
+      if (cat && cat !== selected) {
+        await load(cat);
+      }
+      const finalData = { payment_method_category: cat, ...data ?? {} };
+      if (typeof console !== "undefined") {
+        console.log("[DEBUG Klarna] FINAL AUTHORIZE", { cat, selected, finalData });
+      }
       return new Promise((resolve, reject) => {
         try {
-          Klarna.Payments.load(
-            { container: input.container, payment_method_category: selected },
-            {},
-            (res) => {
-              if (res?.error) reject(res.error);
-              else resolve({ showForm: res?.show_form !== false });
-            }
-          );
-        } catch (err) {
-          reject(err);
-        }
-      });
-    },
-    authorize(data) {
-      return new Promise((resolve, reject) => {
-        try {
+          if (typeof console !== "undefined") {
+            console.log("[DEBUG Klarna] ABOUT TO CALL AUTHORIZE");
+          }
           Klarna.Payments.authorize(
-            { payment_method_category: selected, auto_finalize: true },
-            data ?? {},
+            { payment_method_category: cat, auto_finalize: true },
+            finalData,
             (res) => {
+              if (typeof console !== "undefined") {
+                console.log("[DEBUG Klarna] RAW AUTHORIZE RESPONSE:", JSON.stringify(res, null, 2));
+              }
               if (res?.approved && res.authorization_token) {
                 resolve(res.authorization_token);
               } else if (res?.error) {
@@ -6164,6 +6247,9 @@ async function createKlarnaPaymentsWidget(input) {
               }
             }
           );
+          if (typeof console !== "undefined") {
+            console.log("[DEBUG Klarna] AUTHORIZE CALL RETURNED");
+          }
         } catch (err) {
           reject(err);
         }
@@ -6531,13 +6617,18 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /**
    * Real shipping options from the backend cart (per supplier), mapped to the
-   * KlarnaShippingOption shape (minor units). Empty array on failure — callers
-   * fall back to the static KLARNA_SHIPPING_OPTIONS.
+   * KlarnaShippingOption shape (minor units). Empty array on failure/no
+   * options — Klarna callers use that as-is (no static fallback anymore, see
+   * 2026-08-18: it only ever papered over a race, now fixed via
+   * `waitForCartMutations`). `KLARNA_SHIPPING_OPTIONS` is still used
+   * separately by Apple Pay's synchronous sheet setup, which can't await
+   * this at all.
    */
   async fetchAvailableShippings(sponsorId) {
     try {
       const spId = sponsorId ?? this.state?.sponsorId;
       if (!spId) return [];
+      await this.cartManager.waitForCartMutations(spId);
       const cart = this.cartManager.getCart(spId);
       let cartId = cart?.cartId;
       if (!cartId) {
@@ -7096,8 +7187,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async mountKlarnaPayments(container, opts) {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
     const sponsorId = this.state.sponsorId;
-    const fetchedShippings = await this.fetchAvailableShippings(sponsorId);
-    const shippings = fetchedShippings.length > 0 ? fetchedShippings : KLARNA_SHIPPING_OPTIONS;
+    const shippings = await this.fetchAvailableShippings(sponsorId);
     const { ctx } = opts?.withShipping ? this.buildKlarnaInstantContext(opts.shippingId, shippings) : { ctx: this.buildKlarnaPendingContext() };
     const selectedOpt = shippings.find((s4) => s4.id === opts?.shippingId) ?? shippings[0];
     if (selectedOpt?.id && selectedOpt?.supplierId) {
@@ -7157,6 +7247,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!nativeRes || !nativeRes.client_token) {
       throw new Error("Klarna session creation failed: missing client_token");
     }
+    if (typeof console !== "undefined") {
+      console.log(
+        "[VioCheckout] CreatePaymentKlarnaNative payment_method_categories:",
+        nativeRes.payment_method_categories
+      );
+    }
     if (nativeRes.checkout_id) {
       ctx.checkoutId = nativeRes.checkout_id;
       this.state = { ...this.state, checkoutId: nativeRes.checkout_id };
@@ -7182,9 +7278,15 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         return widget.selected;
       },
       load: (category) => widget.load(category),
-      authorize: async () => {
+      authorize: async (category) => {
         try {
-          const token = await widget.authorize();
+          const addr = buildKlarnaAddress(this.state?.address);
+          const customer = buildKlarnaCustomer(this.state?.address);
+          const authData = {
+            ...addr ? { billing_address: addr, shipping_address: addr } : {},
+            ...customer ? { customer } : {}
+          };
+          const token = await widget.authorize(category, authData);
           await this.completeKlarnaOrder(token, ctx, { authorizationToken: token });
         } catch (err) {
           if (typeof console !== "undefined") {
@@ -7212,7 +7314,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   /** Cart snapshot + chosen shipping line/amount, for express purchases. */
   buildKlarnaInstantContext(shippingId, availableShippings = []) {
     const base = this.buildKlarnaPendingContext();
-    const options = availableShippings.length > 0 ? availableShippings : KLARNA_SHIPPING_OPTIONS;
+    const options = availableShippings;
     const shipping = (shippingId ? options.find((o7) => o7.id === shippingId) : void 0) ?? options.find((o7) => o7.preselected) ?? options[0];
     const orderLines = [...base.orderLines];
     if (shipping) {
@@ -7244,8 +7346,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async startKlarnaInstant() {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
     const sponsorId = this.state.sponsorId;
-    const fetchedShippings = await this.fetchAvailableShippings(sponsorId);
-    const shippings = fetchedShippings.length > 0 ? fetchedShippings : KLARNA_SHIPPING_OPTIONS;
+    const shippings = await this.fetchAvailableShippings(sponsorId);
     const { ctx } = this.buildKlarnaInstantContext(void 0, shippings);
     let clientToken;
     let categories;
@@ -10846,7 +10947,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.klarnaCategories = [];
     this.klarnaSelectedCat = "";
     this.klarnaAuthorizing = false;
-    this.selectedShipping = KLARNA_SHIPPING_OPTIONS.find((o7) => o7.preselected)?.id ?? KLARNA_SHIPPING_OPTIONS[0]?.id ?? "";
+    this.selectedShipping = "";
     this.availableShippingsList = [];
     this.availableMethods = null;
     this.stripeLoading = false;
@@ -11196,10 +11297,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
       gap: 12px;
       margin-top: 4px;
     }
+    /* Klarna remembers the customer's preferred payment_method_category
+     * server-side across sessions/browsers — exposing a category-switcher
+     * chip UI on top of that just confuses users. Hidden per Alan's
+     * 2026-08-18 cross-browser investigation; the switching logic (onKlarnaCategory)
+     * stays wired for when/if this becomes configurable again. */
     .klarna-cats {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      display: none !important;
     }
     .klarna-cat {
       flex: 1 1 auto;
@@ -11612,7 +11716,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     super.disconnectedCallback();
   }
   updated(changed) {
-    if (changed.has("open") && this.open && this.availableShippingsList.length === 0) {
+    if (changed.has("open") && this.open && this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
     void this.mountKlarnaIfNeeded();
@@ -11624,7 +11728,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   show() {
     this.open = true;
-    if (this.availableShippingsList.length === 0) {
+    if (this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
   }
@@ -11632,6 +11736,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   async loadAvailableShippings() {
     const spId = this.checkoutState?.sponsorId;
     if (!spId) return;
+    if (this.items.length === 0) return;
     if (this.loadingShippings) return;
     this.loadingShippings = true;
     this.shippingsAttempted = true;
@@ -11718,6 +11823,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (!this.klarnaAvailable || !this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "klarna" && !this.express) return;
     if (this.klarnaMounting) return;
+    if (this.items.length > 0 && this.availableShippingsList.length === 0 && !this.shippingsAttempted) {
+      await this.loadAvailableShippings();
+    }
     const amount = this.checkoutState.subtotal;
     if (this.klarnaHandle && this.klarnaMountedAmount === amount && this.klarnaMountedShipping === this.selectedShipping) {
       return;
@@ -11765,9 +11873,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.klarnaSelectedCat = "";
     this.klarnaAuthorizing = false;
   }
-  /** Shippings in effect: backend per-supplier when loaded, static otherwise. */
+  /** Shippings in effect: backend per-supplier when loaded. */
   get shippingList() {
-    return this.availableShippingsList.length > 0 ? this.availableShippingsList : KLARNA_SHIPPING_OPTIONS;
+    return this.availableShippingsList;
   }
   /** Selected shipping option (express flow). */
   get shippingOption() {
@@ -11795,8 +11903,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** Switch the Klarna widget to a different payment_method_category. */
   async onKlarnaCategory(identifier) {
-    if (!this.klarnaHandle || this.klarnaSelectedCat === identifier) return;
+    if (!this.klarnaHandle) return;
     this.klarnaSelectedCat = identifier;
+    if (typeof console !== "undefined") {
+      console.log("[VioCheckout] User selected payment_method_category:", identifier);
+    }
     try {
       await this.klarnaHandle.load(identifier);
     } catch (err) {
@@ -11811,8 +11922,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.paymentError = null;
     this.paymentNotice = null;
     this.klarnaAuthorizing = true;
+    const cat = this.klarnaSelectedCat || this.klarnaHandle.selected || "pay_now";
+    if (typeof console !== "undefined") {
+      console.log("[VioCheckout] Authorizing Klarna with payment_method_category:", cat);
+    }
     try {
-      await this.klarnaHandle.authorize();
+      await this.klarnaHandle.authorize(cat);
     } finally {
       this.klarnaAuthorizing = false;
     }
