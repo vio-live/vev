@@ -21,8 +21,14 @@ import { Vio } from "../../vio-sdk";
 // Config
 // ---------------------------------------------------------------------------
 
-type AnalyticsState = { enabled: boolean; debug: boolean };
-const state: AnalyticsState = { enabled: false, debug: false };
+type AnalyticsState = {
+  enabled: boolean;
+  debug: boolean;
+  /** Forward every tracked event to the Vio collector via Vio.analytics
+   *  (F3 — the GA4/dataLayer/inspector sinks above stay untouched). */
+  sendToVio: boolean;
+};
+const state: AnalyticsState = { enabled: false, debug: false, sendToVio: true };
 
 export function configureAnalytics(cfg: Partial<AnalyticsState>): void {
   Object.assign(state, cfg);
@@ -136,6 +142,12 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 
   pushDataLayer(name, ecommerce);
 
+  // Vio pipeline (collector -> ClickHouse + vendor fan-out). Same choke
+  // point as every other sink, so nothing can be double-counted: the core
+  // runs with autoTrack:false (see initVioAnalytics) and only receives
+  // what we forward here.
+  if (state.sendToVio) forwardToVio(name, params);
+
   if (typeof document !== "undefined") {
     const detail = { name, params: { ...params }, ts: Date.now() };
     ringLog(detail);
@@ -144,6 +156,51 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 
   if (state.debug && typeof console !== "undefined") {
     console.debug("[Vio analytics]", name, params);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Vio collector forwarding (F3 adapter over vio-web-sdk's Vio.analytics)
+// ---------------------------------------------------------------------------
+
+/** Client-side taxonomy of the analytics contract v1 — only these forward. */
+const VIO_EVENT_NAMES = new Set([
+  "view_item_list", "select_item", "view_item", "add_to_cart",
+  "view_cart", "begin_checkout", "purchase",
+  "component_impression", "component_click", "ad_impression", "ad_click",
+  "poll_impression", "contest_impression", "session_start", "session_end",
+]);
+
+function forwardToVio(name: string, params: EventParams): void {
+  if (!VIO_EVENT_NAMES.has(name)) return;
+  const analytics = (Vio as any).analytics;
+  if (!analytics?.track) return; // vendored SDK predates Vio.analytics
+  const { currency, value, items, item_list_name, transaction_id, payment_type, ...rest } = params;
+  const props: Record<string, unknown> = { ...rest };
+  if (item_list_name) props.list_name = item_list_name;
+  try {
+    analytics.track(name, {
+      commerce:
+        items?.length || value != null || transaction_id || payment_type
+          ? {
+              items: items?.map((i) => ({
+                productId: i.productId ?? "",
+                name: i.name,
+                brand: i.brand,
+                variantId: i.variantId,
+                price: i.price,
+                quantity: i.quantity,
+              })),
+              value: value ?? undefined,
+              currency: currency ?? undefined,
+              orderId: transaction_id,
+              paymentMethod: payment_type,
+            }
+          : undefined,
+      props: Object.keys(props).length ? props : undefined,
+    });
+  } catch {
+    // Analytics must never break the page.
   }
 }
 
@@ -259,6 +316,17 @@ export function initVioAnalytics(): () => void {
   if (typeof document === "undefined") return () => {};
   const g = globalThis as any;
   if (g[INIT_FLAG]) return g[INIT_FLAG] as () => void;
+
+  // Vio collector engine: sessions, batching, beacon, retries. autoTrack
+  // OFF — our document listeners below are the single instrumentation
+  // source; the core only transports what trackEvent() forwards.
+  if (state.sendToVio) {
+    try {
+      (Vio as any).analytics?.start?.({ host: "vev", autoTrack: false });
+    } catch {
+      /* vendored SDK predates Vio.analytics — GA4/inspector still work */
+    }
+  }
 
   // Keep the last non-empty cart snapshot — the cart is cleared the instant a
   // payment succeeds, so `purchase` needs what was there just before.

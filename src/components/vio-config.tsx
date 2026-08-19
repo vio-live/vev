@@ -106,6 +106,7 @@ type Props = {
   // Analytics.
   analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
   analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
+  sendToVio?: boolean; // forward events to the Vio collector (Vio Analytics pipeline)
 };
 
 export default function VioConfig({
@@ -126,6 +127,7 @@ export default function VioConfig({
   themeFontSans,
   analytics = true,
   analyticsDebug = false,
+  sendToVio = true,
 }: Props) {
   const { disabled } = useEditorState(); // true in the editor, false on the published page
   const cartRef = useRef<any>(null);
@@ -269,9 +271,10 @@ export default function VioConfig({
     if (!isOwner) return;
     configureAnalytics({
       enabled: analytics && (!disabled || analyticsDebug),
+      sendToVio,
       debug: analyticsDebug,
     });
-  }, [isOwner, analytics, analyticsDebug, disabled]);
+  }, [isOwner, analytics, analyticsDebug, sendToVio, disabled]);
 
   useEffect(() => {
     if (!isOwner || !analytics) return;
@@ -728,6 +731,7 @@ registerVevComponent(VioConfig, {
     { name: "themeFontSerif", title: "Theme · Heading font", type: "string", initialValue: "" },
     { name: "themeFontSans", title: "Theme · Body font", type: "string", initialValue: "" },
     { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
+    { name: "sendToVio", title: "Send to Vio Analytics", type: "boolean", initialValue: true },
     { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
   ],
 });
