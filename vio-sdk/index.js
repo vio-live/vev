@@ -13,16 +13,19 @@ var __decorateClass = (decorators, target, key, kind) => {
 var DEFAULT_URLS = {
   development: {
     apiBase: "https://api-dev.vio.live",
-    graphQLBase: "https://graph-ql-dev.vio.live"
+    graphQLBase: "https://graph-ql-dev.vio.live",
+    eventsBase: "https://events-dev.vio.live"
   },
   // No separate staging GraphQL deployment yet — shares dev's.
   testing: {
     apiBase: "https://api-staging.vio.live",
-    graphQLBase: "https://graph-ql-dev.vio.live"
+    graphQLBase: "https://graph-ql-dev.vio.live",
+    eventsBase: "https://events-staging.vio.live"
   },
   production: {
     apiBase: "https://api.vio.live",
-    graphQLBase: "https://graph-ql.vio.live"
+    graphQLBase: "https://graph-ql.vio.live",
+    eventsBase: "https://events.vio.live"
   }
 };
 var ConfigurationSingleton = class {
@@ -41,6 +44,7 @@ var ConfigurationSingleton = class {
       environment: env,
       apiBase: input.apiBase ?? defaults.apiBase,
       graphQLBase: input.graphQLBase ?? defaults.graphQLBase,
+      eventsBase: input.eventsBase ?? defaults.eventsBase,
       stripePublishableKey: input.stripePublishableKey,
       klarnaClientId: input.klarnaClientId,
       // Sandbox by default — live Klarna must be opted into explicitly.
@@ -299,10 +303,10 @@ function getLocation(source, position) {
 }
 
 // node_modules/graphql/language/printLocation.mjs
-function printLocation(location) {
+function printLocation(location2) {
   return printSourceLocation(
-    location.source,
-    getLocation(location.source, location.start)
+    location2.source,
+    getLocation(location2.source, location2.start)
   );
 }
 function printSourceLocation(source, sourceLocation) {
@@ -468,8 +472,8 @@ var GraphQLError = class _GraphQLError extends Error {
         }
       }
     } else if (this.source && this.locations) {
-      for (const location of this.locations) {
-        output += "\n\n" + printSourceLocation(this.source, location);
+      for (const location2 of this.locations) {
+        output += "\n\n" + printSourceLocation(this.source, location2);
       }
     }
     return output;
@@ -931,8 +935,8 @@ function isPunctuatorTokenKind(kind) {
 function isUnicodeScalarValue(code) {
   return code >= 0 && code <= 55295 || code >= 57344 && code <= 1114111;
 }
-function isSupplementaryCodePoint(body, location) {
-  return isLeadingSurrogate(body.charCodeAt(location)) && isTrailingSurrogate(body.charCodeAt(location + 1));
+function isSupplementaryCodePoint(body, location2) {
+  return isLeadingSurrogate(body.charCodeAt(location2)) && isTrailingSurrogate(body.charCodeAt(location2 + 1));
 }
 function isLeadingSurrogate(code) {
   return code >= 55296 && code <= 56319;
@@ -940,8 +944,8 @@ function isLeadingSurrogate(code) {
 function isTrailingSurrogate(code) {
   return code >= 56320 && code <= 57343;
 }
-function printCodePointAt(lexer, location) {
-  const code = lexer.source.body.codePointAt(location);
+function printCodePointAt(lexer, location2) {
+  const code = lexer.source.body.codePointAt(location2);
   if (code === void 0) {
     return TokenKind.EOF;
   } else if (code >= 32 && code <= 126) {
@@ -7606,6 +7610,476 @@ function toSmallestUnit(amount, currency) {
   return Math.round(amount * 100);
 }
 
+// src/core/version.ts
+var SDK_VERSION = "0.4.2";
+
+// src/core/analytics/analytics-manager.ts
+var SESSION_TTL_MS = 30 * 60 * 1e3;
+var FLUSH_INTERVAL_MS = 5e3;
+var FLUSH_AT_COUNT = 20;
+var MAX_QUEUE = 500;
+var RETRY_BACKOFF_MS = [2e3, 4e3, 8e3];
+var ANON_KEY = "vio.anon.v1";
+var SESSION_KEY = "vio.session.v1";
+var IMPRESSION_THRESHOLD = 0.5;
+var IMPRESSION_DWELL_MS = 1e3;
+var AnalyticsManager = class extends EventTarget {
+  constructor() {
+    super(...arguments);
+    this.started = false;
+    this.options = { host: "custom", collector: true, dataLayer: false, debug: false, autoTrack: true };
+    this.queue = [];
+    this.flushTimer = null;
+    this.retryAttempt = 0;
+    this.retryNotBefore = 0;
+    this.sessionId = null;
+    this.sessionStartedAt = 0;
+    /** Impression once-per-(session, component) guard; reset on session rotation. */
+    this.impressedComponents = /* @__PURE__ */ new Set();
+    /** Last NON-EMPTY cart snapshot — `purchase` uses it because several flows
+     * (Apple Pay) clear the cart BEFORE `vio:payment-success` fires. */
+    this.lastCartSnapshot = null;
+    this.teardown = [];
+  }
+  // MARK: - Public API
+  /**
+   * Install listeners + begin flushing. Explicit on purpose (no module
+   * side-effects). Safe to call twice (second call only updates options).
+   */
+  start(options = {}) {
+    this.options = {
+      host: options.host ?? this.options.host,
+      collector: options.collector ?? this.options.collector,
+      dataLayer: options.dataLayer ?? this.options.dataLayer,
+      debug: options.debug ?? this.options.debug,
+      autoTrack: options.autoTrack ?? this.options.autoTrack
+    };
+    if (this.started || !hasDom()) return;
+    this.started = true;
+    this.ensureSession();
+    this.flushTimer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
+    const onPageHide = () => {
+      this.trackSessionEnd();
+      this.flushWithBeacon();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    this.teardown.push(() => window.removeEventListener("pagehide", onPageHide));
+    if (this.options.autoTrack) this.installAutoListeners();
+  }
+  /** Stop timers + listeners (tests / SPA unmount). Queue survives. */
+  stop() {
+    if (this.flushTimer) clearInterval(this.flushTimer);
+    this.flushTimer = null;
+    for (const fn of this.teardown.splice(0)) fn();
+    this.started = false;
+  }
+  /** Attach the partner's user id (opaque) to all subsequent events. */
+  identify(externalUserId) {
+    this.externalUserId = externalUserId ?? void 0;
+  }
+  /** Queue one event. Works pre-init and pre-start (SSR: no-op). */
+  track(name, opts = {}) {
+    if (!hasDom()) return;
+    const event = this.buildEvent(name, opts);
+    if (!event) return;
+    if (this.options.debug) {
+      console.debug("[Vio.analytics]", event.name, event);
+    }
+    try {
+      window.dispatchEvent(new CustomEvent("vio:analytics", { detail: event }));
+    } catch {
+    }
+    if (this.options.dataLayer) pushGa4(event);
+    this.queue.push(event);
+    if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
+    if (this.queue.length >= FLUSH_AT_COUNT) void this.flush();
+  }
+  /**
+   * Impression helper: observes an element and tracks ONE
+   * `component_impression` per (session, campaignComponentId) when the
+   * contract's rule is met (≥50% visible, ≥1s dwell). Returns an
+   * unobserve function.
+   */
+  observeImpression(element, context, opts = {}) {
+    if (!hasDom() || typeof IntersectionObserver === "undefined") return () => {
+    };
+    const name = opts.name ?? "component_impression";
+    let dwellTimer = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= IMPRESSION_THRESHOLD) {
+            if (dwellTimer) continue;
+            dwellTimer = setTimeout(() => {
+              const key = `${name}:${context.campaignComponentId}`;
+              this.ensureSession();
+              if (this.impressedComponents.has(key)) return;
+              this.impressedComponents.add(key);
+              this.track(name, { context });
+              observer.disconnect();
+            }, IMPRESSION_DWELL_MS);
+          } else if (dwellTimer) {
+            clearTimeout(dwellTimer);
+            dwellTimer = null;
+          }
+        }
+      },
+      { threshold: [IMPRESSION_THRESHOLD] }
+    );
+    observer.observe(element);
+    return () => {
+      if (dwellTimer) clearTimeout(dwellTimer);
+      observer.disconnect();
+    };
+  }
+  /** Force a flush (mostly for tests). */
+  async flush() {
+    if (!this.options.collector) {
+      this.queue = [];
+      return;
+    }
+    if (this.queue.length === 0) return;
+    if (!Configuration.isInitialized) return;
+    if (Date.now() < this.retryNotBefore) return;
+    const batch = this.queue.splice(0, MAX_QUEUE);
+    const body = JSON.stringify({
+      apiKey: Configuration.get().apiKey,
+      sent_at: (/* @__PURE__ */ new Date()).toISOString(),
+      events: batch
+    });
+    try {
+      const res = await fetch(`${eventsBase()}/v1/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: batch.length <= 20
+        // keepalive caps payload at ~64KB
+      });
+      if (res.status === 401 || res.status === 400) {
+        console.warn(`[Vio.analytics] collector rejected batch (HTTP ${res.status}) \u2014 dropped`);
+        this.retryAttempt = 0;
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.retryAttempt = 0;
+    } catch {
+      this.queue.unshift(...batch);
+      const backoff = RETRY_BACKOFF_MS[Math.min(this.retryAttempt, RETRY_BACKOFF_MS.length - 1)] ?? 8e3;
+      this.retryAttempt++;
+      this.retryNotBefore = Date.now() + backoff;
+    }
+  }
+  // MARK: - Internals
+  buildEvent(name, opts) {
+    this.ensureSession();
+    if (!this.sessionId) return null;
+    const anonId = this.anonId();
+    if (!anonId) return null;
+    const boot = vioBootstrapCache();
+    const ctx = opts.context ?? {};
+    const context = compact({
+      campaign_id: ctx.campaignId ?? boot?.campaignId,
+      broadcast_id: ctx.broadcastId,
+      campaign_component_id: ctx.campaignComponentId,
+      app_placement_id: ctx.appPlacementId,
+      location_id: ctx.locationId,
+      component_template_id: ctx.componentTemplateId,
+      sponsor_id: ctx.sponsorId,
+      activation_id: ctx.activationId,
+      content_url: ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0),
+      variant: ctx.variant
+    });
+    const com = opts.commerce;
+    const commerce = com ? compact({
+      items: com.items?.map(
+        (i5) => compact({
+          product_id: String(i5.productId),
+          name: i5.name,
+          brand: i5.brand,
+          variant_id: i5.variantId !== void 0 ? String(i5.variantId) : void 0,
+          price: i5.price,
+          quantity: i5.quantity
+        })
+      ),
+      value: com.value,
+      currency: com.currency,
+      order_id: com.orderId,
+      payment_method: com.paymentMethod
+    }) : void 0;
+    return {
+      event_id: uuid(),
+      name,
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      surface: "web",
+      host: this.options.host,
+      sdk_version: SDK_VERSION,
+      session_id: this.sessionId,
+      anon_id: anonId,
+      ...this.externalUserId ? { external_user_id: this.externalUserId } : {},
+      ...Object.keys(context).length ? { context } : {},
+      ...commerce ? { commerce } : {},
+      ...opts.props ? { props: opts.props } : {}
+    };
+  }
+  anonId() {
+    const stored = safeStorageGet(ANON_KEY);
+    if (stored) return stored;
+    const id = `a-${uuid()}`;
+    safeStorageSet(ANON_KEY, id);
+    return safeStorageGet(ANON_KEY) ?? id;
+  }
+  /** Rolling session: renewed by activity, rotated after 30 min idle. */
+  ensureSession() {
+    const now = Date.now();
+    if (!this.sessionId) {
+      const stored = safeStorageGet(SESSION_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (now - parsed.ts < SESSION_TTL_MS) {
+            this.sessionId = parsed.id;
+            this.sessionStartedAt = parsed.startedAt ?? now;
+          }
+        } catch {
+        }
+      }
+    } else {
+      const stored = safeStorageGet(SESSION_KEY);
+      if (stored) {
+        try {
+          if (now - JSON.parse(stored).ts >= SESSION_TTL_MS) {
+            this.sessionId = null;
+          }
+        } catch {
+          this.sessionId = null;
+        }
+      }
+    }
+    if (!this.sessionId) {
+      this.sessionId = `s-${uuid()}`;
+      this.sessionStartedAt = now;
+      this.impressedComponents.clear();
+      safeStorageSet(
+        SESSION_KEY,
+        JSON.stringify({ id: this.sessionId, ts: now, startedAt: now })
+      );
+      this.track("session_start");
+    } else {
+      safeStorageSet(
+        SESSION_KEY,
+        JSON.stringify({ id: this.sessionId, ts: now, startedAt: this.sessionStartedAt })
+      );
+    }
+  }
+  trackSessionEnd() {
+    if (!this.sessionId) return;
+    this.track("session_end", {
+      props: { duration_ms: Date.now() - this.sessionStartedAt }
+    });
+  }
+  flushWithBeacon() {
+    if (!this.options.collector || this.queue.length === 0) return;
+    if (!Configuration.isInitialized) return;
+    const batch = this.queue.splice(0, MAX_QUEUE);
+    const body = JSON.stringify({
+      apiKey: Configuration.get().apiKey,
+      sent_at: (/* @__PURE__ */ new Date()).toISOString(),
+      events: batch
+    });
+    const ok = typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && navigator.sendBeacon(`${eventsBase()}/v1/events`, new Blob([body], { type: "text/plain" }));
+    if (!ok) this.queue.unshift(...batch);
+  }
+  /**
+   * Auto-instrumentation over the SDK's own DOM events — the host app
+   * writes ZERO tracking code for the commerce funnel.
+   */
+  installAutoListeners() {
+    const on = (type, handler) => {
+      window.addEventListener(type, handler);
+      this.teardown.push(() => window.removeEventListener(type, handler));
+    };
+    const cart = vioCart();
+    if (cart) {
+      const onChange = (ev) => {
+        const detail = ev.detail;
+        if (!detail) return;
+        const items = [];
+        detail.cartsBySponsor?.forEach((state) => items.push(...state.items));
+        if (items.length > 0) {
+          this.lastCartSnapshot = { items: items.map((i5) => ({ ...i5 })), currency: items[0]?.currency };
+        }
+      };
+      cart.addEventListener("change", onChange);
+      this.teardown.push(() => cart.removeEventListener("change", onChange));
+    }
+    on("vio:added-to-cart", (ev) => {
+      const d3 = ev.detail ?? {};
+      const line = this.findLine(d3.productId, d3.variantId);
+      this.track("add_to_cart", {
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0 },
+        commerce: {
+          items: [
+            {
+              productId: d3.productId ?? line?.productId ?? "",
+              name: line?.name,
+              brand: line?.brand,
+              variantId: d3.variantId ?? line?.variantId,
+              price: line?.unitPrice,
+              quantity: d3.quantity ?? 1
+            }
+          ],
+          value: line ? line.unitPrice * (d3.quantity ?? 1) : void 0,
+          currency: line?.currency
+        }
+      });
+    });
+    on("vio:open-cart", () => {
+      const snap = this.cartCommerce();
+      this.track("view_cart", snap ? { commerce: snap } : {});
+    });
+    on("vio:checkout-open", (ev) => {
+      const d3 = ev.detail ?? {};
+      const snap = this.cartCommerce(d3.sponsorId);
+      this.track("begin_checkout", {
+        context: { sponsorId: d3.sponsorId },
+        ...snap ? { commerce: snap } : {}
+      });
+    });
+    on("vio:payment-success", (ev) => {
+      const d3 = ev.detail ?? {};
+      const sponsorId = d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0;
+      const snap = this.cartCommerce(sponsorId);
+      this.track("purchase", {
+        context: { sponsorId },
+        commerce: {
+          ...snap ?? {},
+          orderId: d3.orderId,
+          paymentMethod: d3.method
+        }
+      });
+    });
+  }
+  /** Current cart → commerce payload; falls back to the pre-clear snapshot. */
+  cartCommerce(sponsorId) {
+    let items = [];
+    const cart = vioCart();
+    if (cart) {
+      cart.getAllCarts().forEach((state, id) => {
+        if (sponsorId === void 0 || id === sponsorId) items.push(...state.items);
+      });
+    }
+    if (items.length === 0 && this.lastCartSnapshot) {
+      items = this.lastCartSnapshot.items.filter(
+        (i5) => sponsorId === void 0 || i5.sponsorId === sponsorId
+      );
+    }
+    if (items.length === 0) return null;
+    return {
+      items: items.map((i5) => ({
+        productId: i5.productId,
+        name: i5.name,
+        brand: i5.brand,
+        variantId: i5.variantId,
+        price: i5.unitPrice,
+        quantity: i5.quantity
+      })),
+      value: items.reduce((sum, i5) => sum + i5.unitPrice * (i5.quantity ?? 1), 0),
+      currency: items[0]?.currency ?? this.lastCartSnapshot?.currency
+    };
+  }
+  findLine(productId, variantId) {
+    const pool = [];
+    vioCart()?.getAllCarts().forEach((state) => pool.push(...state.items));
+    if (pool.length === 0 && this.lastCartSnapshot) pool.push(...this.lastCartSnapshot.items);
+    return pool.find(
+      (i5) => String(i5.productId) === String(productId) && (variantId === void 0 || String(i5.variantId) === String(variantId))
+    );
+  }
+};
+function hasDom() {
+  return typeof window !== "undefined";
+}
+function uuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c4) => {
+    const r6 = Math.random() * 16 | 0;
+    return (c4 === "x" ? r6 : r6 & 3 | 8).toString(16);
+  });
+}
+function safeStorageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function safeStorageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+  }
+}
+function compact(obj) {
+  const out = {};
+  for (const [k2, v2] of Object.entries(obj)) {
+    if (v2 !== void 0 && v2 !== null && v2 !== "") out[k2] = v2;
+  }
+  return out;
+}
+function eventsBase() {
+  return Configuration.get().eventsBase;
+}
+function vioFacade() {
+  const g2 = globalThis;
+  return g2.__VIO_FACADE__ ?? null;
+}
+function vioBootstrapCache() {
+  return vioFacade()?.bootstrapCache ?? null;
+}
+function vioCart() {
+  try {
+    return vioFacade()?.cart ?? null;
+  } catch {
+    return null;
+  }
+}
+function pushGa4(event) {
+  const commerceNames = /* @__PURE__ */ new Set([
+    "view_item_list",
+    "select_item",
+    "view_item",
+    "add_to_cart",
+    "view_cart",
+    "begin_checkout",
+    "purchase"
+  ]);
+  if (!commerceNames.has(event.name)) return;
+  const w2 = window;
+  w2.dataLayer = w2.dataLayer || [];
+  const commerce = event.commerce ?? {};
+  w2.dataLayer.push({ ecommerce: null });
+  w2.dataLayer.push({
+    event: event.name,
+    ecommerce: compact({
+      currency: commerce.currency,
+      value: commerce.value,
+      transaction_id: commerce.order_id,
+      items: commerce.items?.map(
+        (i5) => compact({
+          item_id: i5.product_id,
+          item_name: i5.name,
+          item_brand: i5.brand,
+          item_variant: i5.variant_id,
+          price: i5.price,
+          quantity: i5.quantity
+        })
+      )
+    })
+  });
+}
+
 // src/core/client.ts
 var VioFacade = class {
   constructor() {
@@ -7620,6 +8094,7 @@ var VioFacade = class {
     // need Vio.init() to work (state is purely local).
     this.cartManager = null;
     this.checkoutManager = null;
+    this.analyticsManager = null;
   }
   init(config) {
     Configuration.init(config);
@@ -7646,6 +8121,14 @@ var VioFacade = class {
   get checkout() {
     if (!this.checkoutManager) this.checkoutManager = new CheckoutManager(this.cart);
     return this.checkoutManager;
+  }
+  /**
+   * Analytics — track() queues even pre-init; nothing is sent (and no
+   * listeners are installed) until an explicit `Vio.analytics.start()`.
+   */
+  get analytics() {
+    if (!this.analyticsManager) this.analyticsManager = new AnalyticsManager();
+    return this.analyticsManager;
   }
   // MARK: - Backend-bound
   /** Lazy VioApi for REST endpoints on `api-dev.vio.live`. */
@@ -10576,6 +11059,9 @@ var VioCart = class extends i4 {
   }
   show() {
     this.open = true;
+    this.dispatchEvent(
+      new CustomEvent("vio:open-cart", { bubbles: true, composed: true })
+    );
     void this.loadAvailablePaymentMethods();
   }
   /** Which payment buttons to render — backend-configured per sponsor.
@@ -12798,6 +13284,7 @@ var VioCheckout2 = o({
 });
 export {
   ADD_ITEM_MUTATION,
+  AnalyticsManager,
   CREATE_CART_MUTATION,
   CREATE_CHECKOUT_MUTATION,
   CREATE_PAYMENT_STRIPE_MUTATION,
@@ -12812,6 +13299,7 @@ export {
   GET_CHECKOUT_QUERY,
   GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
   GET_VIPPS_STATUS_QUERY,
+  SDK_VERSION,
   UPDATE_CHECKOUT_MUTATION,
   UPDATE_ITEM_MUTATION,
   UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
