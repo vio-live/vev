@@ -7611,7 +7611,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.4.2";
+var SDK_VERSION = "0.5.0";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -7700,10 +7700,13 @@ var AnalyticsManager = class extends EventTarget {
    * contract's rule is met (≥50% visible, ≥1s dwell). Returns an
    * unobserve function.
    */
-  observeImpression(element, context, opts = {}) {
+  observeImpression(element, context = {}, opts = {}) {
     if (!hasDom() || typeof IntersectionObserver === "undefined") return () => {
     };
     const name = opts.name ?? "component_impression";
+    const dedupe = opts.key ?? String(
+      context.campaignComponentId ?? context.locationId ?? context.componentTemplateId ?? "component"
+    );
     let dwellTimer = null;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -7711,11 +7714,12 @@ var AnalyticsManager = class extends EventTarget {
           if (entry.isIntersecting && entry.intersectionRatio >= IMPRESSION_THRESHOLD) {
             if (dwellTimer) continue;
             dwellTimer = setTimeout(() => {
-              const key = `${name}:${context.campaignComponentId}`;
+              const key = `${name}:${dedupe}`;
               this.ensureSession();
               if (this.impressedComponents.has(key)) return;
               this.impressedComponents.add(key);
               this.track(name, { context });
+              opts.onImpression?.();
               observer.disconnect();
             }, IMPRESSION_DWELL_MS);
           } else if (dwellTimer) {
@@ -7930,6 +7934,24 @@ var AnalyticsManager = class extends EventTarget {
           ],
           value: line ? line.unitPrice * (d3.quantity ?? 1) : void 0,
           currency: line?.currency
+        }
+      });
+    });
+    on("vio:product-click", (ev) => {
+      const d3 = ev.detail ?? {};
+      if (d3.productId === void 0) return;
+      const price = Number(d3.price);
+      this.track("select_item", {
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0 },
+        commerce: {
+          items: [
+            {
+              productId: d3.productId,
+              name: d3.name,
+              brand: d3.brand,
+              price: Number.isFinite(price) ? price : void 0
+            }
+          ]
         }
       });
     });
@@ -9154,6 +9176,13 @@ var VioProductCarousel = class extends i4 {
     this.fetched = null;
     this.isLoading = false;
     this.fetchError = "";
+    // ── Analytics (auto) ──────────────────────────────────────────────
+    // component_impression on the contract rule (≥50% visible ≥1s, once per
+    // session) + view_item_list with the rendered products. No-ops unless
+    // Vio.analytics.start() ran.
+    this.unobserveImpression = null;
+    this.impressed = false;
+    this.listTracked = false;
   }
   static {
     this.styles = i`
@@ -9302,9 +9331,15 @@ var VioProductCarousel = class extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    this.observeForAnalytics();
     if (this.productRefs.trim() || this.productIds.trim()) {
       void this.autoFetch();
     }
+  }
+  disconnectedCallback() {
+    this.unobserveImpression?.();
+    this.unobserveImpression = null;
+    super.disconnectedCallback();
   }
   updated(changed) {
     const propChanged = changed.has("productRefs") || changed.has("productIds") || changed.has("commerceKey") || changed.has("sponsorId");
@@ -9350,10 +9385,59 @@ var VioProductCarousel = class extends i4 {
         const product = lookup.get(`${sponsorId}:${productId}`);
         return product ? { product, sponsorId } : null;
       }).filter((x2) => x2 !== null);
+      this.maybeTrackList();
     } catch (err) {
       this.fetchError = err instanceof Error ? err.message : String(err);
     } finally {
       this.isLoading = false;
+    }
+  }
+  observeForAnalytics() {
+    if (this.unobserveImpression) return;
+    try {
+      this.unobserveImpression = Vio.analytics.observeImpression(
+        this,
+        {
+          sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+          componentTemplateId: "product-carousel",
+          locationId: this.label || void 0
+        },
+        {
+          key: `carousel:${this.label || this.productIds || this.productRefs || "default"}`,
+          onImpression: () => {
+            this.impressed = true;
+            this.maybeTrackList();
+          }
+        }
+      );
+    } catch {
+    }
+  }
+  /** view_item_list needs BOTH the viewport dwell and loaded products —
+   * whichever lands last fires it (once). */
+  maybeTrackList() {
+    if (!this.impressed || this.listTracked) return;
+    const entries = this.fetched ?? [];
+    if (entries.length === 0) return;
+    this.listTracked = true;
+    try {
+      Vio.analytics.track("view_item_list", {
+        context: {
+          sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+          componentTemplateId: "product-carousel",
+          locationId: this.label || void 0
+        },
+        commerce: {
+          items: entries.map(({ product, sponsorId }) => ({
+            productId: product.id,
+            name: product.title,
+            price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0
+          })),
+          currency: entries[0]?.product.price?.currency_code
+        },
+        props: this.label ? { list_name: this.label } : void 0
+      });
+    } catch {
     }
   }
   parseRefs(raw) {
@@ -10009,6 +10093,31 @@ var VioProductDetail = class extends i4 {
     }
     this.optMapCache = /* @__PURE__ */ new WeakMap();
     this.product = products?.[0] ?? null;
+    if (this.product) {
+      try {
+        const price = Number(
+          this.product.price?.amount_incl_taxes ?? this.product.price?.amount
+        );
+        Vio.analytics.track("view_item", {
+          context: {
+            sponsorId: this.sponsorId > 0 ? Number(this.sponsorId) : void 0,
+            componentTemplateId: "product-detail"
+          },
+          commerce: {
+            items: [
+              {
+                productId: this.product.id,
+                name: this.product.title,
+                price: Number.isFinite(price) ? price : void 0
+              }
+            ],
+            value: Number.isFinite(price) ? price : void 0,
+            currency: this.product.price?.currency_code
+          }
+        });
+      } catch {
+      }
+    }
     if (!this.product) {
       this.fetchError = "Fant ikke produktet.";
     }
