@@ -7611,7 +7611,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.5.0";
+var SDK_VERSION = "0.5.1";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -7791,6 +7791,9 @@ var AnalyticsManager = class extends EventTarget {
       sponsor_id: ctx.sponsorId,
       activation_id: ctx.activationId,
       content_url: ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0),
+      // Deletion-proof reporting: sources have no trash bin — the title
+      // snapshotted at event time keeps reports legible if content dies.
+      content_title: ctx.contentTitle ?? (typeof document !== "undefined" && document.title ? document.title.slice(0, 255) : void 0),
       variant: ctx.variant
     });
     const com = opts.commerce;
