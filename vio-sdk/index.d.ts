@@ -41,4 +41,29 @@ export function createPaymentVipps(variables: any, options?: any): Promise<any>;
 export function getVippsStatus(variables: any, options?: any): Promise<any>;
 
 export const VioTokens: any;
-export function applyVioTheme(overrides: any, target?: any): void;
+
+/** Mirrors VioThemeOverrides in vio-web-sdk/src/ui/tokens.ts. Typed on purpose:
+ *  a mistyped key here is silently ignored at runtime, so let tsc catch it. */
+export interface VioThemeOverrides {
+  colorText?: string;
+  colorTextSecondary?: string;
+  colorTextTertiary?: string;
+  colorTextOnPrimary?: string;
+  colorAccent?: string;
+  colorSurface?: string;
+  colorSurfaceMuted?: string;
+  colorSurfaceHover?: string;
+  colorBorder?: string;
+  colorBorderDefault?: string;
+  fontSerif?: string;
+  fontSans?: string;
+  radiusSm?: string;
+  radiusMd?: string;
+  radiusLg?: string;
+  radiusXl?: string;
+  spaceSm?: string;
+  spaceMd?: string;
+  spaceLg?: string;
+  spaceXl?: string;
+}
+export function applyVioTheme(overrides: VioThemeOverrides, target?: any): void;
