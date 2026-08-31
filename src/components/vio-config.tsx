@@ -97,17 +97,45 @@ type Props = {
   cartColor?: string;
   cartEffect?: string; // none | scale | pulse
   cartSize?: number;
-  // Theme (colors/fonts) — applied via the SDK's applyVioTheme, see below.
+  // Theme — applied via the SDK's applyVioTheme, see below.
   // Empty/undefined means "use the SDK default", not "clear to blank".
   themeColorAccent?: string;
+  themeColorTextOnAccent?: string;
   themeColorText?: string;
+  themeColorTextSecondary?: string;
+  themeColorSurface?: string;
+  themeColorSurfaceMuted?: string;
+  themeColorBorder?: string;
   themeFontSerif?: string;
   themeFontSans?: string;
+  themeCorners?: string; // default | sharp | rounded
+  themeDensity?: string; // default | compact | roomy
   // Analytics.
   analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
   analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
   sendToVio?: boolean; // forward events to the Vio collector (Vio Analytics pipeline)
 };
+
+/**
+ * Corner shape and density are exposed as a few opinionated choices rather
+ * than eight raw pixel inputs — the SDK API stays per-token so a panel can
+ * compose whatever presets it wants, and this is ours.
+ *
+ * "default" deliberately sends `undefined` for every key: applyVioTheme reads
+ * that as "clear the override", so switching back really restores the SDK
+ * scale instead of freezing today's numbers into the page.
+ */
+const CORNER_PRESETS = {
+  default: { radiusSm: undefined, radiusMd: undefined, radiusLg: undefined, radiusXl: undefined },
+  sharp: { radiusSm: "0", radiusMd: "0", radiusLg: "0", radiusXl: "0" },
+  rounded: { radiusSm: "4px", radiusMd: "8px", radiusLg: "14px", radiusXl: "28px" },
+} as const;
+
+const DENSITY_PRESETS = {
+  default: { spaceSm: undefined, spaceMd: undefined, spaceLg: undefined, spaceXl: undefined },
+  compact: { spaceSm: "6px", spaceMd: "12px", spaceLg: "16px", spaceXl: "24px" },
+  roomy: { spaceSm: "10px", spaceMd: "20px", spaceLg: "32px", spaceXl: "44px" },
+} as const;
 
 export default function VioConfig({
   apiKey,
@@ -122,9 +150,16 @@ export default function VioConfig({
   cartEffect = "scale",
   cartSize = 56,
   themeColorAccent,
+  themeColorTextOnAccent,
   themeColorText,
+  themeColorTextSecondary,
+  themeColorSurface,
+  themeColorSurfaceMuted,
+  themeColorBorder,
   themeFontSerif,
   themeFontSans,
+  themeCorners = "default",
+  themeDensity = "default",
   analytics = true,
   analyticsDebug = false,
   sendToVio = true,
@@ -242,11 +277,30 @@ export default function VioConfig({
   useEffect(() => {
     applyVioTheme({
       colorAccent: themeColorAccent || undefined,
+      colorTextOnPrimary: themeColorTextOnAccent || undefined,
       colorText: themeColorText || undefined,
+      colorTextSecondary: themeColorTextSecondary || undefined,
+      colorSurface: themeColorSurface || undefined,
+      colorSurfaceMuted: themeColorSurfaceMuted || undefined,
+      colorBorder: themeColorBorder || undefined,
       fontSerif: themeFontSerif || undefined,
       fontSans: themeFontSans || undefined,
+      ...CORNER_PRESETS[themeCorners as keyof typeof CORNER_PRESETS],
+      ...DENSITY_PRESETS[themeDensity as keyof typeof DENSITY_PRESETS],
     });
-  }, [themeColorAccent, themeColorText, themeFontSerif, themeFontSans]);
+  }, [
+    themeColorAccent,
+    themeColorTextOnAccent,
+    themeColorText,
+    themeColorTextSecondary,
+    themeColorSurface,
+    themeColorSurfaceMuted,
+    themeColorBorder,
+    themeFontSerif,
+    themeFontSans,
+    themeCorners,
+    themeDensity,
+  ]);
 
   // Cart badge count.
   useEffect(() => {
@@ -727,9 +781,42 @@ registerVevComponent(VioConfig, {
     // Theme — leave blank to use the SDK default for each. Same pattern as
     // Cart color above: a plain hex/CSS-value string, no custom picker.
     { name: "themeColorAccent", title: "Theme · Accent color", type: "string", initialValue: "" },
+    { name: "themeColorTextOnAccent", title: "Theme · Text on accent", type: "string", initialValue: "" },
     { name: "themeColorText", title: "Theme · Text color", type: "string", initialValue: "" },
+    { name: "themeColorTextSecondary", title: "Theme · Secondary text", type: "string", initialValue: "" },
+    { name: "themeColorSurface", title: "Theme · Background", type: "string", initialValue: "" },
+    { name: "themeColorSurfaceMuted", title: "Theme · Muted background", type: "string", initialValue: "" },
+    { name: "themeColorBorder", title: "Theme · Border color", type: "string", initialValue: "" },
     { name: "themeFontSerif", title: "Theme · Heading font", type: "string", initialValue: "" },
     { name: "themeFontSans", title: "Theme · Body font", type: "string", initialValue: "" },
+    {
+      name: "themeCorners",
+      title: "Theme · Corners",
+      type: "select",
+      initialValue: "default",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "default", label: "Default" },
+          { value: "sharp", label: "Sharp" },
+          { value: "rounded", label: "Rounded" },
+        ],
+      },
+    },
+    {
+      name: "themeDensity",
+      title: "Theme · Density",
+      type: "select",
+      initialValue: "default",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "default", label: "Default" },
+          { value: "compact", label: "Compact" },
+          { value: "roomy", label: "Roomy" },
+        ],
+      },
+    },
     { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
     { name: "sendToVio", title: "Send to Vio Analytics", type: "boolean", initialValue: true },
     { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
