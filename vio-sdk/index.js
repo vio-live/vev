@@ -6262,6 +6262,96 @@ async function createKlarnaPaymentsWidget(input) {
   };
 }
 
+// src/core/checkout/payments/kustom.ts
+var CREATE_PAYMENT_KUSTOM_MUTATION = `
+mutation CreatePaymentKustom($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+  Payment {
+    CreatePaymentKustom(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {
+      order_id
+      status
+      html_snippet
+      purchase_country
+      purchase_currency
+    }
+  }
+}
+`;
+var GET_KUSTOM_ORDER_QUERY = `
+query GetKustomOrder($orderId: String!) {
+  Payment {
+    GetKustomOrder(order_id: $orderId) {
+      order_id
+      status
+      html_snippet
+      purchase_country
+      purchase_currency
+    }
+  }
+}
+`;
+async function createPaymentKustom(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_KUSTOM_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentKustom ?? null;
+}
+async function getKustomOrder(orderId, options) {
+  const json = await executeCartGraphQL(GET_KUSTOM_ORDER_QUERY, { orderId }, options);
+  return json?.data?.Payment?.GetKustomOrder ?? null;
+}
+function kustomCleanHref() {
+  if (typeof window === "undefined" || !window.location) return "";
+  return `${window.location.origin}${window.location.pathname}`;
+}
+function renderKustomSnippet(container, htmlSnippet) {
+  container.innerHTML = htmlSnippet;
+  const scripts = Array.from(container.querySelectorAll("script"));
+  for (const oldScript of scripts) {
+    const newScript = document.createElement("script");
+    for (const attr of Array.from(oldScript.attributes)) {
+      newScript.setAttribute(attr.name, attr.value);
+    }
+    newScript.text = oldScript.text;
+    oldScript.parentNode?.replaceChild(newScript, oldScript);
+  }
+}
+
+// src/core/checkout/payments/qliro.ts
+var CREATE_PAYMENT_QLIRO_MUTATION = `
+mutation CreatePaymentQliro($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+  Payment {
+    CreatePaymentQliro(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {
+      order_id
+      status
+      html_snippet
+      purchase_country
+      purchase_currency
+      total_price
+    }
+  }
+}
+`;
+var GET_QLIRO_ORDER_QUERY = `
+query GetQliroOrder($checkoutId: String!) {
+  Payment {
+    GetQliroOrder(checkout_id: $checkoutId) {
+      order_id
+      status
+      html_snippet
+      purchase_country
+      purchase_currency
+      total_price
+    }
+  }
+}
+`;
+async function createPaymentQliro(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_QLIRO_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentQliro ?? null;
+}
+async function getQliroOrder(checkoutId, options) {
+  const json = await executeCartGraphQL(GET_QLIRO_ORDER_QUERY, { checkoutId }, options);
+  return json?.data?.Payment?.GetQliroOrder ?? null;
+}
+
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
   if (err instanceof Error) return err.message;
@@ -6823,6 +6913,103 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getVippsStatus({ checkoutId }, opts);
   }
+  /**
+   * Kustom (former Klarna Checkout) — create the KCO order via Vio Commerce
+   * and render its html_snippet into `container`. The widget collects
+   * address, shipping and payment by itself; the SDK renders nothing else.
+   */
+  async mountKustomCheckout(container, sponsorId) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    if (!spId) throw new Error("[CheckoutManager] no sponsor for Kustom");
+    const cart = this.cartManager.getCart(spId);
+    let cartId = cart?.cartId;
+    if (!cartId) cartId = await this.cartManager.ensureCartId(spId);
+    if (!cartId) {
+      throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
+    }
+    const opts = await getCartGraphQLOptions(spId);
+    let checkoutId = this.state?.checkoutId;
+    if (!checkoutId) {
+      const checkoutRes = await createCheckout(cartId, opts);
+      checkoutId = checkoutRes?.id;
+      if (checkoutId && this.state) {
+        this.state = { ...this.state, checkoutId };
+      }
+    }
+    if (!checkoutId) {
+      throw new Error("[CheckoutManager] no backend checkout for the Kustom order");
+    }
+    const href = kustomCleanHref();
+    const order = await createPaymentKustom(
+      {
+        checkoutId,
+        countryCode: getGlobalCountryCode(),
+        href,
+        email: this.state?.address?.email || void 0
+      },
+      opts
+    );
+    if (!order?.html_snippet) {
+      throw new Error("Kustom order creation failed: missing html_snippet");
+    }
+    renderKustomSnippet(container, order.html_snippet);
+    return order;
+  }
+  /** Re-read a Kustom order — used on the confirmation return trip. */
+  async getKustomOrder(orderId, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getKustomOrder(orderId, opts);
+  }
+  /** Render a Kustom html_snippet (e.g. the confirmation receipt) into a container. */
+  renderKustomSnippet(container, htmlSnippet) {
+    renderKustomSnippet(container, htmlSnippet);
+  }
+  /**
+   * Qliro Checkout — create the order via Vio Commerce and render its
+   * html_snippet into `container` (widget-does-everything, like Kustom).
+   */
+  async mountQliroCheckout(container, sponsorId) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    if (!spId) throw new Error("[CheckoutManager] no sponsor for Qliro");
+    const cart = this.cartManager.getCart(spId);
+    let cartId = cart?.cartId;
+    if (!cartId) cartId = await this.cartManager.ensureCartId(spId);
+    if (!cartId) {
+      throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
+    }
+    const opts = await getCartGraphQLOptions(spId);
+    let checkoutId = this.state?.checkoutId;
+    if (!checkoutId) {
+      const checkoutRes = await createCheckout(cartId, opts);
+      checkoutId = checkoutRes?.id;
+      if (checkoutId && this.state) {
+        this.state = { ...this.state, checkoutId };
+      }
+    }
+    if (!checkoutId) {
+      throw new Error("[CheckoutManager] no backend checkout for the Qliro order");
+    }
+    const href = kustomCleanHref();
+    const order = await createPaymentQliro(
+      {
+        checkoutId,
+        countryCode: getGlobalCountryCode(),
+        href,
+        email: this.state?.address?.email || void 0
+      },
+      opts
+    );
+    if (!order?.html_snippet) {
+      throw new Error("Qliro order creation failed: missing html_snippet");
+    }
+    renderKustomSnippet(container, order.html_snippet);
+    return order;
+  }
+  /** Re-read the Qliro order owned by a checkout — the confirmation trip. */
+  async getQliroOrder(checkoutId, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getQliroOrder(checkoutId, opts);
+  }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
     if (!this.state) return;
@@ -6841,13 +7028,37 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   // MARK: - Apple Pay (Stripe Payment Request)
   /**
+   * The Stripe publishable key for a sponsor, taken from its own commerce
+   * channel (`GetAvailablePaymentMethods` → Stripe → config.publishableKey).
+   *
+   * The channel is the right source: the key belongs to the brand's Stripe
+   * account, so two brands on one page each get theirs, and a host never has
+   * to configure it. `Vio.init({ stripePublishableKey })` still wins when set,
+   * which keeps existing integrations working and allows an override.
+   */
+  async resolveStripePublishableKey(sponsorId) {
+    const cfg = Configuration.isInitialized ? Configuration.get() : null;
+    if (cfg?.stripePublishableKey) return cfg.stripePublishableKey;
+    if (this.applePayPublishableKey) return this.applePayPublishableKey;
+    try {
+      const methods = await this.getAvailablePaymentMethods(sponsorId);
+      const stripe = methods?.find((m2) => String(m2?.name ?? "").toLowerCase() === "stripe");
+      const key = stripe?.config?.find((c4) => c4?.name === "publishableKey")?.value;
+      if (typeof key === "string" && key.startsWith("pk_")) {
+        this.applePayPublishableKey = key;
+        return key;
+      }
+    } catch {
+    }
+    return "";
+  }
+  /**
    * Returns true if Apple Pay can be shown on this device + Stripe config.
    * Result is memoised — call `clearApplePayCache()` if config changes.
    */
   async isApplePayAvailable(country = "NO") {
     if (this.applePayAvailableCache !== null) return this.applePayAvailableCache;
-    const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    const publishableKey = cfg?.stripePublishableKey ?? "";
+    const publishableKey = await this.resolveStripePublishableKey(this.state?.sponsorId);
     if (!publishableKey || !this.state) {
       this.applePayAvailableCache = false;
       return false;
@@ -6876,8 +7087,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * `payment-error`. `available` is true only when Apple Pay will actually work.
    */
   async prepareApplePayFor(amount, currency, country = "NO") {
-    const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    const publishableKey = await this.resolveStripePublishableKey(this.state?.sponsorId);
     if (!publishableKey) return { available: false, show: async () => {
     } };
     const prepared = await prepareApplePay({
@@ -6938,8 +7148,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * called synchronously inside the tap (Apple's user-gesture rule).
    */
   async prepareApplePayExpress(amount, currency, country = "NO", sponsorId) {
-    const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    const publishableKey = await this.resolveStripePublishableKey(sponsorId ?? this.state?.sponsorId);
     if (!publishableKey) return { available: false, show: async () => null };
     const spId = sponsorId ?? this.state?.sponsorId ?? [...this.cartManager.getAllCarts().keys()][0];
     const prepared = await prepareApplePay({
@@ -7062,8 +7271,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async startApplePay(options = {}) {
     if (!this.state) throw new Error("[VioCheckout] no active checkout \u2014 call open() first");
     const spId = options.sponsorId ?? this.state.sponsorId;
-    const cfg = Configuration.isInitialized ? Configuration.get() : null;
-    const publishableKey = this.applePayPublishableKey || cfg?.stripePublishableKey || "";
+    const publishableKey = await this.resolveStripePublishableKey(spId);
     if (!publishableKey) {
       throw new Error(
         "[VioCheckout] No Stripe publishable key configured. Pass `stripePublishableKey` to Vio.init({ ... })."
@@ -7633,6 +7841,8 @@ var AnalyticsManager = class extends EventTarget {
     this.retryAttempt = 0;
     this.retryNotBefore = 0;
     this.sessionId = null;
+    /** Set via start({ sessionId }) — the host owns the session, we follow. */
+    this.externalSessionId = null;
     this.sessionStartedAt = 0;
     /** Impression once-per-(session, component) guard; reset on session rotation. */
     this.impressedComponents = /* @__PURE__ */ new Set();
@@ -7654,6 +7864,7 @@ var AnalyticsManager = class extends EventTarget {
       debug: options.debug ?? this.options.debug,
       autoTrack: options.autoTrack ?? this.options.autoTrack
     };
+    if (options.sessionId) this.externalSessionId = options.sessionId;
     if (this.started || !hasDom()) return;
     this.started = true;
     this.ensureSession();
@@ -7791,6 +8002,8 @@ var AnalyticsManager = class extends EventTarget {
       sponsor_id: ctx.sponsorId,
       activation_id: ctx.activationId,
       content_url: ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0),
+      // The host's own content id — its join key back onto its reporting.
+      content_id: ctx.contentId,
       // Deletion-proof reporting: sources have no trash bin — the title
       // snapshotted at event time keeps reports legible if content dies.
       content_title: ctx.contentTitle ?? (typeof document !== "undefined" && document.title ? document.title.slice(0, 255) : void 0),
@@ -7860,6 +8073,13 @@ var AnalyticsManager = class extends EventTarget {
         } catch {
           this.sessionId = null;
         }
+      }
+    }
+    if (this.externalSessionId) {
+      if (this.sessionId !== this.externalSessionId) {
+        this.sessionId = this.externalSessionId;
+        this.sessionStartedAt = now;
+        this.impressedComponents.clear();
       }
     }
     if (!this.sessionId) {
@@ -11548,6 +11768,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.selectedShipping = "";
     this.availableShippingsList = [];
     this.availableMethods = null;
+    this.kustomMounting = false;
+    this.kustomMountedOrderId = null;
+    this.qliroMounting = false;
+    this.qliroMountedOrderId = null;
     this.stripeLoading = false;
     this.vippsLoading = false;
     this.form = {
@@ -12224,6 +12448,121 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const sponsorId = Number(urlParams.get("vio_sponsor") || 0);
       const checkoutId = urlParams.get("checkout_id") || "";
       if (!vioPayment && !checkoutId) return;
+      const kustomOrderId = urlParams.get("order_id") || "";
+      if (urlParams.get("payment_processor") === "KUSTOM" && kustomOrderId) {
+        if (!this.checkoutState) {
+          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          if (spIdToUse) {
+            try {
+              Vio.checkout.open(spIdToUse);
+            } catch {
+            }
+          }
+        }
+        try {
+          Vio.checkout.selectPaymentMethod("kustom");
+        } catch {
+        }
+        this.open = true;
+        this.paymentNotice = "Bekrefter betalingen\u2026";
+        try {
+          const order = await Vio.checkout.getKustomOrder(
+            kustomOrderId,
+            this.checkoutState?.sponsorId
+          );
+          this.paymentNotice = null;
+          if (order?.html_snippet) {
+            this.kustomMountedOrderId = order.order_id;
+            await this.updateComplete;
+            const container = this.renderRoot?.querySelector(
+              "#vio-kustom-checkout-container"
+            );
+            if (container) {
+              Vio.checkout.renderKustomSnippet(container, order.html_snippet);
+            }
+            if (order.status === "checkout_complete") {
+              this.dispatchEvent(
+                new CustomEvent("vio:payment-success", {
+                  detail: { method: "kustom", orderId: order.order_id },
+                  bubbles: true,
+                  composed: true
+                })
+              );
+              const spId = this.checkoutState?.sponsorId;
+              if (spId) {
+                try {
+                  Vio.cart.clearSponsorCart(spId);
+                } catch {
+                }
+              }
+            }
+          }
+        } catch (err) {
+          this.paymentNotice = null;
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] Kustom confirmation read failed:", err);
+          }
+        }
+        this.cleanReturnQueryParams(["order_id", "payment_processor"]);
+        return;
+      }
+      if (urlParams.get("payment_processor") === "QLIRO" && checkoutId) {
+        if (!this.checkoutState) {
+          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          if (spIdToUse) {
+            try {
+              Vio.checkout.open(spIdToUse);
+            } catch {
+            }
+          }
+        }
+        try {
+          Vio.checkout.selectPaymentMethod("qliro");
+        } catch {
+        }
+        this.open = true;
+        this.paymentNotice = "Bekrefter betalingen\u2026";
+        try {
+          const order = await Vio.checkout.getQliroOrder(
+            checkoutId,
+            this.checkoutState?.sponsorId
+          );
+          this.paymentNotice = null;
+          if (order?.html_snippet) {
+            this.qliroMountedOrderId = order.order_id;
+            await this.updateComplete;
+            const container = this.renderRoot?.querySelector(
+              "#vio-qliro-checkout-container"
+            );
+            if (container) {
+              Vio.checkout.renderKustomSnippet(container, order.html_snippet);
+            }
+            if (order.status === "Completed") {
+              this.dispatchEvent(
+                new CustomEvent("vio:payment-success", {
+                  detail: { method: "qliro", orderId: order.order_id },
+                  bubbles: true,
+                  composed: true
+                })
+              );
+              const spId = this.checkoutState?.sponsorId;
+              if (spId) {
+                try {
+                  Vio.cart.clearSponsorCart(spId);
+                } catch {
+                }
+              }
+            }
+          }
+        } catch (err) {
+          this.paymentNotice = null;
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] Qliro confirmation read failed:", err);
+          }
+        }
+        this.cleanReturnQueryParams(["checkout_id", "payment_processor"]);
+        return;
+      }
       if (vioMethod === "klarna" && typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.klarna.pending.v1")) {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
@@ -12318,6 +12657,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       void this.loadAvailableShippings();
     }
     void this.mountKlarnaIfNeeded();
+    void this.mountKustomIfNeeded();
+    void this.mountQliroIfNeeded();
   }
   close() {
     this.open = false;
@@ -12554,6 +12895,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
       void this.onApplePay();
       return;
     }
+    if (method === "kustom") {
+      Vio.checkout.selectPaymentMethod("kustom");
+      return;
+    }
+    if (method === "qliro") {
+      Vio.checkout.selectPaymentMethod("qliro");
+      return;
+    }
     if (method === "vipps") {
       const email = String(this.form.email ?? "").trim();
       if (!email || !email.includes("@")) {
@@ -12655,6 +13004,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return "Apple Pay";
       case "klarna":
         return "Klarna";
+      case "kustom":
+        return "Kustom";
+      case "qliro":
+        return "Qliro";
       case "vipps":
         return "Vipps";
       case "stripe":
@@ -12667,7 +13020,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** True for methods that complete via a separate sheet/widget, not the CTA. */
   isExpressMethod(method) {
-    return method === "apple-pay" || method === "klarna";
+    return method === "apple-pay" || method === "klarna" || method === "kustom" || method === "qliro";
   }
   orderTotal() {
     const s4 = this.checkoutState;
@@ -12739,6 +13092,92 @@ var _VioCheckout = class _VioCheckout extends i4 {
     `;
   }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
+  /** Mount the Kustom embedded checkout once it's the chosen method. */
+  async mountKustomIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "kustom") return;
+    if (this.kustomMounting) return;
+    const container = this.renderRoot?.querySelector(
+      "#vio-kustom-checkout-container"
+    );
+    if (!container) return;
+    if (this.kustomMountedOrderId && container.childElementCount > 0) return;
+    this.kustomMounting = true;
+    container.innerHTML = "";
+    try {
+      const order = await Vio.checkout.mountKustomCheckout(
+        container,
+        this.checkoutState.sponsorId
+      );
+      this.kustomMountedOrderId = order.order_id;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Kustom mount failed:", err);
+      }
+      this.paymentError = `Kunne ikke laste Kustom: ${err instanceof Error ? err.message : String(err)}`;
+      Vio.checkout.selectPaymentMethod("");
+    } finally {
+      this.kustomMounting = false;
+    }
+  }
+  unmountKustom() {
+    this.kustomMountedOrderId = null;
+    const container = this.renderRoot?.querySelector(
+      "#vio-kustom-checkout-container"
+    );
+    if (container) container.innerHTML = "";
+  }
+  renderKustomPanel() {
+    return b2`
+      <div class="kustom-panel">
+        ${this.kustomMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Kustom…</div>` : ""}
+        <div id="vio-kustom-checkout-container"></div>
+      </div>
+    `;
+  }
+  /** Mount the Qliro embedded checkout once it's the chosen method. */
+  async mountQliroIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "qliro") return;
+    if (this.qliroMounting) return;
+    const container = this.renderRoot?.querySelector(
+      "#vio-qliro-checkout-container"
+    );
+    if (!container) return;
+    if (this.qliroMountedOrderId && container.childElementCount > 0) return;
+    this.qliroMounting = true;
+    container.innerHTML = "";
+    try {
+      const order = await Vio.checkout.mountQliroCheckout(
+        container,
+        this.checkoutState.sponsorId
+      );
+      this.qliroMountedOrderId = order.order_id;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Qliro mount failed:", err);
+      }
+      this.paymentError = `Kunne ikke laste Qliro: ${err instanceof Error ? err.message : String(err)}`;
+      Vio.checkout.selectPaymentMethod("");
+    } finally {
+      this.qliroMounting = false;
+    }
+  }
+  unmountQliro() {
+    this.qliroMountedOrderId = null;
+    const container = this.renderRoot?.querySelector(
+      "#vio-qliro-checkout-container"
+    );
+    if (container) container.innerHTML = "";
+  }
+  renderQliroPanel() {
+    return b2`
+      <div class="qliro-panel">
+        ${this.qliroMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Qliro…</div>` : ""}
+        <div id="vio-qliro-checkout-container"></div>
+      </div>
+    `;
+  }
   renderKlarnaPanel() {
     const currency = this.checkoutState?.currency || getGlobalCurrency();
     return b2`
@@ -12848,8 +13287,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const method = this.checkoutState?.paymentMethod;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
     const isVipps = method === "vipps";
+    const isKustom = method === "kustom" || method === "qliro";
     return b2`
-          ${!isVipps ? b2`
+          ${!isVipps && !isKustom ? b2`
           <section class="section">
             <div class="section-label">Steg 1</div>
             <h3 class="section-heading">Leveringsadresse</h3>
@@ -12966,7 +13406,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               ` : ""}
 
           <section class="section">
-            <div class="section-label">${isVipps ? "Betaling" : "Steg 2"}</div>
+            <div class="section-label">${isVipps || isKustom ? "Betaling" : "Steg 2"}</div>
             ${method ? b2`
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                     <h3 class="section-heading" style="margin:0;">
@@ -12977,6 +13417,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                       style="background:none; border:none; color:var(--vio-color-accent, #c14a3b); text-decoration:underline; font-size:13px; cursor:pointer;"
                       @click=${() => {
       this.unmountKlarna();
+      this.unmountKustom();
+      this.unmountQliro();
       Vio.checkout.selectPaymentMethod("");
     }}
                     >
@@ -12985,6 +13427,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   </div>
 
                   ${method === "klarna" ? this.renderKlarnaPanel() : ""}
+                  ${method === "kustom" ? this.renderKustomPanel() : ""}
+                  ${method === "qliro" ? this.renderQliroPanel() : ""}
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
@@ -13057,6 +13501,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("klarna") && this.klarnaAvailable ? b2`
                           <button class="payment-btn" @click=${() => this.onPay("klarna")}>
                             Klarna
+                          </button>
+                        ` : ""}
+                    ${this.methodEnabled("kustom") ? b2`
+                          <button class="payment-btn" @click=${() => this.onPay("kustom")}>
+                            <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Kustom</span>
+                          </button>
+                        ` : ""}
+                    ${this.methodEnabled("qliro") ? b2`
+                          <button class="payment-btn" @click=${() => this.onPay("qliro")}>
+                            <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Qliro</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
@@ -13171,6 +13625,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "kustomMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "qliroMounting", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "stripeLoading", 2);
