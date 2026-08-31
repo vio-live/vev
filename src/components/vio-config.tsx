@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { registerVevComponent, useEditorState } from "@vev/react";
+import { registerVevComponent, useEditorState, useVevEvent } from "@vev/react";
 import { SilkeBox, SilkeButton, SilkeSelectFieldNative, SilkeTextField } from "@vev/silke";
 import { Vio, VioCart, VioCheckout, VioProductDetail, applyVioTheme } from "../../vio-sdk";
 import { configureAnalytics, initVioAnalytics } from "./analytics";
@@ -20,8 +20,12 @@ import {
   persistCountry,
   SUPPORTED_COUNTRIES,
   getCountryConfig,
+  openProductInfo,
+  getActiveSponsorId,
   type VioEnvironment,
 } from "./vio-helpers";
+import ProductSelect from "./product-picker";
+import { trackViewItem } from "./analytics";
 
 /**
  * Vio Configuration — the ONLY setup block. Wraps the real vio-web-sdk:
@@ -301,6 +305,25 @@ export default function VioConfig({
     themeCorners,
     themeDensity,
   ]);
+
+  // "Open product info" as a Vev INTERACTION: any element on the page (an
+  // image, a button, a hotspot) can trigger it from the Interactions panel,
+  // which is how Vev models this now — the older `type: "action"` addon still
+  // ships alongside for pages already using it.
+  //
+  // It lives on Vio Config because that's the singleton that mounts the
+  // product-detail drawer; a per-element addon can't be assumed present.
+  useVevEvent<{ product?: { productId?: number; sponsorId?: number } }>(
+    "OPEN_PRODUCT_INFO",
+    (payload) => {
+      const productId = payload?.product?.productId;
+      if (productId == null) return;
+      // Fall back to the panel's own sponsor rather than a hardcoded id.
+      const sponsor = payload?.product?.sponsorId ?? sponsorId ?? getActiveSponsorId();
+      trackViewItem({ productId: Number(productId) });
+      openProductInfo(Number(productId), Number(sponsor));
+    },
+  );
 
   // Cart badge count.
   useEffect(() => {
@@ -687,6 +710,29 @@ const MULTI_MARKET_ENABLED = false;
 registerVevComponent(VioConfig, {
   name: "Vio Config (SDK)",
   size: { width: 320, height: "auto" },
+  /**
+   * Interactions any element can trigger — this is how Vev wires behaviour to
+   * an arbitrary element now (select the image → Interactions → On click →
+   * Vio Config → Open product info → pick the product).
+   */
+  interactions: [
+    {
+      type: "OPEN_PRODUCT_INFO",
+      description: "Open product info — turns any element (an image, a button) into a product",
+      args: [
+        {
+          name: "product",
+          title: "Product",
+          type: "object",
+          component: ProductSelect as any,
+          fields: [
+            { name: "productId", type: "number" },
+            { name: "sponsorId", type: "number" },
+          ],
+        },
+      ],
+    },
+  ],
   props: [
     {
       name: "apiKey",
