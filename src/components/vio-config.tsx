@@ -95,7 +95,9 @@ type Props = {
   country?: string;
   currency?: string;
   // Cart button (floating action button).
-  cartButton?: boolean;
+  // "items" | "always" | "never". Older pages stored a boolean here — see
+  // resolveCartVisibility.
+  cartButton?: string | boolean;
   cartPosition?: string; // bottom-right | bottom-left | top-right | top-left
   cartIcon?: string; // bag | cart | basket
   cartColor?: string;
@@ -129,6 +131,23 @@ type Props = {
  * that as "clear the override", so switching back really restores the SDK
  * scale instead of freezing today's numbers into the page.
  */
+/**
+ * Cart button visibility. Default is "items": a floating cart on an empty cart
+ * is noise in an editorial article — it should appear when there is something
+ * in it.
+ *
+ * Pages configured before this was a choice stored a boolean. `true` maps to
+ * the new default rather than to "always", so they get the improved behaviour;
+ * `false` stays hidden, which is what its author asked for.
+ */
+type CartVisibility = "items" | "always" | "never";
+
+function resolveCartVisibility(value: unknown): CartVisibility {
+  if (value === true) return "items";
+  if (value === false) return "never";
+  return value === "always" || value === "never" || value === "items" ? value : "items";
+}
+
 const CORNER_PRESETS = {
   default: { radiusSm: undefined, radiusMd: undefined, radiusLg: undefined, radiusXl: undefined },
   sharp: { radiusSm: "0", radiusMd: "0", radiusLg: "0", radiusXl: "0" },
@@ -147,7 +166,7 @@ export default function VioConfig({
   sponsorId,
   country = "NO",
   currency,
-  cartButton = true,
+  cartButton,
   cartPosition = "bottom-right",
   cartIcon = "bag",
   cartColor,
@@ -453,9 +472,12 @@ export default function VioConfig({
   );
 
   const fabScaleHover = cartEffect === "scale" && fabHover;
+  const cartVisibility = resolveCartVisibility(cartButton);
+  const showCartButton =
+    cartVisibility === "always" || (cartVisibility === "items" && count > 0);
   const overlays = (
     <>
-      {cartButton ? (
+      {showCartButton ? (
       <button
         type="button"
         aria-label="Handlekurv"
@@ -778,7 +800,20 @@ registerVevComponent(VioConfig, {
         ],
       },
     } as any,
-    { name: "cartButton", title: "Cart button", type: "boolean", initialValue: true },
+    {
+      name: "cartButton",
+      title: "Cart button",
+      type: "select",
+      initialValue: "items",
+      options: {
+        display: "dropdown",
+        items: [
+          { value: "items", label: "Only when it has items" },
+          { value: "always", label: "Always visible" },
+          { value: "never", label: "Hidden" },
+        ],
+      },
+    },
     {
       name: "cartPosition",
       title: "Cart position",
