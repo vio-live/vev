@@ -6352,6 +6352,47 @@ async function getQliroOrder(checkoutId, options) {
   return json?.data?.Payment?.GetQliroOrder ?? null;
 }
 
+// src/core/checkout/payments/walley.ts
+var CREATE_PAYMENT_WALLEY_MUTATION = `
+mutation CreatePaymentWalley($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+  Payment {
+    CreatePaymentWalley(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {
+      order_id
+      status
+      html_snippet
+      public_token
+      purchase_country
+      purchase_currency
+      total_price
+    }
+  }
+}
+`;
+var GET_WALLEY_ORDER_QUERY = `
+query GetWalleyOrder($checkoutId: String!) {
+  Payment {
+    GetWalleyOrder(checkout_id: $checkoutId) {
+      order_id
+      status
+      html_snippet
+      public_token
+      purchase_country
+      purchase_currency
+      total_price
+    }
+  }
+}
+`;
+async function createPaymentWalley(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_WALLEY_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentWalley ?? null;
+}
+async function getWalleyOrder(checkoutId, options) {
+  const json = await executeCartGraphQL(GET_WALLEY_ORDER_QUERY, { checkoutId }, options);
+  return json?.data?.Payment?.GetWalleyOrder ?? null;
+}
+var WALLEY_PURCHASE_COMPLETED_EVENT = "walleyCheckoutPurchaseCompleted";
+
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
   if (err instanceof Error) return err.message;
@@ -7009,6 +7050,61 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async getQliroOrder(checkoutId, sponsorId) {
     const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getQliroOrder(checkoutId, opts);
+  }
+  /**
+   * Mount the Walley embedded checkout. `onPurchaseCompleted` fires as soon
+   * as Walley's own script dispatches its success event INSIDE the widget —
+   * no redirect needed. `getWalleyOrder`/the confirmation-URL fallback
+   * remain for the case the event is missed (tab backgrounded, reload).
+   */
+  async mountWalleyCheckout(container, sponsorId, onPurchaseCompleted) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    if (!spId) throw new Error("[CheckoutManager] no sponsor for Walley");
+    const cart = this.cartManager.getCart(spId);
+    let cartId = cart?.cartId;
+    if (!cartId) cartId = await this.cartManager.ensureCartId(spId);
+    if (!cartId) {
+      throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
+    }
+    const opts = await getCartGraphQLOptions(spId);
+    let checkoutId = this.state?.checkoutId;
+    if (!checkoutId) {
+      const checkoutRes = await createCheckout(cartId, opts);
+      checkoutId = checkoutRes?.id;
+      if (checkoutId && this.state) {
+        this.state = { ...this.state, checkoutId };
+      }
+    }
+    if (!checkoutId) {
+      throw new Error("[CheckoutManager] no backend checkout for the Walley order");
+    }
+    const href = kustomCleanHref();
+    const order = await createPaymentWalley(
+      {
+        checkoutId,
+        countryCode: getGlobalCountryCode(),
+        href,
+        email: this.state?.address?.email || void 0
+      },
+      opts
+    );
+    if (!order?.html_snippet) {
+      throw new Error("Walley order creation failed: missing html_snippet");
+    }
+    renderKustomSnippet(container, order.html_snippet);
+    if (onPurchaseCompleted) {
+      const handler = () => {
+        document.removeEventListener(WALLEY_PURCHASE_COMPLETED_EVENT, handler);
+        onPurchaseCompleted(order);
+      };
+      document.addEventListener(WALLEY_PURCHASE_COMPLETED_EVENT, handler, { once: true });
+    }
+    return order;
+  }
+  /** Re-read the Walley session owned by a checkout — the confirmation trip. */
+  async getWalleyOrder(checkoutId, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getWalleyOrder(checkoutId, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
@@ -7819,7 +7915,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.5.1";
+var SDK_VERSION = "0.9.0";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -11772,6 +11868,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.kustomMountedOrderId = null;
     this.qliroMounting = false;
     this.qliroMountedOrderId = null;
+    this.walleyMounting = false;
+    this.walleyMountedOrderId = null;
     this.stripeLoading = false;
     this.vippsLoading = false;
     this.form = {
@@ -12563,6 +12661,63 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(["checkout_id", "payment_processor"]);
         return;
       }
+      if (urlParams.get("payment_processor") === "WALLEY" && checkoutId) {
+        if (!this.checkoutState) {
+          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          if (spIdToUse) {
+            try {
+              Vio.checkout.open(spIdToUse);
+            } catch {
+            }
+          }
+        }
+        try {
+          Vio.checkout.selectPaymentMethod("walley");
+        } catch {
+        }
+        this.open = true;
+        this.paymentNotice = "Bekrefter betalingen\u2026";
+        try {
+          const order = await Vio.checkout.getWalleyOrder(
+            checkoutId,
+            this.checkoutState?.sponsorId
+          );
+          this.paymentNotice = null;
+          if (order?.html_snippet) {
+            this.walleyMountedOrderId = order.order_id;
+            await this.updateComplete;
+            const container = this.renderRoot?.querySelector(
+              "#vio-walley-checkout-container"
+            );
+            if (container) {
+              Vio.checkout.renderKustomSnippet(container, order.html_snippet);
+            }
+            if (order.status === "PurchaseCompleted") {
+              this.dispatchEvent(
+                new CustomEvent("vio:payment-success", {
+                  detail: { method: "walley", orderId: order.order_id },
+                  bubbles: true,
+                  composed: true
+                })
+              );
+              const spId = this.checkoutState?.sponsorId;
+              if (spId) {
+                try {
+                  Vio.cart.clearSponsorCart(spId);
+                } catch {
+                }
+              }
+            }
+          }
+        } catch (err) {
+          this.paymentNotice = null;
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] Walley confirmation read failed:", err);
+          }
+        }
+        this.cleanReturnQueryParams(["checkout_id", "payment_processor"]);
+        return;
+      }
       if (vioMethod === "klarna" && typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.klarna.pending.v1")) {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
@@ -12659,6 +12814,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
     void this.mountQliroIfNeeded();
+    void this.mountWalleyIfNeeded();
   }
   close() {
     this.open = false;
@@ -12903,6 +13059,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       Vio.checkout.selectPaymentMethod("qliro");
       return;
     }
+    if (method === "walley") {
+      Vio.checkout.selectPaymentMethod("walley");
+      return;
+    }
     if (method === "vipps") {
       const email = String(this.form.email ?? "").trim();
       if (!email || !email.includes("@")) {
@@ -13008,6 +13168,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return "Kustom";
       case "qliro":
         return "Qliro";
+      case "walley":
+        return "Walley";
       case "vipps":
         return "Vipps";
       case "stripe":
@@ -13020,7 +13182,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** True for methods that complete via a separate sheet/widget, not the CTA. */
   isExpressMethod(method) {
-    return method === "apple-pay" || method === "klarna" || method === "kustom" || method === "qliro";
+    return method === "apple-pay" || method === "klarna" || method === "kustom" || method === "qliro" || method === "walley";
   }
   orderTotal() {
     const s4 = this.checkoutState;
@@ -13178,6 +13340,70 @@ var _VioCheckout = class _VioCheckout extends i4 {
       </div>
     `;
   }
+  /**
+   * Mount the Walley embedded checkout once it's the chosen method. Unlike
+   * Kustom/Qliro, success is signalled INLINE by Walley's own DOM event
+   * (`walleyCheckoutPurchaseCompleted`) — no redirect round-trip needed, so
+   * we handle it here instead of only in the confirmation-return branch.
+   */
+  async mountWalleyIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "walley") return;
+    if (this.walleyMounting) return;
+    const container = this.renderRoot?.querySelector(
+      "#vio-walley-checkout-container"
+    );
+    if (!container) return;
+    if (this.walleyMountedOrderId && container.childElementCount > 0) return;
+    this.walleyMounting = true;
+    container.innerHTML = "";
+    try {
+      const order = await Vio.checkout.mountWalleyCheckout(
+        container,
+        this.checkoutState.sponsorId,
+        () => {
+          this.dispatchEvent(
+            new CustomEvent("vio:payment-success", {
+              detail: { method: "walley", orderId: order.order_id },
+              bubbles: true,
+              composed: true
+            })
+          );
+          const spId = this.checkoutState?.sponsorId;
+          if (spId) {
+            try {
+              Vio.cart.clearSponsorCart(spId);
+            } catch {
+            }
+          }
+        }
+      );
+      this.walleyMountedOrderId = order.order_id;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Walley mount failed:", err);
+      }
+      this.paymentError = `Kunne ikke laste Walley: ${err instanceof Error ? err.message : String(err)}`;
+      Vio.checkout.selectPaymentMethod("");
+    } finally {
+      this.walleyMounting = false;
+    }
+  }
+  unmountWalley() {
+    this.walleyMountedOrderId = null;
+    const container = this.renderRoot?.querySelector(
+      "#vio-walley-checkout-container"
+    );
+    if (container) container.innerHTML = "";
+  }
+  renderWalleyPanel() {
+    return b2`
+      <div class="walley-panel">
+        ${this.walleyMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Walley…</div>` : ""}
+        <div id="vio-walley-checkout-container"></div>
+      </div>
+    `;
+  }
   renderKlarnaPanel() {
     const currency = this.checkoutState?.currency || getGlobalCurrency();
     return b2`
@@ -13287,7 +13513,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const method = this.checkoutState?.paymentMethod;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
     const isVipps = method === "vipps";
-    const isKustom = method === "kustom" || method === "qliro";
+    const isKustom = method === "kustom" || method === "qliro" || method === "walley";
     return b2`
           ${!isVipps && !isKustom ? b2`
           <section class="section">
@@ -13419,6 +13645,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountKlarna();
       this.unmountKustom();
       this.unmountQliro();
+      this.unmountWalley();
       Vio.checkout.selectPaymentMethod("");
     }}
                     >
@@ -13429,6 +13656,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "klarna" ? this.renderKlarnaPanel() : ""}
                   ${method === "kustom" ? this.renderKustomPanel() : ""}
                   ${method === "qliro" ? this.renderQliroPanel() : ""}
+                  ${method === "walley" ? this.renderWalleyPanel() : ""}
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
@@ -13511,6 +13739,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("qliro") ? b2`
                           <button class="payment-btn" @click=${() => this.onPay("qliro")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Qliro</span>
+                          </button>
+                        ` : ""}
+                    ${this.methodEnabled("walley") ? b2`
+                          <button class="payment-btn" @click=${() => this.onPay("walley")}>
+                            <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Walley</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
@@ -13631,6 +13864,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "walleyMounting", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "stripeLoading", 2);
