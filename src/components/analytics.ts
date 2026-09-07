@@ -1,3 +1,4 @@
+import { getPersistedSponsorId } from "./vio-helpers";
 import { Vio } from "../../vio-sdk";
 
 /**
@@ -131,7 +132,8 @@ function ringLog(entry: unknown): void {
 export function trackEvent(name: string, params: EventParams = {}): void {
   if (!state.enabled) return;
 
-  const { currency, value, items, item_list_name, transaction_id, payment_type, ...rest } = params;
+  const { currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, ...rest } =
+    params;
   const ecommerce: Record<string, unknown> = { ...rest };
   if (currency) ecommerce.currency = currency;
   if (value != null) ecommerce.value = Math.round(value * 100) / 100;
@@ -175,7 +177,8 @@ function forwardToVio(name: string, params: EventParams): void {
   if (!VIO_EVENT_NAMES.has(name)) return;
   const analytics = (Vio as any).analytics;
   if (!analytics?.track) return; // vendored SDK predates Vio.analytics
-  const { currency, value, items, item_list_name, transaction_id, payment_type, ...rest } = params;
+  const { currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, ...rest } =
+    params;
   const props: Record<string, unknown> = { ...rest };
   if (item_list_name) props.list_name = item_list_name;
   try {
@@ -197,6 +200,18 @@ function forwardToVio(name: string, params: EventParams): void {
               paymentMethod: payment_type,
             }
           : undefined,
+      // El sponsor es LA dimensión del dashboard de commerce (filtra por
+      // sponsor_id). Vev corre con autoTrack:false, así que los listeners del
+      // core —que sí lo copian— están apagados: si no lo mandamos desde acá,
+      // todo lo de Vev llega con sponsor_id = 0 y ese dashboard nace vacío.
+      // Cascada: lo explícito del evento → el sponsor del carrito (si es
+      // uno solo) → el sponsor persistido de la página. NO usamos
+      // getActiveSponsorId(): ese inventa 4 cuando no sabe, y atribuir a un
+      // sponsor equivocado es peor que no atribuir.
+      context: (() => {
+        const sid = num(sponsorId) ?? soleCartSponsor() ?? getPersistedSponsorId() ?? undefined;
+        return sid ? { sponsorId: sid } : undefined;
+      })(),
       props: Object.keys(props).length ? props : undefined,
     });
   } catch {
@@ -260,6 +275,23 @@ export function trackAddToCart(item: VioItemInput): void {
 // ---------------------------------------------------------------------------
 
 /** Every line across every sponsor cart, as analytics items. */
+/**
+ * Sponsor del carrito cuando el evento no lo trae (`vio:open-cart` no lleva
+ * detail, y algunos caminos de pago tampoco). Con un solo sponsor en el
+ * carrito —el caso normal— la respuesta es inequívoca; con varios devuelve
+ * undefined en vez de inventar uno.
+ */
+function soleCartSponsor(): number | undefined {
+  const carts = Vio.cart?.getAllCarts?.();
+  if (!carts) return undefined;
+  const ids = new Set<number>();
+  for (const cart of carts.values?.() ?? []) {
+    const sid = num((cart as any).sponsorId);
+    if (sid) ids.add(sid);
+  }
+  return ids.size === 1 ? [...ids][0] : undefined;
+}
+
 function cartToItems(sponsorId?: number): VioItemInput[] {
   const out: VioItemInput[] = [];
   const carts = Vio.cart?.getAllCarts?.();
@@ -331,9 +363,15 @@ export function initVioAnalytics(): () => void {
   // Keep the last non-empty cart snapshot — the cart is cleared the instant a
   // payment succeeds, so `purchase` needs what was there just before.
   let lastCartSnapshot: VioItemInput[] = [];
+  let lastCartSponsor: number | undefined;
   const onCartChange = () => {
     const items = cartToItems();
-    if (items.length) lastCartSnapshot = items;
+    if (items.length) {
+      lastCartSnapshot = items;
+      // El carrito se vacía ANTES de que llegue payment-success, así que el
+      // sponsor se guarda con el snapshot o se pierde.
+      lastCartSponsor = soleCartSponsor() ?? lastCartSponsor;
+    }
   };
   Vio.cart?.addEventListener?.("change", onCartChange);
   onCartChange();
@@ -358,6 +396,7 @@ export function initVioAnalytics(): () => void {
       currency: currencyOf(items),
       value: sumValue(items),
       payment_type: d.paymentMethod,
+      sponsorId: num(d.sponsorId) ?? soleCartSponsor(),
       items,
     });
   };
@@ -368,6 +407,7 @@ export function initVioAnalytics(): () => void {
     trackEvent("view_cart", {
       currency: currencyOf(items),
       value: sumValue(items),
+      sponsorId: soleCartSponsor(),
       items,
     });
   };
@@ -384,6 +424,7 @@ export function initVioAnalytics(): () => void {
       value,
       transaction_id: result.orderId ?? result.order?.orderId,
       payment_type: d.method,
+      sponsorId: num(d.sponsorId) ?? lastCartSponsor,
       items,
     });
     lastCartSnapshot = [];

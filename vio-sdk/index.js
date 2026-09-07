@@ -5566,6 +5566,23 @@ var CartManager = class extends EventTarget {
     const targetItemId = item.cartItemId;
     if (quantity <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
+      if (typeof document !== "undefined") {
+        document.dispatchEvent(
+          new CustomEvent("vio:removed-from-cart", {
+            bubbles: true,
+            detail: {
+              productId: item.productId,
+              variantId: item.variantId,
+              name: item.name,
+              brand: item.brand,
+              price: item.unitPrice,
+              quantity: item.quantity,
+              currency: item.currency,
+              sponsorId
+            }
+          })
+        );
+      }
     } else {
       item.quantity = quantity;
     }
@@ -8113,7 +8130,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.9.1";
+var SDK_VERSION = "0.11.1";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -8135,6 +8152,9 @@ var AnalyticsManager = class extends EventTarget {
     this.retryAttempt = 0;
     this.retryNotBefore = 0;
     this.sessionId = null;
+    this.requireConsent = false;
+    this.consentGranted = false;
+    this.anonIdCache = null;
     /** Set via start({ sessionId }) — the host owns the session, we follow. */
     this.externalSessionId = null;
     this.sessionStartedAt = 0;
@@ -8150,7 +8170,29 @@ var AnalyticsManager = class extends EventTarget {
    * Install listeners + begin flushing. Explicit on purpose (no module
    * side-effects). Safe to call twice (second call only updates options).
    */
+  /**
+   * Consentimiento (ePrivacy/GDPR). Por defecto el SDK asume que el host ya
+   * lo gestionó — su CMP decide si nos carga. Con `requireConsent: true`
+   * arranca en modo **cookieless**: mide la visita con ids efímeros en
+   * memoria y NO escribe nada en localStorage hasta que el host llame
+   * `setConsent(true)`. Retirarlo borra lo persistido.
+   */
+  setConsent(granted) {
+    this.consentGranted = granted;
+    if (granted) {
+      if (this.anonIdCache) safeStorageSet(ANON_KEY, this.anonIdCache);
+      if (this.sessionId) this.persistSession();
+      return;
+    }
+    safeStorageRemove(ANON_KEY);
+    safeStorageRemove(SESSION_KEY);
+  }
+  /** ¿Podemos escribir en el dispositivo? */
+  get canPersist() {
+    return !this.requireConsent || this.consentGranted;
+  }
   start(options = {}) {
+    this.requireConsent = options.requireConsent === true;
     this.options = {
       host: options.host ?? this.options.host,
       collector: options.collector ?? this.options.collector,
@@ -8300,6 +8342,7 @@ var AnalyticsManager = class extends EventTarget {
       content_id: ctx.contentId,
       // Deletion-proof reporting: sources have no trash bin — the title
       // snapshotted at event time keeps reports legible if content dies.
+      error_code: ctx.errorCode,
       content_title: ctx.contentTitle ?? (typeof document !== "undefined" && document.title ? document.title.slice(0, 255) : void 0),
       variant: ctx.variant
     });
@@ -8335,18 +8378,35 @@ var AnalyticsManager = class extends EventTarget {
       ...opts.props ? { props: opts.props } : {}
     };
   }
+  /** Guarda la sesión solo si podemos escribir en el dispositivo. */
+  persistSession(now = Date.now()) {
+    if (!this.canPersist || !this.sessionId) return;
+    safeStorageSet(
+      SESSION_KEY,
+      JSON.stringify({
+        id: this.sessionId,
+        ts: now,
+        startedAt: this.sessionStartedAt ?? now
+      })
+    );
+  }
   anonId() {
-    const stored = safeStorageGet(ANON_KEY);
-    if (stored) return stored;
+    if (this.anonIdCache) return this.anonIdCache;
+    const stored = this.canPersist ? safeStorageGet(ANON_KEY) : null;
+    if (stored) {
+      this.anonIdCache = stored;
+      return stored;
+    }
     const id = `a-${uuid()}`;
-    safeStorageSet(ANON_KEY, id);
-    return safeStorageGet(ANON_KEY) ?? id;
+    if (this.canPersist) safeStorageSet(ANON_KEY, id);
+    this.anonIdCache = (this.canPersist ? safeStorageGet(ANON_KEY) : null) ?? id;
+    return this.anonIdCache;
   }
   /** Rolling session: renewed by activity, rotated after 30 min idle. */
   ensureSession() {
     const now = Date.now();
     if (!this.sessionId) {
-      const stored = safeStorageGet(SESSION_KEY);
+      const stored = this.canPersist ? safeStorageGet(SESSION_KEY) : null;
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
@@ -8358,7 +8418,7 @@ var AnalyticsManager = class extends EventTarget {
         }
       }
     } else {
-      const stored = safeStorageGet(SESSION_KEY);
+      const stored = this.canPersist ? safeStorageGet(SESSION_KEY) : null;
       if (stored) {
         try {
           if (now - JSON.parse(stored).ts >= SESSION_TTL_MS) {
@@ -8380,16 +8440,10 @@ var AnalyticsManager = class extends EventTarget {
       this.sessionId = `s-${uuid()}`;
       this.sessionStartedAt = now;
       this.impressedComponents.clear();
-      safeStorageSet(
-        SESSION_KEY,
-        JSON.stringify({ id: this.sessionId, ts: now, startedAt: now })
-      );
+      this.persistSession(now);
       this.track("session_start");
     } else {
-      safeStorageSet(
-        SESSION_KEY,
-        JSON.stringify({ id: this.sessionId, ts: now, startedAt: this.sessionStartedAt })
-      );
+      this.persistSession(now);
     }
   }
   trackSessionEnd() {
@@ -8452,6 +8506,34 @@ var AnalyticsManager = class extends EventTarget {
           value: line ? line.unitPrice * (d3.quantity ?? 1) : void 0,
           currency: line?.currency
         }
+      });
+    });
+    on("vio:removed-from-cart", (ev) => {
+      const d3 = ev.detail ?? {};
+      if (d3.productId === void 0) return;
+      this.track("remove_from_cart", {
+        context: { sponsorId: d3.sponsorId },
+        commerce: {
+          items: [
+            {
+              productId: d3.productId,
+              variantId: d3.variantId,
+              name: d3.name,
+              brand: d3.brand,
+              price: d3.price,
+              quantity: d3.quantity
+            }
+          ],
+          value: (d3.price ?? 0) * (d3.quantity ?? 1),
+          currency: d3.currency
+        }
+      });
+    });
+    on("vio:cart-error", (ev) => {
+      const d3 = ev.detail ?? {};
+      this.track("sdk_error", {
+        context: { errorCode: "cart_error" },
+        props: d3.message ? { message: String(d3.message).slice(0, 500) } : void 0
       });
     });
     on("vio:product-click", (ev) => {
@@ -8552,6 +8634,12 @@ function safeStorageGet(key) {
     return window.localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+function safeStorageRemove(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
   }
 }
 function safeStorageSet(key, value) {
@@ -11684,10 +11772,13 @@ var VioCart = class extends i4 {
     this.open = false;
   }
   show() {
+    const wasClosed = !this.open;
     this.open = true;
-    this.dispatchEvent(
-      new CustomEvent("vio:open-cart", { bubbles: true, composed: true })
-    );
+    if (wasClosed) {
+      this.dispatchEvent(
+        new CustomEvent("vio:open-cart", { bubbles: true, composed: true })
+      );
+    }
     void this.loadAvailablePaymentMethods();
   }
   /** Which payment buttons to render — backend-configured per sponsor.
