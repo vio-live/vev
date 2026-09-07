@@ -6971,7 +6971,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await getCartGraphQLOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await createCheckout(cartId, opts);
+      const checkoutRes = await this.createCheckout(spId);
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -7021,7 +7021,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await getCartGraphQLOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await createCheckout(cartId, opts);
+      const checkoutRes = await this.createCheckout(spId);
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -7069,7 +7069,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await getCartGraphQLOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await createCheckout(cartId, opts);
+      const checkoutRes = await this.createCheckout(spId);
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -7915,7 +7915,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.9.0";
+var SDK_VERSION = "0.9.1";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12629,9 +12629,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           if (order?.html_snippet) {
             this.qliroMountedOrderId = order.order_id;
             await this.updateComplete;
-            const container = this.renderRoot?.querySelector(
-              "#vio-qliro-checkout-container"
-            );
+            const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
             if (container) {
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
             }
@@ -12686,9 +12684,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           if (order?.html_snippet) {
             this.walleyMountedOrderId = order.order_id;
             await this.updateComplete;
-            const container = this.renderRoot?.querySelector(
-              "#vio-walley-checkout-container"
-            );
+            const container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
             if (container) {
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
             }
@@ -13298,14 +13294,33 @@ var _VioCheckout = class _VioCheckout extends i4 {
     `;
   }
   /** Mount the Qliro embedded checkout once it's the chosen method. */
+  /**
+   * Container for a third-party embed, living in the LIGHT DOM.
+   *
+   * Qliro's (and Walley's) bootstrap script resolves its mount point from the
+   * document, so a container inside this component's shadow root is invisible
+   * to it and the widget silently never renders — verified against Qliro's
+   * staging widget: identical snippet, light DOM renders the iframe, shadow
+   * DOM renders nothing at all. The element is a child of the host (light DOM)
+   * and is projected back into the panel through a named slot, so the layout
+   * is unchanged. Kustom's KCO snippet resolves its own script's parent, so it
+   * works either way and keeps using the shadow-root container.
+   */
+  lightContainer(id, slotName) {
+    let el = this.querySelector(`#${id}`);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = id;
+      el.setAttribute("slot", slotName);
+      this.appendChild(el);
+    }
+    return el;
+  }
   async mountQliroIfNeeded() {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "qliro") return;
     if (this.qliroMounting) return;
-    const container = this.renderRoot?.querySelector(
-      "#vio-qliro-checkout-container"
-    );
-    if (!container) return;
+    const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
     if (this.qliroMountedOrderId && container.childElementCount > 0) return;
     this.qliroMounting = true;
     container.innerHTML = "";
@@ -13327,16 +13342,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountQliro() {
     this.qliroMountedOrderId = null;
-    const container = this.renderRoot?.querySelector(
-      "#vio-qliro-checkout-container"
-    );
-    if (container) container.innerHTML = "";
+    this.querySelector("#vio-qliro-checkout-container")?.remove();
   }
   renderQliroPanel() {
     return b2`
       <div class="qliro-panel">
         ${this.qliroMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Qliro…</div>` : ""}
-        <div id="vio-qliro-checkout-container"></div>
+        <slot name="vio-qliro"></slot>
       </div>
     `;
   }
@@ -13350,10 +13362,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "walley") return;
     if (this.walleyMounting) return;
-    const container = this.renderRoot?.querySelector(
-      "#vio-walley-checkout-container"
-    );
-    if (!container) return;
+    const container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
     if (this.walleyMountedOrderId && container.childElementCount > 0) return;
     this.walleyMounting = true;
     container.innerHTML = "";
@@ -13391,16 +13400,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountWalley() {
     this.walleyMountedOrderId = null;
-    const container = this.renderRoot?.querySelector(
-      "#vio-walley-checkout-container"
-    );
-    if (container) container.innerHTML = "";
+    this.querySelector("#vio-walley-checkout-container")?.remove();
   }
   renderWalleyPanel() {
     return b2`
       <div class="walley-panel">
         ${this.walleyMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Walley…</div>` : ""}
-        <div id="vio-walley-checkout-container"></div>
+        <slot name="vio-walley"></slot>
       </div>
     `;
   }
