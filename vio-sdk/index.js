@@ -6315,10 +6315,33 @@ function renderKustomSnippet(container, htmlSnippet) {
 }
 
 // src/core/checkout/payments/qliro.ts
+function readVioTheme() {
+  if (typeof globalThis === "undefined") return void 0;
+  const doc = globalThis.document;
+  const getComputed = globalThis.getComputedStyle;
+  if (!doc?.documentElement || typeof getComputed !== "function") return void 0;
+  let style;
+  try {
+    style = getComputed(doc.documentElement);
+  } catch {
+    return void 0;
+  }
+  const read = (name) => {
+    const value = style?.getPropertyValue?.(name)?.trim();
+    return value || void 0;
+  };
+  const theme = {
+    accent: read("--vio-color-accent"),
+    surface: read("--vio-color-surface"),
+    radiusMd: read("--vio-radius-md"),
+    radiusLg: read("--vio-radius-lg")
+  };
+  return Object.values(theme).some(Boolean) ? theme : void 0;
+}
 var CREATE_PAYMENT_QLIRO_MUTATION = `
-mutation CreatePaymentQliro($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+mutation CreatePaymentQliro($checkoutId: String!, $countryCode: String!, $href: String!, $email: String, $theme: QliroThemeInput) {
   Payment {
-    CreatePaymentQliro(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {
+    CreatePaymentQliro(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email, theme: $theme) {
       order_id
       status
       html_snippet
@@ -6350,6 +6373,139 @@ async function createPaymentQliro(variables, options) {
 async function getQliroOrder(checkoutId, options) {
   const json = await executeCartGraphQL(GET_QLIRO_ORDER_QUERY, { checkoutId }, options);
   return json?.data?.Payment?.GetQliroOrder ?? null;
+}
+
+// src/core/checkout/payments/qliro-sync.ts
+var SYNC_PAYMENT_QLIRO_MUTATION = `
+mutation SyncPaymentQliro($checkoutId: String!) {
+  Payment {
+    SyncPaymentQliro(checkout_id: $checkoutId) {
+      order_id
+      update_version
+      total_price
+    }
+  }
+}
+`;
+async function syncPaymentQliro(checkoutId, options) {
+  const json = await executeCartGraphQL(SYNC_PAYMENT_QLIRO_MUTATION, { checkoutId }, options);
+  return json?.data?.Payment?.SyncPaymentQliro ?? null;
+}
+var DEFAULT_UNLOCK_TIMEOUT_MS = 15e3;
+function installQliroListeners(options) {
+  const { checkoutId, queryOptions, onEvent } = options;
+  const unlockTimeoutMs = options.unlockTimeoutMs ?? DEFAULT_UNLOCK_TIMEOUT_MS;
+  const win = globalThis;
+  let q1 = null;
+  let destroyed = false;
+  let pending = null;
+  const emit = (event) => {
+    try {
+      onEvent?.(event);
+    } catch {
+    }
+  };
+  const settle = () => {
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    const { resolve } = pending;
+    pending = null;
+    try {
+      q1?.unlock();
+    } catch {
+    }
+    resolve();
+  };
+  const acknowledges = (echo, version) => {
+    if (version === null) return false;
+    return !echo || echo === version;
+  };
+  const settleIfAcknowledged = () => {
+    if (!pending) return;
+    if (pending.echoes.some((echo) => acknowledges(echo, pending.version))) {
+      settle();
+    }
+  };
+  const previousQ1Ready = win.q1Ready;
+  win.q1Ready = (instance) => {
+    try {
+      previousQ1Ready?.(instance);
+    } catch {
+    }
+    if (destroyed) return;
+    q1 = instance;
+    instance.onCheckoutLoaded(() => emit({ type: "loaded" }));
+    instance.onOrderUpdated((order) => {
+      if (!pending) return;
+      const echoed = order?.merchantUpdateVersion ?? order?.MerchantUpdateVersion ?? null;
+      pending.echoes.push(echoed);
+      settleIfAcknowledged();
+    });
+    instance.onShippingMethodChanged(
+      (shipping) => emit({ type: "shipping-changed", shipping })
+    );
+    instance.onShippingPriceChanged(
+      (price, totalPrice) => emit({ type: "shipping-price-changed", price, totalPrice })
+    );
+    instance.onCustomerInfoChanged(
+      (customer) => emit({ type: "customer-changed", customer })
+    );
+    instance.onPaymentMethodChanged(
+      (paymentMethod) => emit({ type: "payment-method-changed", paymentMethod })
+    );
+    instance.onPaymentDeclined(
+      (reason, message) => emit({ type: "payment-declined", reason, message })
+    );
+    instance.onSessionExpired(() => {
+      emit({ type: "session-expired" });
+      void controller.sync();
+    });
+  };
+  const controller = {
+    async sync() {
+      if (destroyed) return null;
+      if (pending) settle();
+      try {
+        q1?.lock();
+      } catch {
+      }
+      const settled = new Promise((resolve) => {
+        pending = {
+          version: null,
+          echoes: [],
+          resolve,
+          timer: setTimeout(settle, unlockTimeoutMs)
+        };
+      });
+      let result = null;
+      try {
+        result = await syncPaymentQliro(checkoutId, queryOptions);
+      } catch (error) {
+        emit({ type: "sync-failed", error });
+        settle();
+        await settled;
+        return null;
+      }
+      if (destroyed || !result?.update_version || !q1) {
+        settle();
+        await settled;
+        return result;
+      }
+      if (pending) {
+        pending.version = result.update_version;
+        settleIfAcknowledged();
+      }
+      await settled;
+      return result;
+    },
+    destroy() {
+      destroyed = true;
+      settle();
+      if (win.q1Ready) win.q1Ready = previousQ1Ready;
+      q1 = null;
+    }
+  };
+  return controller;
 }
 
 // src/core/checkout/payments/walley.ts
@@ -6627,6 +6783,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.applePayPublishableKey = null;
     this.applePayConnectedAccount = null;
     this.klarnaAvailableCache = null;
+    /** Live q1 listeners while a Qliro widget is mounted. */
+    this.qliroController = null;
     this.klarnaOrderInFlight = false;
     /** Last backend shippings fetched (per-supplier), for UI reuse. */
     this.lastFetchedShippings = [];
@@ -7036,15 +7194,55 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         checkoutId,
         countryCode: getGlobalCountryCode(),
         href,
-        email: this.state?.address?.email || void 0
+        email: this.state?.address?.email || void 0,
+        // Qliro cannot be restyled once rendered, so the host page's theme has
+        // to travel with the order.
+        theme: readVioTheme()
       },
       opts
     );
     if (!order?.html_snippet) {
       throw new Error("Qliro order creation failed: missing html_snippet");
     }
+    this.qliroController?.destroy();
+    this.qliroController = installQliroListeners({
+      checkoutId,
+      queryOptions: opts,
+      onEvent: (event) => this.onQliroEvent(event)
+    });
     renderKustomSnippet(container, order.html_snippet);
     return order;
+  }
+  /**
+   * Everything the customer does inside the Qliro iframe, re-published as a
+   * DOM event so a host page can follow a checkout it cannot see into.
+   */
+  onQliroEvent(event) {
+    this.dispatchEvent(
+      new CustomEvent("qliro-event", {
+        detail: event,
+        bubbles: true,
+        composed: true
+      })
+    );
+    if (event.type === "shipping-changed" || event.type === "shipping-price-changed") {
+      this.emit();
+    }
+  }
+  /**
+   * Push the current cart onto the open Qliro order.
+   *
+   * Call it after changing the cart while the widget is open: it holds
+   * `q1.lock()` across the round trip and unlocks once Qliro confirms it is
+   * showing the new version. A no-op when no Qliro widget is mounted.
+   */
+  async syncQliroOrder() {
+    return await this.qliroController?.sync() ?? null;
+  }
+  /** Drop the Qliro listeners and release any lock still held. */
+  destroyQliroListeners() {
+    this.qliroController?.destroy();
+    this.qliroController = null;
   }
   /** Re-read the Qliro order owned by a checkout — the confirmation trip. */
   async getQliroOrder(checkoutId, sponsorId) {
@@ -13342,6 +13540,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountQliro() {
     this.qliroMountedOrderId = null;
+    Vio.checkout.destroyQliroListeners();
     this.querySelector("#vio-qliro-checkout-container")?.remove();
   }
   renderQliroPanel() {
