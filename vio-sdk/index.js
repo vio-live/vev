@@ -12989,6 +12989,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           Vio.checkout.selectPaymentMethod("qliro");
         } catch {
         }
+        this.autoSelectAttempted = true;
         this.open = true;
         this.paymentNotice = "Bekrefter betalingen\u2026";
         try {
