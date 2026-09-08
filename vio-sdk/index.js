@@ -6420,6 +6420,7 @@ function installQliroListeners(options) {
   const win = globalThis;
   let q1 = null;
   let destroyed = false;
+  let orderUpdatedRegistered = false;
   let pending = null;
   const emit = (event) => {
     try {
@@ -6457,12 +6458,6 @@ function installQliroListeners(options) {
     if (destroyed) return;
     q1 = instance;
     instance.onCheckoutLoaded(() => emit({ type: "loaded" }));
-    instance.onOrderUpdated((order) => {
-      if (!pending) return;
-      const echoed = order?.merchantUpdateVersion ?? order?.MerchantUpdateVersion ?? null;
-      pending.echoes.push(echoed);
-      settleIfAcknowledged();
-    });
     instance.onShippingMethodChanged(
       (shipping) => emit({ type: "shipping-changed", shipping })
     );
@@ -6489,6 +6484,15 @@ function installQliroListeners(options) {
       if (pending) settle();
       try {
         q1?.lock();
+        if (q1 && !orderUpdatedRegistered) {
+          orderUpdatedRegistered = true;
+          q1.onOrderUpdated((order) => {
+            if (!pending) return;
+            const echoed = order?.merchantUpdateVersion ?? order?.MerchantUpdateVersion ?? null;
+            pending.echoes.push(echoed);
+            settleIfAcknowledged();
+          });
+        }
       } catch {
       }
       const settled = new Promise((resolve) => {
