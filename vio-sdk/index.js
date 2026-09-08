@@ -5095,17 +5095,17 @@ query Config {
 `;
 async function getCartGraphQLOptions(sponsorId) {
   const facade = globalThis.__VIO_FACADE__;
-  if (facade && typeof facade.bootstrap === "function" && !facade.bootstrapCache) {
+  if (!Configuration.isInitialized) {
+    await Configuration.whenReady();
+  }
+  if (Configuration.isInitialized && facade && typeof facade.bootstrap === "function" && !facade.bootstrapCache) {
     try {
       await facade.bootstrap();
     } catch (err) {
       if (typeof console !== "undefined") {
-        console.warn("[Vio] getCartGraphQLOptions bootstrap await failed:", err);
+        console.warn("[Vio] getCartGraphQLOptions bootstrap failed:", err);
       }
     }
-  }
-  if (!Configuration.isInitialized) {
-    await Configuration.whenReady();
   }
   const cfg = Configuration.isInitialized ? Configuration.get() : { apiKey: void 0, graphQLBase: "https://graph-ql-dev.vio.live" };
   const anyCfg = cfg;
@@ -5117,6 +5117,11 @@ async function getCartGraphQLOptions(sponsorId) {
       commerceKey = sponsor.commerce.apiKey;
       sponsorResolved = true;
     }
+  }
+  if (sponsorId && !sponsorResolved && typeof console !== "undefined") {
+    console.warn(
+      `[Vio] no commerce key for sponsor ${sponsorId} \u2014 falling back to the platform apiKey, which the commerce API will reject. Is the sponsor configured, and did Vio.init run before this call?`
+    );
   }
   return {
     endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
