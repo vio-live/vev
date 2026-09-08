@@ -10183,6 +10183,24 @@ function sponsorNameFromBootstrap(sponsorId) {
   return boot.secondarySponsors?.find((s4) => s4.id === sponsorId)?.name;
 }
 
+// src/core/checkout/method-taxonomy.ts
+function normalizeMethodName(name) {
+  return String(name ?? "").toLowerCase().replace(/[^a-z]/g, "");
+}
+var EMBEDDED_METHODS = ["kustom", "qliro", "walley"];
+var COLLECTS_OWN_ADDRESS = [...EMBEDDED_METHODS, "vipps"];
+var isEmbeddedMethod = (name) => EMBEDDED_METHODS.includes(normalizeMethodName(name));
+var collectsOwnAddress = (name) => COLLECTS_OWN_ADDRESS.includes(normalizeMethodName(name));
+function isMethodEnabled(available, ...names) {
+  if (available === null) return true;
+  return available.some(
+    (m2) => names.some((n6) => normalizeMethodName(m2) === normalizeMethodName(n6))
+  );
+}
+function everyMethodCollectsAddress(available) {
+  return Array.isArray(available) && available.length > 0 && available.every(collectsOwnAddress);
+}
+
 // src/ui/components/vio-product-detail.ts
 var STRIPE_LOGO_SRC = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
@@ -10792,9 +10810,7 @@ var VioProductDetail = class extends i4 {
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
   methodEnabled(...names) {
-    if (this.availableMethods === null) return true;
-    const norm = (s4) => s4.toLowerCase().replace(/[^a-z]/g, "");
-    return this.availableMethods.some((m2) => names.some((n6) => norm(m2) === norm(n6)));
+    return isMethodEnabled(this.availableMethods, ...names);
   }
   /* eslint-disable @typescript-eslint/no-explicit-any */
   /**
@@ -11288,7 +11304,7 @@ var VioProductDetail = class extends i4 {
             </button>
           </div>
 
-          ${this.availableQuantity > 0 && (this.methodEnabled("qliro") || this.methodEnabled("kustom") || this.methodEnabled("walley")) ? b2`
+          ${this.availableQuantity > 0 && this.methodEnabled(...EMBEDDED_METHODS) ? b2`
                 <button
                   class="buy-now"
                   @click=${this.buyNow}
@@ -11466,6 +11482,8 @@ var VioCart = class extends i4 {
     this.itemCount = 0;
     this.applePayAvailable = false;
     this.availableMethods = null;
+    /** Whether the method lookup has been attempted — see boundOnCartChange. */
+    this.paymentMethodsAttempted = false;
     this.confirmedOrder = null;
     /** Pre-resolved Apple Pay handle; `show()` fires the sheet synchronously. */
     this.applePayHandle = null;
@@ -11477,7 +11495,8 @@ var VioCart = class extends i4 {
       const detail = e7.detail;
       this.carts = detail.cartsBySponsor;
       this.itemCount = detail.itemCount;
-      if (this.availableMethods === null) {
+      if (!this.paymentMethodsAttempted) {
+        this.paymentMethodsAttempted = true;
         void this.loadAvailablePaymentMethods();
       }
     };
@@ -11890,10 +11909,8 @@ var VioCart = class extends i4 {
     }
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
-  methodEnabled(name) {
-    if (this.availableMethods === null) return true;
-    const norm = (s4) => s4.toLowerCase().replace(/[^a-z]/g, "");
-    return this.availableMethods.some((m2) => norm(m2) === norm(name));
+  methodEnabled(...names) {
+    return isMethodEnabled(this.availableMethods, ...names);
   }
   updated(changed) {
     if (changed.has("open") && this.open) {
@@ -12294,7 +12311,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.checkoutState = detail.state;
       this.items = Vio.checkout.items;
       if (this.checkoutState) {
-        if (sponsorChanged || this.availableMethods === null) {
+        if (sponsorChanged || !this.paymentMethodsResolved) {
+          if (sponsorChanged) this.paymentMethodsResolved = false;
           void this.refreshApplePay();
           void this.refreshKlarna();
           void this.loadAvailablePaymentMethods();
@@ -13054,28 +13072,19 @@ var _VioCheckout = class _VioCheckout extends i4 {
             this.checkoutState?.sponsorId
           );
           this.paymentNotice = null;
-          if (order?.html_snippet) {
+          if (order?.status === "Completed") {
+            this.qliroMountedOrderId = order.order_id;
+            this.confirmOrder(
+              "qliro",
+              this.checkoutState?.sponsorId ?? sponsorId ?? 0,
+              { order: { orderId: order.order_id }, chargedTotal: order.total_price }
+            );
+          } else if (order?.html_snippet) {
             this.qliroMountedOrderId = order.order_id;
             await this.updateComplete;
             const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
             if (container) {
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
-            }
-            if (order.status === "Completed") {
-              this.dispatchEvent(
-                new CustomEvent("vio:payment-success", {
-                  detail: { method: "qliro", orderId: order.order_id },
-                  bubbles: true,
-                  composed: true
-                })
-              );
-              const spId = this.checkoutState?.sponsorId;
-              if (spId) {
-                try {
-                  Vio.cart.clearSponsorCart(spId);
-                } catch {
-                }
-              }
             }
           }
         } catch (err) {
@@ -13358,10 +13367,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     Vio.checkout.selectPaymentMethod(only);
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
-  methodEnabled(name) {
-    if (this.availableMethods === null) return true;
-    const norm = (s4) => s4.toLowerCase().replace(/[^a-z]/g, "");
-    return this.availableMethods.some((m2) => norm(m2) === norm(name));
+  methodEnabled(...names) {
+    return isMethodEnabled(this.availableMethods, ...names);
   }
   async refreshApplePay() {
     Vio.checkout.clearApplePayCache();
@@ -13643,7 +13650,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** True for methods that complete via a separate sheet/widget, not the CTA. */
   isExpressMethod(method) {
-    return method === "apple-pay" || method === "klarna" || method === "kustom" || method === "qliro" || method === "walley";
+    return method === "apple-pay" || method === "klarna" || isEmbeddedMethod(method ?? "");
   }
   orderTotal() {
     const s4 = this.checkoutState;
@@ -13985,13 +13992,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const method = this.checkoutState?.paymentMethod;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
     const isVipps = method === "vipps";
-    const isKustom = method === "kustom" || method === "qliro" || method === "walley";
-    const collectsOwnAddress = (name) => ["kustom", "qliro", "walley", "vipps"].includes(
-      name.toLowerCase().replace(/[^a-z]/g, "")
-    );
-    const everyMethodCollectsAddress = this.paymentMethodsResolved && Array.isArray(this.availableMethods) && this.availableMethods.length > 0 && this.availableMethods.every(collectsOwnAddress);
+    const isKustom = isEmbeddedMethod(method ?? "");
+    const everyMethodCollectsAddress2 = this.paymentMethodsResolved && everyMethodCollectsAddress(this.availableMethods);
     return b2`
-          ${!isVipps && !isKustom && !everyMethodCollectsAddress ? b2`
+          ${!isVipps && !isKustom && !everyMethodCollectsAddress2 ? b2`
           <section class="section">
             <div class="section-label">Steg 1</div>
             <h3 class="section-heading">Leveringsadresse</h3>
@@ -14109,7 +14113,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
 
           <section class="section">
             <div class="section-label">
-              ${isVipps || isKustom || everyMethodCollectsAddress ? "Betaling" : "Steg 2"}
+              ${isVipps || isKustom || everyMethodCollectsAddress2 ? "Betaling" : "Steg 2"}
             </div>
             ${method ? b2`
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
@@ -14176,11 +14180,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           Betal ${this.payTotalLabel()} med ${this.methodLabel(method ?? null)}
                         </button>
                       ` : ""}
-                  ${!isVipps && !isKustom && !everyMethodCollectsAddress && !this.isAddressValid ? b2`
+                  ${!isVipps && !isKustom && !everyMethodCollectsAddress2 && !this.isAddressValid ? b2`
                         <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                           Vennligst fyll ut leveringsadresse for å fullføre betalingen
                         </div>
-                      ` : !isVipps && !isKustom && !everyMethodCollectsAddress && !this.hasSelectedShipping ? b2`
+                      ` : !isVipps && !isKustom && !everyMethodCollectsAddress2 && !this.hasSelectedShipping ? b2`
                           <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                             Vennligst velg en fraktmetode for å fullføre betalingen
                           </div>
