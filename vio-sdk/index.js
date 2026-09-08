@@ -12221,6 +12221,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     /** In-flight guard for loadAvailablePaymentMethods. */
     this.loadingPaymentMethods = false;
     this.paymentMethodsResolved = false;
+    /** Guards `autoSelectSoleMethod` to ONE attempt per opening — see there. */
+    this.autoSelectAttempted = false;
     /** In-flight + attempted guards for loadAvailableShippings (change events
      * fire per keystroke — without these, typing an address hammers the API). */
     this.loadingShippings = false;
@@ -12251,6 +12253,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.express = false;
         this.availableMethods = null;
         this.paymentMethodsResolved = false;
+        this.autoSelectAttempted = false;
         this.unmountKlarna();
       }
     };
@@ -13275,6 +13278,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
    */
   autoSelectSoleMethod() {
     if (!this.open) return;
+    if (this.autoSelectAttempted) return;
+    this.autoSelectAttempted = true;
     if (this.checkoutState?.paymentMethod) return;
     const methods = this.availableMethods;
     if (!Array.isArray(methods) || methods.length !== 1) return;
