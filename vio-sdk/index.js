@@ -13171,6 +13171,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (changed.has("open") && this.open && this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
+    if (changed.has("open") && this.open) {
+      this.autoSelectSoleMethod();
+    }
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
     void this.mountQliroIfNeeded();
@@ -13255,7 +13258,38 @@ var _VioCheckout = class _VioCheckout extends i4 {
     } finally {
       this.loadingPaymentMethods = false;
       this.paymentMethodsResolved = true;
+      this.autoSelectSoleMethod();
     }
+  }
+  /**
+   * With exactly one payment method there is no choice to make, so making the
+   * shopper click it is a step that can only have one outcome. Select it.
+   *
+   * Deliberately narrow:
+   * - never overrides a method the shopper already picked;
+   * - only for methods usable RIGHT NOW — Apple Pay and Klarna depend on the
+   *   browser and on their script loading, and auto-selecting an unusable one
+   *   would strand the shopper on a panel that cannot pay;
+   * - Stripe is excluded: it charges a saved card on click, and arriving at a
+   *   payment step already armed is not the same as choosing it.
+   */
+  autoSelectSoleMethod() {
+    if (!this.open) return;
+    if (this.checkoutState?.paymentMethod) return;
+    const methods = this.availableMethods;
+    if (!Array.isArray(methods) || methods.length !== 1) return;
+    const id = String(methods[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
+    const usable = {
+      kustom: "kustom",
+      qliro: "qliro",
+      walley: "walley",
+      vipps: "vipps",
+      klarna: this.klarnaAvailable ? "klarna" : void 0,
+      applepay: this.applePayAvailable ? "apple-pay" : void 0
+    };
+    const only = usable[id];
+    if (!only) return;
+    Vio.checkout.selectPaymentMethod(only);
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
   methodEnabled(name) {
@@ -13886,8 +13920,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const showCompleteCta = !!method && !this.isExpressMethod(method);
     const isVipps = method === "vipps";
     const isKustom = method === "kustom" || method === "qliro" || method === "walley";
+    const collectsOwnAddress = (name) => ["kustom", "qliro", "walley", "vipps"].includes(
+      name.toLowerCase().replace(/[^a-z]/g, "")
+    );
+    const everyMethodCollectsAddress = this.paymentMethodsResolved && Array.isArray(this.availableMethods) && this.availableMethods.length > 0 && this.availableMethods.every(collectsOwnAddress);
     return b2`
-          ${!isVipps && !isKustom ? b2`
+          ${!isVipps && !isKustom && !everyMethodCollectsAddress ? b2`
           <section class="section">
             <div class="section-label">Steg 1</div>
             <h3 class="section-heading">Leveringsadresse</h3>
@@ -14004,7 +14042,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
               ` : ""}
 
           <section class="section">
-            <div class="section-label">${isVipps || isKustom ? "Betaling" : "Steg 2"}</div>
+            <div class="section-label">
+              ${isVipps || isKustom || everyMethodCollectsAddress ? "Betaling" : "Steg 2"}
+            </div>
             ${method ? b2`
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                     <h3 class="section-heading" style="margin:0;">
@@ -14068,11 +14108,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           Betal ${this.payTotalLabel()} med ${this.methodLabel(method ?? null)}
                         </button>
                       ` : ""}
-                  ${!isVipps && !this.isAddressValid ? b2`
+                  ${!isVipps && !isKustom && !everyMethodCollectsAddress && !this.isAddressValid ? b2`
                         <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                           Vennligst fyll ut leveringsadresse for å fullføre betalingen
                         </div>
-                      ` : !isVipps && !this.hasSelectedShipping ? b2`
+                      ` : !isVipps && !isKustom && !everyMethodCollectsAddress && !this.hasSelectedShipping ? b2`
                           <div style="font-size: 12px; color: var(--vio-color-accent, #c14a3b); text-align: center; margin-top: 8px;">
                             Vennligst velg en fraktmetode for å fullføre betalingen
                           </div>
