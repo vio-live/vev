@@ -10514,6 +10514,25 @@ var VioProductDetail = class extends i4 {
       cursor: not-allowed;
     }
     /* Klarna express button — sits full-width below the add-to-cart row. */
+    /* Generic buy-now for the embedded checkouts, which have no branded
+       express button of their own. */
+    .buy-now {
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px 24px;
+      background: var(--vio-color-text, #0a0a0a);
+      color: var(--vio-color-text-on-primary, #fff);
+      border: none;
+      border-radius: var(--vio-radius-md, 4px);
+      font-family: var(--vio-font-sans, inherit);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: var(--vio-tracking-label, 0.1em);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .buy-now:hover:not(:disabled) { opacity: 0.9; }
+    .buy-now:disabled { opacity: 0.5; cursor: not-allowed; }
     .buy-klarna {
       width: 100%;
       margin-top: 10px;
@@ -11094,6 +11113,32 @@ var VioProductDetail = class extends i4 {
     }
   }
   /** Buy with Vipps — opens the checkout with Vipps preselected. */
+  /**
+   * Buy now with an embedded checkout (Kustom, Qliro, Walley).
+   *
+   * Those three have no express path of their own, so the product page showed
+   * a "Kjøp nå" for Apple Pay, Stripe, Klarna and Vipps and nothing at all for
+   * them — the same structural gap the cart footer had. Opens the checkout
+   * without preselecting: with a single method the checkout selects it itself,
+   * with several the shopper picks.
+   *
+   * Like every other "Kjøp nå" here, it adds to the cart first — so a cart
+   * that already had items buys those too. Isolating a single-product purchase
+   * needs a checkout that is not bound to the sponsor's cart, which is a
+   * separate piece of work and deliberately not done here.
+   */
+  buyNow() {
+    if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    this.addCurrentToCart();
+    this.close();
+    this.dispatchEvent(
+      new CustomEvent("vio:checkout-open", {
+        bubbles: true,
+        composed: true,
+        detail: { sponsorId: this.sponsorId, express: false }
+      })
+    );
+  }
   buyWithVipps() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
     this.addCurrentToCart();
@@ -11242,6 +11287,17 @@ var VioProductDetail = class extends i4 {
               ${this.adding ? "Legger til\u2026" : this.availableQuantity <= 0 ? "Utsolgt" : "Legg i handlekurv"}
             </button>
           </div>
+
+          ${this.availableQuantity > 0 && (this.methodEnabled("qliro") || this.methodEnabled("kustom") || this.methodEnabled("walley")) ? b2`
+                <button
+                  class="buy-now"
+                  @click=${this.buyNow}
+                  ?disabled=${this.adding}
+                  aria-label="Kjøp nå"
+                >
+                  Kjøp nå
+                </button>
+              ` : ""}
 
           ${this.availableQuantity > 0 && this.applePayOk && this.methodEnabled("apple-pay", "applepay") ? b2`
                 <button
@@ -14060,19 +14116,21 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     <h3 class="section-heading" style="margin:0;">
                       Betalingsmåte: <b>${this.methodLabel(method)}</b>
                     </h3>
-                    <button
-                      type="button"
-                      style="background:none; border:none; color:var(--vio-color-accent, #c14a3b); text-decoration:underline; font-size:13px; cursor:pointer;"
-                      @click=${() => {
+                    ${(this.availableMethods?.length ?? 2) > 1 ? b2`
+                          <button
+                            type="button"
+                            style="background:none; border:none; color:var(--vio-color-accent, #c14a3b); text-decoration:underline; font-size:13px; cursor:pointer;"
+                            @click=${() => {
       this.unmountKlarna();
       this.unmountKustom();
       this.unmountQliro();
       this.unmountWalley();
       Vio.checkout.selectPaymentMethod("");
     }}
-                    >
-                      Endre
-                    </button>
+                          >
+                            Endre
+                          </button>
+                        ` : ""}
                   </div>
 
                   ${method === "klarna" ? this.renderKlarnaPanel() : ""}
