@@ -11592,6 +11592,23 @@ var VioCart = class extends i4 {
       font-size: 14px;
     }
 
+    /* Always present: the express buttons below are shortcuts, not the only
+       way out of the cart. Without this a channel offering only an embedded
+       checkout (Kustom, Qliro, Walley) had no button at all. */
+    .checkout-btn {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: var(--vio-space-sm, 8px);
+      background: var(--vio-color-text, #0a0a0a);
+      color: var(--vio-color-text-on-primary, #fff);
+      border: none;
+      border-radius: var(--vio-radius-md, 4px);
+      font-family: var(--vio-font-sans, inherit);
+      font-size: var(--vio-size-sm, 14px);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .checkout-btn:hover { opacity: 0.9; }
     .footer {
       padding: var(--vio-space-lg, 24px);
       border-top: 1px solid var(--vio-color-border, #e5e5e5);
@@ -11904,6 +11921,26 @@ var VioCart = class extends i4 {
     );
   }
   /** Vipps — opens the checkout with Vipps preselected. */
+  /**
+   * Open the checkout without preselecting a method.
+   *
+   * The footer used to be express-only — Apple Pay, Stripe, Klarna, Vipps —
+   * so a channel offering just an embedded checkout (Kustom, Qliro, Walley)
+   * had NO button at all and the cart was a dead end. Even with an express
+   * method present the others were unreachable from here.
+   */
+  onCheckout() {
+    if (this.itemCount === 0) return;
+    const firstSponsorId = [...this.carts.keys()][0];
+    if (firstSponsorId === void 0) return;
+    this.dispatchEvent(
+      new CustomEvent("vio:checkout-open", {
+        bubbles: true,
+        composed: true,
+        detail: { sponsorId: firstSponsorId, express: false }
+      })
+    );
+  }
   onVipps() {
     if (this.itemCount === 0) return;
     const firstSponsorId = [...this.carts.keys()][0];
@@ -12024,6 +12061,13 @@ var VioCart = class extends i4 {
                     ${formatPrice(this.totalAcrossSponsors, this.primaryCurrency)}
                   </span>
                 </div>
+                <button
+                  class="checkout-btn"
+                  @click=${this.onCheckout}
+                  aria-label="Til kassen"
+                >
+                  Til kassen
+                </button>
                 ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                       <button
                         class="applepay-btn"
@@ -12176,6 +12220,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     };
     /** In-flight guard for loadAvailablePaymentMethods. */
     this.loadingPaymentMethods = false;
+    this.paymentMethodsResolved = false;
     /** In-flight + attempted guards for loadAvailableShippings (change events
      * fire per keystroke — without these, typing an address hammers the API). */
     this.loadingShippings = false;
@@ -12205,6 +12250,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.paymentNotice = null;
         this.express = false;
         this.availableMethods = null;
+        this.paymentMethodsResolved = false;
         this.unmountKlarna();
       }
     };
@@ -12459,6 +12505,30 @@ var _VioCheckout = class _VioCheckout extends i4 {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: var(--vio-space-md, 16px);
+    }
+    /* Shown until we know which methods the channel offers. Rendering every
+       button meanwhile would let a shopper click one that is not enabled. */
+    .payment-loading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 20px 0;
+      font-size: 13px;
+      color: var(--vio-color-text-secondary, #666);
+    }
+    .payment-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--vio-color-border, #e5e5e5);
+      border-top-color: var(--vio-color-text-secondary, #666);
+      border-radius: 50%;
+      animation: vio-payment-spin 0.7s linear infinite;
+    }
+    @keyframes vio-payment-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .payment-spinner { animation: none; }
     }
     .payment-btn {
       padding: 20px;
@@ -13184,6 +13254,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.availableMethods = null;
     } finally {
       this.loadingPaymentMethods = false;
+      this.paymentMethodsResolved = true;
     }
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
@@ -14006,7 +14077,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             Vennligst velg en fraktmetode for å fullføre betalingen
                           </div>
                         ` : ""}
-                ` : b2`
+                ` : !this.paymentMethodsResolved ? b2`
+                    <h3 class="section-heading">Velg betalingsmåte</h3>
+                    <div class="payment-loading">
+                      <span class="payment-spinner" aria-hidden="true"></span>
+                      <span>Henter betalingsmåter…</span>
+                    </div>
+                  ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
                   <div class="payment-grid">
                     ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
@@ -14177,6 +14254,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "form", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "paymentMethodsResolved", 2);
 var VioCheckout = _VioCheckout;
 
 // src/ui/elements.ts
