@@ -12285,6 +12285,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.qliroMountedOrderId = null;
     this.walleyMounting = false;
     this.walleyMountedOrderId = null;
+    /**
+     * Set while this page load is showing the outcome of an embedded checkout's
+     * confirmation redirect (Kustom, Qliro, Walley). While set, nothing may start
+     * a new payment.
+     *
+     * The return handler selects the method so the panel has something to show,
+     * and only THEN asks the provider whether the order was paid. Selecting is a
+     * state change; the render it schedules runs `updated()` → `mount*IfNeeded()`
+     * long before the provider answers, and in a fresh page load there is no
+     * mounted order to stop it — so every return created a new backend checkout
+     * and a new provider order for a cart that had just been paid. Not a race
+     * that needs a slow network: a microtask always beats a round trip.
+     * Reproduced in `vio-checkout.return.dom.test.ts` before this existed.
+     *
+     * Cleared when the checkout closes: reopening it is a fresh checkout.
+     */
+    this.returningFrom = null;
     this.stripeLoading = false;
     this.vippsLoading = false;
     this.form = {
@@ -12332,6 +12349,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.availableMethods = null;
         this.paymentMethodsResolved = false;
         this.autoSelectAttempted = false;
+        this.returningFrom = null;
         this.unmountKlarna();
       }
     };
@@ -12908,6 +12926,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     ]);
   }
   static {
+    /** The payment may or may not have gone through, and we could not find out. */
+    this.RETURN_UNVERIFIED_MESSAGE = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
+  }
+  static {
     /** Waits between GetCheckout attempts — PSP webhooks (Vipps especially) can
      * land seconds after the shopper is redirected back, so a single immediate
      * check misreads a successful charge as unpaid. ~20s total. */
@@ -12978,7 +13000,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
       this.open = true;
     } else {
-      this.paymentError = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
+      this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
       this.open = true;
     }
   }
@@ -12993,6 +13015,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (!vioPayment && !checkoutId) return;
       const kustomOrderId = urlParams.get("order_id") || "";
       if (urlParams.get("payment_processor") === "KUSTOM" && kustomOrderId) {
+        this.returningFrom = "kustom";
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -13042,6 +13065,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
         } catch (err) {
           this.paymentNotice = null;
+          this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Kustom confirmation read failed:", err);
           }
@@ -13050,6 +13074,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return;
       }
       if (urlParams.get("payment_processor") === "QLIRO" && checkoutId) {
+        this.returningFrom = "qliro";
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -13089,6 +13114,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
         } catch (err) {
           this.paymentNotice = null;
+          this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Qliro confirmation read failed:", err);
           }
@@ -13097,6 +13123,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return;
       }
       if (urlParams.get("payment_processor") === "WALLEY" && checkoutId) {
+        this.returningFrom = "walley";
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -13144,6 +13171,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
         } catch (err) {
           this.paymentNotice = null;
+          this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Walley confirmation read failed:", err);
           }
@@ -13721,11 +13749,21 @@ var _VioCheckout = class _VioCheckout extends i4 {
       </section>
     `;
   }
+  /**
+   * Whether mounting an embedded checkout now would be starting a payment the
+   * shopper asked for. Mounting CREATES an order at the provider (and a backend
+   * checkout if there is none), so it must not happen on a confirmation return
+   * or once this checkout's order is confirmed.
+   */
+  mayStartEmbeddedPayment() {
+    return !this.returningFrom && !this.orderConfirmed;
+  }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
   /** Mount the Kustom embedded checkout once it's the chosen method. */
   async mountKustomIfNeeded() {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "kustom") return;
+    if (!this.mayStartEmbeddedPayment()) return;
     if (this.kustomMounting) return;
     const container = this.renderRoot?.querySelector(
       "#vio-kustom-checkout-container"
@@ -13791,6 +13829,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   async mountQliroIfNeeded() {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "qliro") return;
+    if (!this.mayStartEmbeddedPayment()) return;
     if (this.qliroMounting) return;
     const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
     if (this.qliroMountedOrderId && container.childElementCount > 0) return;
@@ -13834,6 +13873,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   async mountWalleyIfNeeded() {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "walley") return;
+    if (!this.mayStartEmbeddedPayment()) return;
     if (this.walleyMounting) return;
     const container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
     if (this.walleyMountedOrderId && container.childElementCount > 0) return;
