@@ -6978,6 +6978,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
             preselected: idx === 0
           };
         });
+        mapped.sort((a3, b3) => a3.price - b3.price);
+        mapped.forEach((m2, idx) => {
+          m2.preselected = idx === 0;
+        });
         this.lastFetchedShippings = mapped;
         return mapped;
       }
@@ -8139,7 +8143,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.1";
+var SDK_VERSION = "0.11.2";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12285,6 +12289,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.qliroMountedOrderId = null;
     this.walleyMounting = false;
     this.walleyMountedOrderId = null;
+    this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
      * confirmation redirect (Kustom, Qliro, Walley). While set, nothing may start
@@ -12321,6 +12326,22 @@ var _VioCheckout = class _VioCheckout extends i4 {
      * fire per keystroke — without these, typing an address hammers the API). */
     this.loadingShippings = false;
     this.shippingsAttempted = false;
+    this.boundOnQliroEvent = (e7) => {
+      const event = e7.detail;
+      if (!event) return;
+      if (event.type === "shipping-price-changed" && typeof event.price === "number") {
+        this.qliroShipping = { ...this.qliroShipping ?? {}, price: event.price };
+      } else if (event.type === "shipping-changed") {
+        const shipping = event.shipping ?? {};
+        const ref = shipping.method ?? shipping.merchantReference ?? shipping.MerchantReference;
+        const price = typeof shipping.price === "number" ? shipping.price : this.availableShippingsList.find((o7) => o7.id === String(ref))?.priceMajor;
+        this.qliroShipping = {
+          ...this.qliroShipping ?? {},
+          ...ref != null ? { ref: String(ref) } : {},
+          ...typeof price === "number" ? { price } : {}
+        };
+      }
+    };
     this.boundOnCheckoutChange = (e7) => {
       const detail = e7.detail;
       const prevSponsorId = this.checkoutState?.sponsorId;
@@ -12351,6 +12372,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.autoSelectAttempted = false;
         this.returningFrom = null;
         this.unmountKlarna();
+        this.unmountKustom();
+        this.unmountQliro();
+        this.unmountWalley();
       }
     };
     this.boundOnPaymentComplete = (e7) => {
@@ -12883,6 +12907,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     Vio.checkout.addEventListener("change", this.boundOnCheckoutChange);
     Vio.checkout.addEventListener("payment-complete", this.boundOnPaymentComplete);
     Vio.checkout.addEventListener("payment-error", this.boundOnPaymentError);
+    Vio.checkout.addEventListener("qliro-event", this.boundOnQliroEvent);
     if (this.checkoutState) {
       void this.refreshApplePay();
       void this.refreshKlarna();
@@ -13265,6 +13290,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     Vio.checkout.removeEventListener("change", this.boundOnCheckoutChange);
     Vio.checkout.removeEventListener("payment-complete", this.boundOnPaymentComplete);
     Vio.checkout.removeEventListener("payment-error", this.boundOnPaymentError);
+    Vio.checkout.removeEventListener("qliro-event", this.boundOnQliroEvent);
     this.unmountKlarna();
     super.disconnectedCallback();
   }
@@ -13689,10 +13715,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * express always has one; the normal flow has one once the backend
    * shippings loaded (the choice IS persisted on the cart and charged). */
   shippingMajor() {
+    if (this.checkoutState?.paymentMethod === "qliro" && typeof this.qliroShipping?.price === "number") {
+      return this.qliroShipping.price;
+    }
     if (!this.express && this.availableShippingsList.length === 0) return 0;
     const o7 = this.shippingOption;
     if (!o7) return 0;
     return o7.priceMajor ?? o7.price / 100;
+  }
+  /** The rate the summary names — Qliro's own pick while Qliro is the method. */
+  summaryShippingName() {
+    if (this.checkoutState?.paymentMethod === "qliro" && this.qliroShipping) {
+      const ref = this.qliroShipping.ref;
+      const picked = ref ? this.availableShippingsList.find((o8) => o8.id === ref) : void 0;
+      return picked ? picked.method || picked.name || "" : "";
+    }
+    const o7 = this.shippingOption;
+    return o7 ? o7.method || o7.name || "" : "";
   }
   /** Total to charge — items + shipping (express). */
   payTotalLabel() {
@@ -13853,6 +13892,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountQliro() {
     this.qliroMountedOrderId = null;
+    this.qliroShipping = null;
     Vio.checkout.destroyQliroListeners();
     this.querySelector("#vio-qliro-checkout-container")?.remove();
   }
@@ -14315,7 +14355,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     <span>Sum</span><span>${this.orderTotal()}</span>
                   </div>
                   <div class="order-row">
-                    <span>Frakt${this.shippingMajor() > 0 && this.shippingOption ? ` \u2013 ${this.shippingOption.method || this.shippingOption.name}` : ""}</span>
+                    <span>Frakt${this.shippingMajor() > 0 && this.summaryShippingName() ? ` \u2013 ${this.summaryShippingName()}` : ""}</span>
                     <span>${this.shippingMajor() > 0 ? formatPrice(this.shippingMajor(), this.checkoutState?.currency) : this.shippingLabel}</span>
                   </div>
                   <div class="order-row total">
@@ -14397,6 +14437,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "walleyMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "qliroShipping", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "stripeLoading", 2);
