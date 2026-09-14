@@ -446,3 +446,44 @@ export function initVioAnalytics(): () => void {
   g[INIT_FLAG] = cleanup;
   return cleanup;
 }
+
+/**
+ * Impresión REAL de un componente de Vio (≥50% visible durante ≥1s, una vez
+ * por sesión) — la regla del contrato, idéntica en web, iOS, Android y TV.
+ *
+ * Por qué existe (2026-09-14): el KPI "Shoppable views" del dashboard de
+ * commerce cuenta `component_impression`, pero Vev solo emitía
+ * `view_item_list`, que se dispara al RENDERIZAR la lista — aunque nunca
+ * entre en pantalla. Sumarlos inflaría el número; hay que medir lo que de
+ * verdad se vio.
+ *
+ * La unidad es el componente TAL COMO SE COLOCÓ en la página: una grilla
+ * cuenta una vez, un carrusel una vez, una tarjeta suelta una vez. Nunca la
+ * tarjeta cuando vive adentro de una grilla o carrusel (sería doble conteo).
+ *
+ * Respeta el toggle "Send to Vio Analytics" del editor: si está apagado, no
+ * se observa nada. Devuelve la función de limpieza para el useEffect.
+ */
+export function observeVioImpression(
+  el: Element | null,
+  context: { sponsorId?: number; componentTemplateId: string; locationId?: string },
+  key: string,
+): () => void {
+  if (!el || !state.enabled || !state.sendToVio) return () => {};
+  const a = (Vio as any).analytics;
+  if (typeof a?.observeImpression !== "function") return () => {};
+  const sid = num(context.sponsorId);
+  try {
+    return a.observeImpression(
+      el,
+      {
+        sponsorId: sid ?? undefined,
+        componentTemplateId: context.componentTemplateId,
+        locationId: context.locationId || undefined,
+      },
+      { key },
+    );
+  } catch {
+    return () => {}; // la analítica nunca rompe la página
+  }
+}

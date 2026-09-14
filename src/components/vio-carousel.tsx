@@ -3,7 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { productToItem, trackViewItemList } from "./analytics";
+import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
 
 /**
@@ -88,7 +88,21 @@ export default function VioProductCarousel(props: Props) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [list, setList] = useState<any[]>([]);
 
+
   const [activeSponsor, setActiveSponsor] = useState(getActiveSponsorId());
+  // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
+  // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
+  // doble conteo. Corre cuando hay productos, porque recién ahí se monta
+  // la raíz real (sin productos se renderiza el estado vacío).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (list.length === 0) return;
+    return observeVioImpression(
+      rootRef.current,
+      { sponsorId: activeSponsor, componentTemplateId: "vev-carousel", locationId: heading || kicker || "Vio Carousel" },
+      `vev-carousel:${activeSponsor}:${heading || kicker || "Vio Carousel"}`,
+    );
+  }, [list.length, activeSponsor, heading, kicker]);
   const ids = parseIds(products?.ids);
   const idsKey = ids.join(",");
 
@@ -136,7 +150,7 @@ export default function VioProductCarousel(props: Props) {
   }
 
   return (
-    <div className="vio-carousel">
+    <div ref={rootRef} className="vio-carousel">
       {(kicker || heading || disclaimer) && (
         <div className="vio-carousel-head">
           <div className="vio-carousel-titles">
