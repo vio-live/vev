@@ -8143,7 +8143,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.2";
+var SDK_VERSION = "0.11.3";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12285,6 +12285,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.availableMethods = null;
     this.kustomMounting = false;
     this.kustomMountedOrderId = null;
+    /** The cart (see cartFingerprint) each embedded widget's order was created for. */
+    this.kustomMountedFor = null;
+    this.qliroMountedFor = null;
+    this.walleyMountedFor = null;
     this.qliroMounting = false;
     this.qliroMountedOrderId = null;
     this.walleyMounting = false;
@@ -13797,6 +13801,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
   mayStartEmbeddedPayment() {
     return !this.returningFrom && !this.orderConfirmed;
   }
+  /**
+   * The cart an embedded widget's order is created for. Kustom, Qliro and
+   * Walley price the order when it is created, so a widget kept for a
+   * different cart shows — and charges — the wrong total.
+   *
+   * Closing the checkout already drops the widgets, but the cart can change
+   * without a close: in Vev the cart view opens on top of the checkout, and
+   * "Til kassen" calls `Vio.checkout.open()`, which replaces the state without
+   * ever clearing it. Angelo, 2026-09-14: quantities raised in the cart view,
+   * back to the checkout, and Qliro still asked for the old total. So each
+   * mount remembers this, and a mismatch starts over with a fresh order.
+   */
+  cartFingerprint() {
+    const s4 = this.checkoutState;
+    const lines = (this.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}:${i5.unitPrice}`).sort().join("|");
+    return `${s4?.sponsorId ?? ""}|${s4?.currency ?? ""}|${s4?.subtotal ?? ""}|${lines}`;
+  }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
   /** Mount the Kustom embedded checkout once it's the chosen method. */
   async mountKustomIfNeeded() {
@@ -13808,7 +13829,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
       "#vio-kustom-checkout-container"
     );
     if (!container) return;
-    if (this.kustomMountedOrderId && container.childElementCount > 0) return;
+    if (this.kustomMountedOrderId && container.childElementCount > 0) {
+      if (this.kustomMountedFor === this.cartFingerprint()) return;
+      this.unmountKustom();
+    }
+    const mountedFor = this.cartFingerprint();
     this.kustomMounting = true;
     container.innerHTML = "";
     try {
@@ -13817,6 +13842,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.checkoutState.sponsorId
       );
       this.kustomMountedOrderId = order.order_id;
+      this.kustomMountedFor = mountedFor;
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Kustom mount failed:", err);
@@ -13829,6 +13855,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountKustom() {
     this.kustomMountedOrderId = null;
+    this.kustomMountedFor = null;
     const container = this.renderRoot?.querySelector(
       "#vio-kustom-checkout-container"
     );
@@ -13870,8 +13897,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.checkoutState.paymentMethod !== "qliro") return;
     if (!this.mayStartEmbeddedPayment()) return;
     if (this.qliroMounting) return;
-    const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
-    if (this.qliroMountedOrderId && container.childElementCount > 0) return;
+    let container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
+    if (this.qliroMountedOrderId && container.childElementCount > 0) {
+      if (this.qliroMountedFor === this.cartFingerprint()) return;
+      this.unmountQliro();
+      container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
+    }
+    const mountedFor = this.cartFingerprint();
     this.qliroMounting = true;
     container.innerHTML = "";
     try {
@@ -13880,6 +13912,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.checkoutState.sponsorId
       );
       this.qliroMountedOrderId = order.order_id;
+      this.qliroMountedFor = mountedFor;
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Qliro mount failed:", err);
@@ -13892,6 +13925,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountQliro() {
     this.qliroMountedOrderId = null;
+    this.qliroMountedFor = null;
     this.qliroShipping = null;
     Vio.checkout.destroyQliroListeners();
     this.querySelector("#vio-qliro-checkout-container")?.remove();
@@ -13915,8 +13949,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.checkoutState.paymentMethod !== "walley") return;
     if (!this.mayStartEmbeddedPayment()) return;
     if (this.walleyMounting) return;
-    const container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
-    if (this.walleyMountedOrderId && container.childElementCount > 0) return;
+    let container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
+    if (this.walleyMountedOrderId && container.childElementCount > 0) {
+      if (this.walleyMountedFor === this.cartFingerprint()) return;
+      this.unmountWalley();
+      container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
+    }
+    const mountedFor = this.cartFingerprint();
     this.walleyMounting = true;
     container.innerHTML = "";
     try {
@@ -13941,6 +13980,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
       );
       this.walleyMountedOrderId = order.order_id;
+      this.walleyMountedFor = mountedFor;
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Walley mount failed:", err);
@@ -13953,6 +13993,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   unmountWalley() {
     this.walleyMountedOrderId = null;
+    this.walleyMountedFor = null;
     this.querySelector("#vio-walley-checkout-container")?.remove();
   }
   renderWalleyPanel() {
