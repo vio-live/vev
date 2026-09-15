@@ -8146,7 +8146,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.4";
+var SDK_VERSION = "0.11.5";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12271,6 +12271,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.applePayInProgress = false;
     this.klarnaAvailable = false;
     this.orderConfirmed = false;
+    this.providerReceipt = null;
     this.confirmedMethod = null;
     this.paymentError = null;
     this.paymentNotice = null;
@@ -12369,6 +12370,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.applePayAvailable = false;
         this.klarnaAvailable = false;
         this.orderConfirmed = false;
+        this.providerReceipt = null;
         this.confirmedMethod = null;
         this.confirmedOrder = null;
         this.paymentError = null;
@@ -13130,12 +13132,17 @@ var _VioCheckout = class _VioCheckout extends i4 {
           );
           this.paymentNotice = null;
           if (order?.status === "Completed") {
+            const spId = this.checkoutState?.sponsorId ?? sponsorId ?? 0;
+            const result = { order: { orderId: order.order_id }, chargedTotal: order.total_price };
             this.qliroMountedOrderId = order.order_id;
-            this.confirmOrder(
-              "qliro",
-              this.checkoutState?.sponsorId ?? sponsorId ?? 0,
-              { order: { orderId: order.order_id }, chargedTotal: order.total_price }
-            );
+            if (order.html_snippet) {
+              this.showProviderReceipt("qliro", spId, result);
+              await this.updateComplete;
+              const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
+              Vio.checkout.renderKustomSnippet(container, order.html_snippet);
+            } else {
+              this.confirmOrder("qliro", spId, result);
+            }
           } else if (order?.html_snippet) {
             this.qliroMountedOrderId = order.order_id;
             await this.updateComplete;
@@ -13185,20 +13192,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
             }
             if (order.status === "PurchaseCompleted") {
-              this.dispatchEvent(
-                new CustomEvent("vio:payment-success", {
-                  detail: { method: "walley", orderId: order.order_id },
-                  bubbles: true,
-                  composed: true
-                })
-              );
-              const spId = this.checkoutState?.sponsorId;
-              if (spId) {
-                try {
-                  Vio.cart.clearSponsorCart(spId);
-                } catch {
-                }
-              }
+              this.showProviderReceipt("walley", this.checkoutState?.sponsorId ?? 0, {
+                orderId: order.order_id
+              });
             }
           }
         } catch (err) {
@@ -13761,10 +13757,50 @@ var _VioCheckout = class _VioCheckout extends i4 {
         </div>
 
         <div class="body">
-          ${this.orderConfirmed ? this.renderConfirmation() : this.express ? this.renderKlarnaExpress() : this.renderCheckoutBody()}
+          ${this.providerReceipt ? this.renderProviderReceipt() : this.orderConfirmed ? this.renderConfirmation() : this.express ? this.renderKlarnaExpress() : this.renderCheckoutBody()}
         </div>
       </div>
     `;
+  }
+  /**
+   * The provider's receipt on its own. It must not depend on the cart: the
+   * payment step is rendered from the cart, and clearing the cart after a
+   * purchase is what took Qliro's receipt away on 2026-09-08 and brought back
+   * "how do you want to pay". The provider's container lives in the light DOM
+   * and is projected here, untouched.
+   */
+  renderProviderReceipt() {
+    const slot = this.providerReceipt === "walley" ? "vio-walley" : "vio-qliro";
+    return b2`
+      <section class="section provider-receipt">
+        <slot name=${slot}></slot>
+        <button class="confirm-close" @click=${this.close}>Lukk</button>
+      </section>
+    `;
+  }
+  /**
+   * A completed purchase whose receipt the PROVIDER shows. Same side effects as
+   * confirmOrder — `vio:payment-success` for the host and analytics, the
+   * sponsor's cart cleared — but the screen is the provider's receipt, not our
+   * "Takk!": two receipts for one purchase is one too many.
+   */
+  showProviderReceipt(method, sponsorId, result) {
+    this.providerReceipt = method;
+    this.confirmedMethod = method;
+    this.open = true;
+    this.dispatchEvent(
+      new CustomEvent("vio:payment-success", {
+        bubbles: true,
+        composed: true,
+        detail: { method, sponsorId, result }
+      })
+    );
+    if (sponsorId) {
+      try {
+        Vio.cart.clearSponsorCart(sponsorId);
+      } catch {
+      }
+    }
   }
   renderConfirmation() {
     const o7 = this.confirmedOrder;
@@ -13802,7 +13838,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * or once this checkout's order is confirmed.
    */
   mayStartEmbeddedPayment() {
-    return !this.returningFrom && !this.orderConfirmed;
+    return !this.returningFrom && !this.orderConfirmed && !this.providerReceipt;
   }
   /**
    * The checkout an embedded widget's order belongs to. Kustom, Qliro and
@@ -13970,20 +14006,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
         container,
         this.checkoutState.sponsorId,
         () => {
-          this.dispatchEvent(
-            new CustomEvent("vio:payment-success", {
-              detail: { method: "walley", orderId: order.order_id },
-              bubbles: true,
-              composed: true
-            })
-          );
-          const spId = this.checkoutState?.sponsorId;
-          if (spId) {
-            try {
-              Vio.cart.clearSponsorCart(spId);
-            } catch {
-            }
-          }
+          this.showProviderReceipt("walley", this.checkoutState?.sponsorId ?? 0, {
+            orderId: order.order_id
+          });
         }
       );
       this.walleyMountedOrderId = order.order_id;
@@ -14446,6 +14471,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "orderConfirmed", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "providerReceipt", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "confirmedMethod", 2);
