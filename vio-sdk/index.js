@@ -6802,6 +6802,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     super();
     this.cartManager = cartManager;
     this.state = null;
+    /** Counts `open()` calls — see CheckoutState.session. */
+    this.sessionSeq = 0;
     this.applePayAvailableCache = null;
     /** Gateway hints learned from CreatePaymentApplePay (per session). The
      * backend's gateway_merchant_id may be a publishable key (pk_…) or a Stripe
@@ -6828,6 +6830,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     this.state = {
       sponsorId,
+      session: ++this.sessionSeq,
       subtotal: this.cartManager.subtotalForSponsor(sponsorId),
       // Page-level currency wins over whatever the persisted cart carries —
       // the host may have switched currency since the cart was created.
@@ -8143,7 +8146,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.3";
+var SDK_VERSION = "0.11.4";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12285,7 +12288,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.availableMethods = null;
     this.kustomMounting = false;
     this.kustomMountedOrderId = null;
-    /** The cart (see cartFingerprint) each embedded widget's order was created for. */
+    /** The checkout session (see embedSession) each embedded widget's order belongs to. */
     this.kustomMountedFor = null;
     this.qliroMountedFor = null;
     this.walleyMountedFor = null;
@@ -13802,21 +13805,25 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return !this.returningFrom && !this.orderConfirmed;
   }
   /**
-   * The cart an embedded widget's order is created for. Kustom, Qliro and
-   * Walley price the order when it is created, so a widget kept for a
-   * different cart shows — and charges — the wrong total.
+   * The checkout an embedded widget's order belongs to. Kustom, Qliro and
+   * Walley price the order when it is created, so a widget kept into a NEW
+   * checkout shows — and charges — the cart it was created for.
    *
-   * Closing the checkout already drops the widgets, but the cart can change
-   * without a close: in Vev the cart view opens on top of the checkout, and
-   * "Til kassen" calls `Vio.checkout.open()`, which replaces the state without
-   * ever clearing it. Angelo, 2026-09-14: quantities raised in the cart view,
-   * back to the checkout, and Qliro still asked for the old total. So each
-   * mount remembers this, and a mismatch starts over with a fresh order.
+   * Closing drops the widgets, but a checkout can start again without a
+   * close: in Vev the cart view opens on top of the checkout and "Til kassen"
+   * calls `Vio.checkout.open()` again (Angelo, 2026-09-14: quantities raised
+   * in the cart view, Qliro kept the old total). Every `open()` is a new
+   * session, so a widget from an earlier one starts over.
+   *
+   * 0.11.3 compared the cart LINES instead, and that was wrong: within one
+   * session the backend rewrites them (saving the shipping re-reads the cart),
+   * so the first Qliro event after that — the customer picking a shipping —
+   * tore the widget down mid-purchase (Alan, 2026-09-14). The session does
+   * not change under the customer's hands.
    */
-  cartFingerprint() {
+  embedSession() {
     const s4 = this.checkoutState;
-    const lines = (this.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}:${i5.unitPrice}`).sort().join("|");
-    return `${s4?.sponsorId ?? ""}|${s4?.currency ?? ""}|${s4?.subtotal ?? ""}|${lines}`;
+    return `${s4?.sponsorId ?? ""}|${s4?.session ?? ""}`;
   }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
   /** Mount the Kustom embedded checkout once it's the chosen method. */
@@ -13830,10 +13837,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     );
     if (!container) return;
     if (this.kustomMountedOrderId && container.childElementCount > 0) {
-      if (this.kustomMountedFor === this.cartFingerprint()) return;
+      if (this.kustomMountedFor === this.embedSession()) return;
       this.unmountKustom();
     }
-    const mountedFor = this.cartFingerprint();
+    const mountedFor = this.embedSession();
     this.kustomMounting = true;
     container.innerHTML = "";
     try {
@@ -13899,11 +13906,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.qliroMounting) return;
     let container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
     if (this.qliroMountedOrderId && container.childElementCount > 0) {
-      if (this.qliroMountedFor === this.cartFingerprint()) return;
+      if (this.qliroMountedFor === this.embedSession()) return;
       this.unmountQliro();
       container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
     }
-    const mountedFor = this.cartFingerprint();
+    const mountedFor = this.embedSession();
     this.qliroMounting = true;
     container.innerHTML = "";
     try {
@@ -13951,11 +13958,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.walleyMounting) return;
     let container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
     if (this.walleyMountedOrderId && container.childElementCount > 0) {
-      if (this.walleyMountedFor === this.cartFingerprint()) return;
+      if (this.walleyMountedFor === this.embedSession()) return;
       this.unmountWalley();
       container = this.lightContainer("vio-walley-checkout-container", "vio-walley");
     }
-    const mountedFor = this.cartFingerprint();
+    const mountedFor = this.embedSession();
     this.walleyMounting = true;
     container.innerHTML = "";
     try {
