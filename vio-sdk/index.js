@@ -6603,15 +6603,17 @@ query GetNexiOrder($checkoutId: String!) {
 }
 `;
 var UPDATE_NEXI_SHIPPING_MUTATION = `
-mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postalCode: String) {
+mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postalCode: String, $shippingId: String) {
   Payment {
-    UpdateNexiShipping(checkout_id: $checkoutId, country_code: $countryCode, postal_code: $postalCode) {
+    UpdateNexiShipping(checkout_id: $checkoutId, country_code: $countryCode, postal_code: $postalCode, shipping_id: $shippingId) {
       ok
       reason
       order_id
       total_price
       shipping_name
       shipping_price
+      shipping_id
+      options { id name price }
     }
   }
 }
@@ -7000,6 +7002,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.qliroController = null;
     /** Live Dibs.Checkout handle while a Nexi widget is mounted. */
     this.nexiHandle = null;
+    /** What the last `address-changed` was priced with — a picked rate re-prices the same address. */
+    this.nexiShippingContext = null;
     this.klarnaOrderInFlight = false;
     /** Last backend shippings fetched (per-supplier), for UI reuse. */
     this.lastFetchedShippings = [];
@@ -7617,6 +7621,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.nexiHandle = handle;
     const mounted = order;
     handle.on("address-changed", (address) => {
+      this.nexiShippingContext = { handle, checkoutId: ownedCheckoutId, address, opts, onShipping: handlers.onShipping };
       void this.repriceNexiShipping(handle, ownedCheckoutId, address, opts, handlers.onShipping);
     });
     handle.on("payment-completed", (result) => {
@@ -7629,8 +7634,19 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     });
     return order;
   }
+  /**
+   * The shopper picked another rate from the `options` Nexi's last
+   * re-pricing returned: charge that one instead. Nexi has no shipping picker,
+   * so the checkout shows the rates and calls this. A no-op until an address
+   * has been typed in the widget.
+   */
+  async pickNexiShipping(shippingId) {
+    const ctx = this.nexiShippingContext;
+    if (!ctx || ctx.handle !== this.nexiHandle) return;
+    await this.repriceNexiShipping(ctx.handle, ctx.checkoutId, ctx.address, ctx.opts, ctx.onShipping, shippingId);
+  }
   /** address-changed → freeze → UpdateNexiShipping → thaw. */
-  async repriceNexiShipping(handle, checkoutId, address, opts, onShipping) {
+  async repriceNexiShipping(handle, checkoutId, address, opts, onShipping, shippingId) {
     const countryCode = String(address?.countryCode ?? address?.country ?? "");
     if (!countryCode) return;
     try {
@@ -7642,7 +7658,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         {
           checkoutId,
           countryCode,
-          postalCode: address?.postalCode ? String(address.postalCode) : void 0
+          postalCode: address?.postalCode ? String(address.postalCode) : void 0,
+          shippingId
         },
         opts
       );
@@ -7663,6 +7680,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     } catch {
     }
     this.nexiHandle = null;
+    this.nexiShippingContext = null;
   }
   /** Re-read the Nexi payment owned by a checkout. */
   async getNexiOrder(checkoutId, sponsorId) {
@@ -8478,7 +8496,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.0";
+var SDK_VERSION = "0.12.1";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12633,6 +12651,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.nexiMounting = false;
     this.nexiMountedOrderId = null;
     this.nexiShippingNotice = null;
+    this.nexiShipping = null;
+    this.nexiPicking = false;
     this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
@@ -13086,6 +13106,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     /* Shipping selector (express) — Standard / Express options. */
     .ship-select { display: flex; flex-direction: column; gap: 8px; }
+    .nexi-ship { margin-bottom: 12px; }
     .ship-opt {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
       padding: 12px 14px; border: 1px solid var(--vio-color-border, #ddd);
@@ -14135,6 +14156,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.checkoutState?.paymentMethod === "qliro" && typeof this.qliroShipping?.price === "number") {
       return this.qliroShipping.price;
     }
+    if (this.checkoutState?.paymentMethod === "nexi" && typeof this.nexiShipping?.shipping_price === "number") {
+      return this.nexiShipping.shipping_price;
+    }
     if (!this.express && this.availableShippingsList.length === 0) return 0;
     const o7 = this.shippingOption;
     if (!o7) return 0;
@@ -14146,6 +14170,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const ref = this.qliroShipping.ref;
       const picked = ref ? this.availableShippingsList.find((o8) => o8.id === ref) : void 0;
       return picked ? picked.method || picked.name || "" : "";
+    }
+    if (this.checkoutState?.paymentMethod === "nexi" && this.nexiShipping) {
+      return this.nexiShipping.shipping_name ?? "";
     }
     const o7 = this.shippingOption;
     return o7 ? o7.method || o7.name || "" : "";
@@ -14490,6 +14517,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const order = await Vio.checkout.mountNexiCheckout(container, this.checkoutState.sponsorId, {
         onCompleted: (paid) => this.onNexiCompleted(paid.order_id),
         onShipping: (result, err) => {
+          this.nexiPicking = false;
+          this.nexiShipping = result?.ok ? result : null;
           if (err || !result) {
             this.nexiShippingNotice = "Kunne ikke beregne frakt. Pr\xF8v \xE5 endre adressen.";
           } else if (!result.ok) {
@@ -14522,13 +14551,54 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.nexiMountedOrderId = null;
     this.nexiMountedFor = null;
     this.nexiShippingNotice = null;
+    this.nexiShipping = null;
+    this.nexiPicking = false;
     Vio.checkout.destroyNexi();
     this.querySelector("#vio-nexi-checkout-container")?.remove();
+  }
+  /**
+   * Nexi has no shipping picker: once an address is typed in the widget, the
+   * rates that reach it are listed here and the pick is pushed to the payment.
+   * With a single rate there is nothing to choose, so nothing is shown.
+   */
+  renderNexiShippingChoice() {
+    const options = this.nexiShipping?.options ?? [];
+    if (options.length < 2) return "";
+    const currency = this.checkoutState?.currency || getGlobalCurrency();
+    const current = this.nexiShipping?.shipping_id;
+    return b2`
+      <div class="ship-select nexi-ship" role="radiogroup" aria-label="Frakt">
+        ${options.map(
+      (o7) => b2`
+            <button
+              class="ship-opt ${current === o7.id ? "active" : ""}"
+              role="radio"
+              aria-checked=${current === o7.id}
+              ?disabled=${this.nexiPicking}
+              @click=${() => void this.onPickNexiShipping(o7.id)}
+            >
+              <span class="ship-meta"><b>${o7.name}</b></span>
+              <span class="ship-price">${formatPrice(o7.price, currency)}</span>
+            </button>
+          `
+    )}
+      </div>
+    `;
+  }
+  async onPickNexiShipping(id) {
+    if (this.nexiPicking || id === this.nexiShipping?.shipping_id) return;
+    this.nexiPicking = true;
+    try {
+      await Vio.checkout.pickNexiShipping(id);
+    } finally {
+      this.nexiPicking = false;
+    }
   }
   renderNexiPanel() {
     return b2`
       <div class="nexi-panel">
         ${this.nexiMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Nexi…</div>` : ""}
+        ${this.renderNexiShippingChoice()}
         <slot name="vio-nexi"></slot>
         ${this.nexiShippingNotice ? b2`<div class="payment-notice">${this.nexiShippingNotice}</div>` : ""}
       </div>
@@ -15024,6 +15094,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "nexiShippingNotice", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "nexiShipping", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "nexiPicking", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroShipping", 2);
