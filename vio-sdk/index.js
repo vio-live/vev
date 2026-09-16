@@ -7552,9 +7552,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    *
    * A session interrupted by a third-party redirect inside Nexi (Vipps,
    * Swish, MobilePay) is remembered in sessionStorage and resumed on the
-   * same paymentId instead of creating a new payment.
+   * same paymentId instead of creating a new payment — only when `resume`
+   * names it. Every other opening creates a payment for the cart as it is.
    */
-  async mountNexiCheckout(container, sponsorId, handlers = {}) {
+  async mountNexiCheckout(container, sponsorId, handlers = {}, resume) {
     const spId = sponsorId ?? this.state?.sponsorId;
     if (!spId) throw new Error("[CheckoutManager] no sponsor for Nexi");
     const cart = this.cartManager.getCart(spId);
@@ -7564,7 +7565,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
     const opts = await getCartGraphQLOptions(spId);
-    const pending = readNexiPending();
+    const stored = resume ? readNexiPending() : null;
+    const pending = stored && stored.paymentId === resume?.paymentId ? stored : null;
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId && pending && pending.sponsorId === spId) {
       checkoutId = pending.checkoutId;
@@ -8496,7 +8498,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.1";
+var SDK_VERSION = "0.12.2";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12653,6 +12655,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.nexiShippingNotice = null;
     this.nexiShipping = null;
     this.nexiPicking = false;
+    /** The Nexi payment to resume on the next mount — set only by the ?paymentId= return. */
+    this.nexiResumePaymentId = null;
     this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
@@ -13418,6 +13422,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const nexiPaymentId = nexiReturnPaymentId();
       const nexiPending = readNexiPending();
       if (nexiPaymentId && nexiPending && nexiPending.paymentId === nexiPaymentId) {
+        this.nexiResumePaymentId = nexiPaymentId;
         this.cleanReturnQueryParams(["paymentId"]);
         if (!this.checkoutState && nexiPending.sponsorId) {
           try {
@@ -14510,6 +14515,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       container = this.lightContainer("vio-nexi-checkout-container", "vio-nexi");
     }
     const mountedFor = this.embedSession();
+    const resumePaymentId = this.nexiResumePaymentId;
+    this.nexiResumePaymentId = null;
     this.nexiMounting = true;
     this.nexiShippingNotice = null;
     container.innerHTML = "";
@@ -14527,7 +14534,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             this.nexiShippingNotice = null;
           }
         }
-      });
+      }, resumePaymentId ? { paymentId: resumePaymentId } : void 0);
       this.nexiMountedOrderId = order.order_id;
       this.nexiMountedFor = mountedFor;
     } catch (err) {
