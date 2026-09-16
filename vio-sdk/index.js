@@ -7661,7 +7661,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       };
       handlers.onShipping?.(carried);
     }
-    handle.on("address-changed", (address) => {
+    const onAddress = (address) => {
       this.nexiShippingContext = { handle, checkoutId: ownedCheckoutId, address, opts, onShipping: handlers.onShipping };
       void this.repriceNexiShipping(
         handle,
@@ -7671,6 +7671,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         handlers.onShipping,
         this.nexiPreferredShipping ?? void 0
       );
+    };
+    handle.on("address-changed", onAddress);
+    handle.on("applepay-contact-updated", onAddress);
+    handle.on("pay-initialized", () => {
+      void this.finalizeNexiPayment(handle, ownedCheckoutId, opts, handlers.onShipping);
     });
     handle.on("payment-completed", (result) => {
       clearNexiPending();
@@ -7707,6 +7712,43 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       return;
     }
     await this.repriceNexiShipping(ctx.handle, ctx.checkoutId, ctx.address, ctx.opts, ctx.onShipping, shippingId);
+  }
+  /**
+   * `pay-initialized` → make sure the payment carries the shipping for the
+   * address Nexi will ship to → `payment-order-finalized`. With no address
+   * from the widget, the backend reads the one on the payment. Anything but a
+   * priced shipping stops the payment: charging without it is what failed on
+   * 2026-09-16 (payment 085277846ae44f7498ae94e112435d63).
+   */
+  async finalizeNexiPayment(handle, checkoutId, opts, onShipping) {
+    const ctx = this.nexiShippingContext?.handle === handle ? this.nexiShippingContext : null;
+    const address = ctx?.address ?? null;
+    let ok = false;
+    try {
+      const result = await updateNexiShipping(
+        {
+          checkoutId,
+          countryCode: String(address?.countryCode ?? address?.country ?? ""),
+          postalCode: address?.postalCode ? String(address.postalCode) : void 0,
+          shippingId: this.nexiPreferredShipping ?? void 0
+        },
+        opts
+      );
+      ok = Boolean(result?.ok);
+      if (result?.ok) {
+        if (result.shipping_id) this.nexiPreferredShipping = result.shipping_id;
+        if (ctx && !ctx.address && result.country) {
+          ctx.address = { countryCode: result.country, postalCode: result.postal_code };
+        }
+      }
+      onShipping?.(result);
+    } catch (err) {
+      onShipping?.(null, err);
+    }
+    try {
+      handle.send?.("payment-order-finalized", ok);
+    } catch {
+    }
   }
   /** address-changed → freeze → UpdateNexiShipping → thaw. */
   async repriceNexiShipping(handle, checkoutId, address, opts, onShipping, shippingId) {
@@ -8562,7 +8604,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.5";
+var SDK_VERSION = "0.12.6";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
