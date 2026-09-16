@@ -6578,22 +6578,6 @@ async function getWalleyOrder(checkoutId, options) {
 var WALLEY_PURCHASE_COMPLETED_EVENT = "walleyCheckoutPurchaseCompleted";
 
 // src/core/checkout/payments/nexi.ts
-var NEXI_ORDER_FIELDS = `
-      order_id
-      status
-      checkout_key
-      checkout_js_url
-      purchase_country
-      purchase_currency
-      total_price`;
-var CREATE_PAYMENT_NEXI_MUTATION = `
-mutation CreatePaymentNexi($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
-  Payment {
-    CreatePaymentNexi(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {${NEXI_ORDER_FIELDS}
-    }
-  }
-}
-`;
 var NEXI_SHIPPING_FIELDS = `
       ok
       reason
@@ -6605,12 +6589,28 @@ var NEXI_SHIPPING_FIELDS = `
       options { id name price }
       country
       postal_code`;
+var NEXI_ORDER_FIELDS = `
+      order_id
+      status
+      checkout_key
+      checkout_js_url
+      purchase_country
+      purchase_currency
+      total_price
+      shipping {${NEXI_SHIPPING_FIELDS}
+      }`;
+var CREATE_PAYMENT_NEXI_MUTATION = `
+mutation CreatePaymentNexi($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+  Payment {
+    CreatePaymentNexi(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {${NEXI_ORDER_FIELDS}
+    }
+  }
+}
+`;
 var GET_NEXI_ORDER_QUERY = `
 query GetNexiOrder($checkoutId: String!) {
   Payment {
     GetNexiOrder(checkout_id: $checkoutId) {${NEXI_ORDER_FIELDS}
-      shipping {${NEXI_SHIPPING_FIELDS}
-      }
     }
   }
 }
@@ -7007,6 +7007,14 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.qliroController = null;
     /** Live Dibs.Checkout handle while a Nexi widget is mounted. */
     this.nexiHandle = null;
+    /**
+     * The rate the shopper wants. Before an address it is only remembered (the
+     * suggested one, or their pick); every re-pricing asks for it, and the
+     * backend charges it if it reaches the address.
+     */
+    this.nexiPreferredShipping = null;
+    /** The rates offered before an address was typed. */
+    this.nexiShippingPreview = null;
     /** What the last `address-changed` was priced with — a picked rate re-prices the same address. */
     this.nexiShippingContext = null;
     this.klarnaOrderInFlight = false;
@@ -7628,6 +7636,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.nexiHandle = handle;
     const mounted = order;
     const carried = order.shipping;
+    this.nexiPreferredShipping = carried?.shipping_id ?? null;
+    this.nexiShippingPreview = null;
     if (carried?.ok && carried.country) {
       this.nexiShippingContext = {
         handle,
@@ -7637,10 +7647,27 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         onShipping: handlers.onShipping
       };
       handlers.onShipping?.(carried);
+    } else if (carried?.reason === "AWAITING_ADDRESS") {
+      this.nexiShippingPreview = carried;
+      this.nexiShippingContext = {
+        handle,
+        checkoutId: ownedCheckoutId,
+        address: null,
+        opts,
+        onShipping: handlers.onShipping
+      };
+      handlers.onShipping?.(carried);
     }
     handle.on("address-changed", (address) => {
       this.nexiShippingContext = { handle, checkoutId: ownedCheckoutId, address, opts, onShipping: handlers.onShipping };
-      void this.repriceNexiShipping(handle, ownedCheckoutId, address, opts, handlers.onShipping);
+      void this.repriceNexiShipping(
+        handle,
+        ownedCheckoutId,
+        address,
+        opts,
+        handlers.onShipping,
+        this.nexiPreferredShipping ?? void 0
+      );
     });
     handle.on("payment-completed", (result) => {
       clearNexiPending();
@@ -7661,6 +7688,21 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async pickNexiShipping(shippingId) {
     const ctx = this.nexiShippingContext;
     if (!ctx || ctx.handle !== this.nexiHandle) return;
+    this.nexiPreferredShipping = shippingId;
+    if (!ctx.address) {
+      const preview = this.nexiShippingPreview;
+      const picked = preview?.options?.find((o7) => o7.id === shippingId);
+      if (preview && picked) {
+        this.nexiShippingPreview = {
+          ...preview,
+          shipping_id: picked.id,
+          shipping_name: picked.name,
+          shipping_price: picked.price
+        };
+        ctx.onShipping?.(this.nexiShippingPreview);
+      }
+      return;
+    }
     await this.repriceNexiShipping(ctx.handle, ctx.checkoutId, ctx.address, ctx.opts, ctx.onShipping, shippingId);
   }
   /** address-changed → freeze → UpdateNexiShipping → thaw. */
@@ -7681,6 +7723,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         },
         opts
       );
+      if (result?.ok && result.shipping_id) this.nexiPreferredShipping = result.shipping_id;
       onShipping?.(result);
     } catch (err) {
       onShipping?.(null, err);
@@ -7699,6 +7742,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     this.nexiHandle = null;
     this.nexiShippingContext = null;
+    this.nexiPreferredShipping = null;
+    this.nexiShippingPreview = null;
   }
   /** Re-read the Nexi payment owned by a checkout. */
   async getNexiOrder(checkoutId, sponsorId) {
@@ -8514,7 +8559,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.3";
+var SDK_VERSION = "0.12.4";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -14540,14 +14585,21 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const order = await Vio.checkout.mountNexiCheckout(container, this.checkoutState.sponsorId, {
         onCompleted: (paid) => this.onNexiCompleted(paid.order_id),
         onShipping: (result, err) => {
+          const wanted = this.nexiShipping?.shipping_id;
+          const pickedNow = this.nexiPicking;
           this.nexiPicking = false;
-          this.nexiShipping = result?.ok ? result : null;
           if (err || !result) {
+            this.nexiShipping = null;
             this.nexiShippingNotice = "Kunne ikke beregne frakt. Pr\xF8v \xE5 endre adressen.";
+          } else if (result.reason === "AWAITING_ADDRESS") {
+            this.nexiShipping = result;
+            this.nexiShippingNotice = null;
           } else if (!result.ok) {
+            this.nexiShipping = null;
             this.nexiShippingNotice = "Vi kan dessverre ikke sende til dette landet.";
           } else {
-            this.nexiShippingNotice = null;
+            this.nexiShipping = result;
+            this.nexiShippingNotice = !pickedNow && wanted && result.shipping_id !== wanted ? `Valgt frakt leveres ikke til denne adressen. Vi har valgt ${result.shipping_name ?? "en annen"}.` : null;
           }
         }
       }, resumePaymentId ? { paymentId: resumePaymentId } : void 0);
