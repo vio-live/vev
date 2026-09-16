@@ -6597,6 +6597,9 @@ var NEXI_ORDER_FIELDS = `
       purchase_country
       purchase_currency
       total_price
+      payment_method
+      card_last4
+      email
       shipping {${NEXI_SHIPPING_FIELDS}
       }`;
 var CREATE_PAYMENT_NEXI_MUTATION = `
@@ -8559,7 +8562,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.4";
+var SDK_VERSION = "0.12.5";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12890,10 +12893,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     :host([open]) .modal.as-side { transform: translateX(0); }
 
     /* Desktop: the checkout ALWAYS lives as a right-side panel (like the cart,
-       product detail and express drawer) — never a full-width overlay. Only the
-       compact confirmation card stays centered. */
+       product detail and express drawer) — never a full-width overlay. The
+       confirmation stays in that panel too: a centered card jumped out of the
+       panel the shopper was in and looked like the phone layout (Angelo,
+       2026-09-16). */
     @media (min-width: 601px) {
-      .modal:not(.as-confirm) {
+      .modal {
         inset: 0 0 0 auto;
         width: min(440px, 100%);
         max-width: 440px;
@@ -12901,7 +12906,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         border-radius: 0;
         box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
       }
-      :host([open]) .modal:not(.as-confirm) { transform: translateX(0); }
+      :host([open]) .modal { transform: translateX(0); }
     }
     @media (max-width: 600px) {
       /* On phones, keep it a bottom sheet for reachability. */
@@ -12916,37 +12921,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
       :host([open]) .modal.as-side { transform: translateY(0); }
     }
 
-    /* Confirmation: a centered desktop dialog (the bottom-sheet looked like
-       mobile on desktop). Falls back to a bottom sheet on phones. */
-    .modal.as-confirm {
-      inset: auto;
-      top: 50%;
-      left: 50%;
-      width: min(92vw, 440px);
-      max-width: 440px;
-      height: auto;
-      max-height: 88vh;
-      border-radius: var(--vio-radius-xl, 16px);
-      box-shadow: 0 30px 80px -24px rgba(0, 0, 0, 0.4);
-      transform: translate(-50%, -50%) scale(0.96);
-      opacity: 0;
-    }
-    :host([open]) .modal.as-confirm {
-      transform: translate(-50%, -50%) scale(1);
-      opacity: 1;
-    }
+    /* Phones: the confirmation is a compact bottom sheet, as tall as it needs. */
     @media (max-width: 600px) {
       .modal.as-confirm {
-        inset: auto 0 0 0;
-        top: auto;
-        left: 0;
-        width: 100%;
-        max-width: none;
-        border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
-        transform: translateY(100%) scale(1);
-        opacity: 1;
+        height: auto;
+        max-height: 88vh;
       }
-      :host([open]) .modal.as-confirm { transform: translateY(0); }
     }
 
     .handle { display: none; }
@@ -13221,37 +13201,86 @@ var _VioCheckout = class _VioCheckout extends i4 {
 
     /* Order confirmation — compact, shown inside the drawer. */
     .confirmation {
-      text-align: center;
-      padding: 24px 24px 28px;
+      padding: 8px 0 28px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 14px;
+      gap: 20px;
     }
+    .confirm-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .confirm-details {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--vio-color-border, #eee);
+      border-radius: var(--vio-radius-lg, 8px);
+    }
+    .confirm-details > div {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 14px;
+      font-size: 13px;
+    }
+    .confirm-details > div + div { border-top: 1px solid var(--vio-color-border, #eee); }
+    .confirm-details dt { color: var(--vio-color-text-secondary, #666); white-space: nowrap; }
+    .confirm-details dd.ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; font-size: 12px; }
+    .confirm-details dd {
+      margin: 0;
+      font-weight: 600;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+    }
+    .confirm-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: var(--vio-tracking-label, 0.1em);
+      color: var(--vio-color-text-secondary, #666);
+    }
+    .confirm-line {
+      display: grid;
+      grid-template-columns: 56px 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .confirm-thumb {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      background: var(--vio-color-surface-muted, #f2f2f2);
+      display: block;
+    }
+    .confirm-line-name { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+    .confirm-line-name small { font-size: 11px; color: var(--vio-color-text-secondary, #666); }
+    .confirm-line-price { font-size: 14px; font-weight: 600; }
     .confirm-check {
-      width: 64px;
-      height: 64px;
+      flex-shrink: 0;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
       background: #2e7d32;
       color: #fff;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 32px;
+      font-size: 24px;
       line-height: 1;
     }
     .confirm-title {
       font-family: var(--vio-font-serif, Georgia, serif);
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 400;
       margin: 0;
     }
     .confirm-text {
       font-size: 14px;
       color: var(--vio-color-text-secondary, #666);
-      max-width: 360px;
-      line-height: 1.6;
-      margin: 0;
+      line-height: 1.5;
+      margin: 4px 0 0;
     }
     .confirm-order-id {
       font-size: 13px;
@@ -13262,17 +13291,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
       font-variant-numeric: tabular-nums;
     }
     .confirm-summary {
-      width: 100%;
-      max-width: 360px;
-      border-top: 1px solid var(--vio-color-border, #eee);
-      padding-top: 14px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      text-align: left;
+      gap: 12px;
       font-size: 13px;
     }
     .confirm-close {
+      width: 100%;
       border: none;
       background: var(--vio-color-text, #0a0a0a);
       color: var(--vio-color-text-on-primary, #fff);
@@ -14164,11 +14189,15 @@ var _VioCheckout = class _VioCheckout extends i4 {
    */
   confirmOrder(method, sponsorId, result) {
     const r6 = result ?? {};
+    const shippingPrice = this.shippingMajor();
+    const email = String(this.form.email ?? "").trim();
     this.confirmedOrder = {
       items: [...this.items],
       currency: this.checkoutState?.currency ?? "",
       total: typeof r6.chargedTotal === "number" ? r6.chargedTotal : this.checkoutState?.subtotal ?? 0,
-      orderId: r6.order?.orderId
+      orderId: r6.order?.orderId,
+      ...shippingPrice > 0 ? { shipping: { name: this.summaryShippingName() || "Frakt", price: shippingPrice } } : {},
+      ...email ? { email } : {}
     };
     this.confirmedMethod = method;
     this.orderConfirmed = true;
@@ -14311,30 +14340,60 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   renderConfirmation() {
     const o7 = this.confirmedOrder;
+    const email = o7?.email || String(this.form.email ?? "").trim();
+    const details = [];
+    if (o7?.orderId) details.push(["Ordrenummer", o7.orderId]);
+    details.push(["Betalingsm\xE5te", o7?.paidWith || this.methodLabel(this.confirmedMethod)]);
+    if (o7?.providerRef) details.push([o7.providerRef.label, o7.providerRef.value]);
+    if (email) details.push(["Kvittering til", email]);
     return b2`
       <section class="confirmation">
-        <div class="confirm-check" aria-hidden="true">✓</div>
-        <h3 class="confirm-title">Takk for bestillingen!</h3>
-        <p class="confirm-text">
-          Betaling med ${this.methodLabel(this.confirmedMethod)} er bekreftet.${this.form.email ? b2` Kvittering sendes til ${this.form.email}.` : ""}
-        </p>
-        ${o7?.orderId ? b2`<div class="confirm-order-id">Ordrenummer: <b>${o7.orderId}</b></div>` : ""}
+        <header class="confirm-head">
+          <div class="confirm-check" aria-hidden="true">✓</div>
+          <div>
+            <h3 class="confirm-title">Takk for bestillingen!</h3>
+            <p class="confirm-text">
+              Betalingen er bekreftet.${email ? b2` Du får en ordrebekreftelse på e-post.` : ""}
+            </p>
+          </div>
+        </header>
+
+        <dl class="confirm-details">
+          ${details.map(
+      ([k2, v2]) => b2`<div><dt>${k2}</dt><dd class=${k2 === o7?.providerRef?.label ? "ref" : ""}>${v2}</dd></div>`
+    )}
+        </dl>
+
         ${o7 && o7.items.length > 0 ? b2`
               <div class="confirm-summary">
+                <div class="confirm-label">Din bestilling</div>
                 ${o7.items.map(
       (it) => b2`
-                    <div class="order-row">
-                      <span>${it.brand ? `${it.brand} ` : ""}${it.name} ×${it.quantity}</span>
-                      <span>${formatPrice(it.unitPrice * it.quantity, it.currency)}</span>
+                    <div class="confirm-line">
+                      ${it.imageUrl ? b2`<img class="confirm-thumb" src=${it.imageUrl} alt="" loading="lazy" />` : b2`<span class="confirm-thumb" aria-hidden="true"></span>`}
+                      <span class="confirm-line-name">
+                        ${it.brand ? b2`<small>${it.brand}</small>` : ""}
+                        <span>${it.name}</span>
+                        <small>Antall: ${it.quantity}</small>
+                      </span>
+                      <span class="confirm-line-price">
+                        ${formatPrice(it.unitPrice * it.quantity, it.currency)}
+                      </span>
                     </div>
                   `
     )}
+                ${o7.shipping ? b2`
+                      <div class="order-row">
+                        <span>Frakt – ${o7.shipping.name}</span>
+                        <span>${formatPrice(o7.shipping.price, o7.currency)}</span>
+                      </div>
+                    ` : ""}
                 <div class="order-row total">
                   <span>Totalt</span><span>${formatPrice(o7.total, o7.currency)}</span>
                 </div>
               </div>
             ` : ""}
-        <button class="confirm-close" @click=${this.close}>Lukk</button>
+        <button class="confirm-close" @click=${this.close}>Fortsett å handle</button>
       </section>
     `;
   }
@@ -14619,8 +14678,40 @@ var _VioCheckout = class _VioCheckout extends i4 {
   onNexiCompleted(paymentId) {
     const spId = this.checkoutState?.sponsorId ?? 0;
     const checkoutId = this.checkoutState?.checkoutId ?? "";
+    const charged = this.nexiShipping?.ok ? this.nexiShipping.total_price : void 0;
+    this.confirmOrder("nexi", spId, { chargedTotal: charged });
+    if (this.confirmedOrder) {
+      this.confirmedOrder = {
+        ...this.confirmedOrder,
+        providerRef: { label: "Nexi betalings-ID", value: paymentId }
+      };
+    }
     this.unmountNexi();
-    this.applyReturnOutcome("paid", true, "nexi", spId, checkoutId || paymentId);
+    if (checkoutId) void this.addNexiPaymentDetails(checkoutId, spId, paymentId);
+  }
+  /**
+   * How it was paid and where the receipt goes — Nexi knows, we ask. Its
+   * payment details can lag the completion event by a moment, hence the
+   * few retries. Best effort: the confirmation stands without them.
+   */
+  async addNexiPaymentDetails(checkoutId, sponsorId, paymentId) {
+    for (const delay of _VioCheckout.NEXI_DETAILS_DELAYS_MS) {
+      if (delay) await new Promise((r6) => setTimeout(r6, delay));
+      const o7 = await Vio.checkout.getNexiOrder(checkoutId, sponsorId).catch(() => null);
+      const current = this.confirmedOrder;
+      if (!current || current.providerRef?.value !== paymentId) return;
+      if (!o7) continue;
+      const paidWith = o7.payment_method ? o7.card_last4 ? `${o7.payment_method} \u2022\u2022\u2022\u2022 ${o7.card_last4}` : o7.payment_method : void 0;
+      this.confirmedOrder = {
+        ...current,
+        ...paidWith ? { paidWith } : {},
+        ...o7.email ? { email: o7.email } : {}
+      };
+      if (paidWith) return;
+    }
+  }
+  static {
+    this.NEXI_DETAILS_DELAYS_MS = [0, 1500, 3e3];
   }
   unmountNexi() {
     this.nexiMountedOrderId = null;
