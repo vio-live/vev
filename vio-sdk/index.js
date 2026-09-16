@@ -11,10 +11,12 @@ var __decorateClass = (decorators, target, key, kind) => {
 
 // src/core/configuration.ts
 var DEFAULT_URLS = {
+  // The Vio Backend development environment was removed on 2026-09-16; its REST
+  // and events hosts now point at staging (Commerce GraphQL dev is unaffected).
   development: {
-    apiBase: "https://api-dev.vio.live",
+    apiBase: "https://api-staging.vio.live",
     graphQLBase: "https://graph-ql-dev.vio.live",
-    eventsBase: "https://events-dev.vio.live"
+    eventsBase: "https://events-staging.vio.live"
   },
   // No separate staging GraphQL deployment yet — shares dev's.
   testing: {
@@ -6575,6 +6577,189 @@ async function getWalleyOrder(checkoutId, options) {
 }
 var WALLEY_PURCHASE_COMPLETED_EVENT = "walleyCheckoutPurchaseCompleted";
 
+// src/core/checkout/payments/nexi.ts
+var NEXI_ORDER_FIELDS = `
+      order_id
+      status
+      checkout_key
+      checkout_js_url
+      purchase_country
+      purchase_currency
+      total_price`;
+var CREATE_PAYMENT_NEXI_MUTATION = `
+mutation CreatePaymentNexi($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
+  Payment {
+    CreatePaymentNexi(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {${NEXI_ORDER_FIELDS}
+    }
+  }
+}
+`;
+var GET_NEXI_ORDER_QUERY = `
+query GetNexiOrder($checkoutId: String!) {
+  Payment {
+    GetNexiOrder(checkout_id: $checkoutId) {${NEXI_ORDER_FIELDS}
+    }
+  }
+}
+`;
+var UPDATE_NEXI_SHIPPING_MUTATION = `
+mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postalCode: String) {
+  Payment {
+    UpdateNexiShipping(checkout_id: $checkoutId, country_code: $countryCode, postal_code: $postalCode) {
+      ok
+      reason
+      order_id
+      total_price
+      shipping_name
+      shipping_price
+    }
+  }
+}
+`;
+async function createPaymentNexi(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_NEXI_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentNexi ?? null;
+}
+async function getNexiOrder(checkoutId, options) {
+  const json = await executeCartGraphQL(GET_NEXI_ORDER_QUERY, { checkoutId }, options);
+  return json?.data?.Payment?.GetNexiOrder ?? null;
+}
+async function updateNexiShipping(variables, options) {
+  const json = await executeCartGraphQL(UPDATE_NEXI_SHIPPING_MUTATION, variables, options);
+  return json?.data?.Payment?.UpdateNexiShipping ?? null;
+}
+var NEXI_PAID_STATUSES = /* @__PURE__ */ new Set(["Reserved", "Charged"]);
+function isNexiPaid(status) {
+  return NEXI_PAID_STATUSES.has(String(status ?? ""));
+}
+var NEXI_LANGUAGES = {
+  NO: "nb-NO",
+  SE: "sv-SE",
+  DK: "da-DK",
+  FI: "fi-FI",
+  DE: "de-DE",
+  NL: "nl-NL",
+  PL: "pl-PL",
+  FR: "fr-FR",
+  ES: "es-ES",
+  IT: "it-IT",
+  EE: "ee-EE",
+  LV: "lv-LV",
+  LT: "lt-LT",
+  SK: "sk-SK"
+};
+function nexiLanguageFor(countryCode) {
+  return NEXI_LANGUAGES[String(countryCode ?? "").toUpperCase()] ?? "en-GB";
+}
+function nexiThemeFrom(theme) {
+  if (!theme) return void 0;
+  const out = {};
+  if (theme.accent) out.primaryColor = theme.accent;
+  if (theme.surface) out.panelColor = theme.surface;
+  if (theme.radiusMd && /^\d+(\.\d+)?px$/.test(theme.radiusMd)) out.buttonRadius = theme.radiusMd;
+  return Object.keys(out).length ? out : void 0;
+}
+var scriptLoads = /* @__PURE__ */ new Map();
+function loadNexiCheckoutJs(url) {
+  const g2 = globalThis;
+  if (g2.Dibs?.Checkout && g2.__vioNexiCheckoutJs === url) return Promise.resolve();
+  const inFlight = scriptLoads.get(url);
+  if (inFlight) return inFlight;
+  const load = new Promise((resolve, reject) => {
+    const doc = g2.document;
+    if (!doc?.head) {
+      reject(new Error("[Nexi] no document to load checkout.js into"));
+      return;
+    }
+    const script = doc.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = () => {
+      if (g2.Dibs?.Checkout) {
+        g2.__vioNexiCheckoutJs = url;
+        resolve();
+      } else {
+        scriptLoads.delete(url);
+        reject(new Error("[Nexi] checkout.js loaded but Dibs.Checkout is missing"));
+      }
+    };
+    script.onerror = () => {
+      scriptLoads.delete(url);
+      reject(new Error(`[Nexi] could not load ${url}`));
+    };
+    doc.head.appendChild(script);
+  });
+  scriptLoads.set(url, load);
+  return load;
+}
+async function mountNexi(container, order, options = {}) {
+  if (!order?.order_id || !order.checkout_key || !order.checkout_js_url) {
+    throw new Error("[Nexi] order is missing paymentId, checkout_key or checkout_js_url");
+  }
+  await loadNexiCheckoutJs(order.checkout_js_url);
+  if (!container.id) container.id = "vio-nexi-checkout-container";
+  const Dibs = globalThis.Dibs;
+  const checkout = new Dibs.Checkout({
+    checkoutKey: order.checkout_key,
+    paymentId: order.order_id,
+    containerId: container.id,
+    language: options.language ?? "en-GB",
+    ...options.theme ? { theme: options.theme } : {}
+  });
+  return checkout;
+}
+var NEXI_PENDING_KEY = "vio.nexi.pending.v1";
+var NEXI_PENDING_TTL_MS = 48 * 60 * 60 * 1e3;
+function storage() {
+  try {
+    const s4 = globalThis.sessionStorage;
+    return s4 ?? null;
+  } catch {
+    return null;
+  }
+}
+function rememberNexiPending(pending) {
+  try {
+    storage()?.setItem(NEXI_PENDING_KEY, JSON.stringify({ ...pending, createdAt: Date.now() }));
+  } catch {
+  }
+}
+function readNexiPending() {
+  try {
+    const raw = storage()?.getItem(NEXI_PENDING_KEY);
+    if (!raw) return null;
+    const p3 = JSON.parse(raw);
+    if (!p3?.checkoutId || !p3?.paymentId) return null;
+    if (Date.now() - Number(p3.createdAt ?? 0) > NEXI_PENDING_TTL_MS) {
+      clearNexiPending();
+      return null;
+    }
+    return {
+      checkoutId: String(p3.checkoutId),
+      sponsorId: Number(p3.sponsorId ?? 0),
+      paymentId: String(p3.paymentId),
+      createdAt: Number(p3.createdAt ?? 0)
+    };
+  } catch {
+    return null;
+  }
+}
+function clearNexiPending() {
+  try {
+    storage()?.removeItem(NEXI_PENDING_KEY);
+  } catch {
+  }
+}
+function nexiReturnPaymentId(search) {
+  try {
+    const s4 = search ?? globalThis.location?.search ?? "";
+    const id = new URLSearchParams(s4).get("paymentId");
+    return id && /^[0-9a-f]{32}$/i.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
   if (err instanceof Error) return err.message;
@@ -6813,6 +6998,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.klarnaAvailableCache = null;
     /** Live q1 listeners while a Qliro widget is mounted. */
     this.qliroController = null;
+    /** Live Dibs.Checkout handle while a Nexi widget is mounted. */
+    this.nexiHandle = null;
     this.klarnaOrderInFlight = false;
     /** Last backend shippings fetched (per-supplier), for UI reuse. */
     this.lastFetchedShippings = [];
@@ -7349,6 +7536,138 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async getWalleyOrder(checkoutId, sponsorId) {
     const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getWalleyOrder(checkoutId, opts);
+  }
+  /**
+   * Mount the Nexi embedded checkout — Nexi's own JS SDK, not a snippet.
+   *
+   * `onCompleted` fires on Nexi's `payment-completed` (no redirect: Nexi
+   * renders no receipt, the component shows Vio's confirmation). Shipping is
+   * Vio's: Nexi holds its pay button until `address-changed` has been
+   * re-priced through `UpdateNexiShipping` — the widget is frozen meanwhile
+   * and `onShipping` reports the outcome (NO_SHIPPING keeps it held).
+   *
+   * A session interrupted by a third-party redirect inside Nexi (Vipps,
+   * Swish, MobilePay) is remembered in sessionStorage and resumed on the
+   * same paymentId instead of creating a new payment.
+   */
+  async mountNexiCheckout(container, sponsorId, handlers = {}) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    if (!spId) throw new Error("[CheckoutManager] no sponsor for Nexi");
+    const cart = this.cartManager.getCart(spId);
+    let cartId = cart?.cartId;
+    if (!cartId) cartId = await this.cartManager.ensureCartId(spId);
+    if (!cartId) {
+      throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
+    }
+    const opts = await getCartGraphQLOptions(spId);
+    const pending = readNexiPending();
+    let checkoutId = this.state?.checkoutId;
+    if (!checkoutId && pending && pending.sponsorId === spId) {
+      checkoutId = pending.checkoutId;
+      if (this.state) this.state = { ...this.state, checkoutId };
+    }
+    if (!checkoutId) {
+      const checkoutRes = await this.createCheckout(spId);
+      checkoutId = checkoutRes?.id;
+      if (checkoutId && this.state) {
+        this.state = { ...this.state, checkoutId };
+      }
+    }
+    if (!checkoutId) {
+      throw new Error("[CheckoutManager] no backend checkout for the Nexi payment");
+    }
+    const ownedCheckoutId = checkoutId;
+    let order = null;
+    if (pending && pending.checkoutId === ownedCheckoutId) {
+      try {
+        order = await getNexiOrder(ownedCheckoutId, opts);
+      } catch {
+        order = null;
+      }
+      if (order && isNexiPaid(order.status)) {
+        clearNexiPending();
+        handlers.onCompleted?.(order);
+        return order;
+      }
+      if (order && (order.status !== "Created" || order.order_id !== pending.paymentId)) {
+        order = null;
+      }
+    }
+    if (!order) {
+      const created = await createPaymentNexi(
+        {
+          checkoutId: ownedCheckoutId,
+          countryCode: getGlobalCountryCode(),
+          href: kustomCleanHref(),
+          email: this.state?.address?.email || void 0
+        },
+        opts
+      );
+      if (!created?.order_id || !created.checkout_key) {
+        throw new Error("Nexi payment creation failed: missing paymentId/checkout key");
+      }
+      order = created;
+      rememberNexiPending({ checkoutId: ownedCheckoutId, sponsorId: spId, paymentId: order.order_id });
+    }
+    this.destroyNexi();
+    const handle = await mountNexi(container, order, {
+      language: nexiLanguageFor(getGlobalCountryCode()),
+      theme: nexiThemeFrom(readVioTheme())
+    });
+    this.nexiHandle = handle;
+    const mounted = order;
+    handle.on("address-changed", (address) => {
+      void this.repriceNexiShipping(handle, ownedCheckoutId, address, opts, handlers.onShipping);
+    });
+    handle.on("payment-completed", (result) => {
+      clearNexiPending();
+      handlers.onCompleted?.({
+        ...mounted,
+        order_id: String(result?.paymentId ?? mounted.order_id),
+        status: "Reserved"
+      });
+    });
+    return order;
+  }
+  /** address-changed → freeze → UpdateNexiShipping → thaw. */
+  async repriceNexiShipping(handle, checkoutId, address, opts, onShipping) {
+    const countryCode = String(address?.countryCode ?? address?.country ?? "");
+    if (!countryCode) return;
+    try {
+      handle.freezeCheckout();
+    } catch {
+    }
+    try {
+      const result = await updateNexiShipping(
+        {
+          checkoutId,
+          countryCode,
+          postalCode: address?.postalCode ? String(address.postalCode) : void 0
+        },
+        opts
+      );
+      onShipping?.(result);
+    } catch (err) {
+      onShipping?.(null, err);
+    } finally {
+      try {
+        handle.thawCheckout();
+      } catch {
+      }
+    }
+  }
+  /** Release the Dibs.Checkout listeners with the widget they belong to. */
+  destroyNexi() {
+    try {
+      this.nexiHandle?.cleanup();
+    } catch {
+    }
+    this.nexiHandle = null;
+  }
+  /** Re-read the Nexi payment owned by a checkout. */
+  async getNexiOrder(checkoutId, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getNexiOrder(checkoutId, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
@@ -8159,7 +8478,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.6";
+var SDK_VERSION = "0.12.0";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -8787,7 +9106,7 @@ var VioFacade = class {
     return this.analyticsManager;
   }
   // MARK: - Backend-bound
-  /** Lazy VioApi for REST endpoints on `api-dev.vio.live`. */
+  /** Lazy VioApi for REST endpoints on `api-staging.vio.live`. */
   get api() {
     if (!this.apiInstance) {
       const cfg = Configuration.get();
@@ -10207,7 +10526,7 @@ function sponsorNameFromBootstrap(sponsorId) {
 function normalizeMethodName(name) {
   return String(name ?? "").toLowerCase().replace(/[^a-z]/g, "");
 }
-var EMBEDDED_METHODS = ["kustom", "qliro", "walley"];
+var EMBEDDED_METHODS = ["kustom", "qliro", "walley", "nexi"];
 var COLLECTS_OWN_ADDRESS = [...EMBEDDED_METHODS, "vipps"];
 var isEmbeddedMethod = (name) => EMBEDDED_METHODS.includes(normalizeMethodName(name));
 var collectsOwnAddress = (name) => COLLECTS_OWN_ADDRESS.includes(normalizeMethodName(name));
@@ -12306,10 +12625,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.kustomMountedFor = null;
     this.qliroMountedFor = null;
     this.walleyMountedFor = null;
+    this.nexiMountedFor = null;
     this.qliroMounting = false;
     this.qliroMountedOrderId = null;
     this.walleyMounting = false;
     this.walleyMountedOrderId = null;
+    this.nexiMounting = false;
+    this.nexiMountedOrderId = null;
+    this.nexiShippingNotice = null;
     this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
@@ -12400,6 +12723,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.unmountKustom();
         this.unmountQliro();
         this.unmountWalley();
+        this.unmountNexi();
       }
     };
     this.boundOnPaymentComplete = (e7) => {
@@ -13070,6 +13394,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const vioMethod = urlParams.get("vio_method") || "stripe";
       const sponsorId = Number(urlParams.get("vio_sponsor") || 0);
       const checkoutId = urlParams.get("checkout_id") || "";
+      const nexiPaymentId = nexiReturnPaymentId();
+      const nexiPending = readNexiPending();
+      if (nexiPaymentId && nexiPending && nexiPending.paymentId === nexiPaymentId) {
+        this.cleanReturnQueryParams(["paymentId"]);
+        if (!this.checkoutState && nexiPending.sponsorId) {
+          try {
+            Vio.checkout.open(nexiPending.sponsorId);
+          } catch {
+          }
+        }
+        try {
+          Vio.checkout.selectPaymentMethod("nexi");
+        } catch {
+        }
+        this.open = true;
+        return;
+      }
       if (!vioPayment && !checkoutId) return;
       const kustomOrderId = urlParams.get("order_id") || "";
       if (urlParams.get("payment_processor") === "KUSTOM" && kustomOrderId) {
@@ -13319,6 +13660,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     Vio.checkout.removeEventListener("payment-error", this.boundOnPaymentError);
     Vio.checkout.removeEventListener("qliro-event", this.boundOnQliroEvent);
     this.unmountKlarna();
+    this.unmountNexi();
     super.disconnectedCallback();
   }
   updated(changed) {
@@ -13333,12 +13675,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountKustom();
       this.unmountQliro();
       this.unmountWalley();
+      this.unmountNexi();
       this.paymentError = null;
     }
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
     void this.mountQliroIfNeeded();
     void this.mountWalleyIfNeeded();
+    void this.mountNexiIfNeeded();
   }
   close() {
     this.open = false;
@@ -13475,6 +13819,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       kustom: "kustom",
       qliro: "qliro",
       walley: "walley",
+      nexi: "nexi",
       vipps: "vipps",
       klarna: this.klarnaAvailable ? "klarna" : void 0,
       applepay: this.applePayAvailable ? "apple-pay" : void 0
@@ -13650,6 +13995,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       Vio.checkout.selectPaymentMethod("walley");
       return;
     }
+    if (method === "nexi") {
+      Vio.checkout.selectPaymentMethod("nexi");
+      return;
+    }
     if (method === "vipps") {
       const email = String(this.form.email ?? "").trim();
       if (!email || !email.includes("@")) {
@@ -13758,6 +14107,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return "Qliro";
       case "walley":
         return "Walley";
+      case "nexi":
+        return "Nexi";
       case "vipps":
         return "Vipps";
       case "stripe":
@@ -14113,6 +14464,76 @@ var _VioCheckout = class _VioCheckout extends i4 {
       </div>
     `;
   }
+  /**
+   * Mount the Nexi embedded checkout once it's the chosen method. Nexi's own
+   * JS SDK renders into a LIGHT-DOM container (it refuses a shadow root);
+   * completion is its `payment-completed` event — Nexi neither redirects nor
+   * shows a receipt, so success lands in Vio's confirmation drawer. Shipping
+   * is re-priced on `address-changed` (see the manager).
+   */
+  async mountNexiIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "nexi") return;
+    if (!this.mayStartEmbeddedPayment()) return;
+    if (this.nexiMounting) return;
+    let container = this.lightContainer("vio-nexi-checkout-container", "vio-nexi");
+    if (this.nexiMountedOrderId && container.childElementCount > 0) {
+      if (this.nexiMountedFor === this.embedSession()) return;
+      this.unmountNexi();
+      container = this.lightContainer("vio-nexi-checkout-container", "vio-nexi");
+    }
+    const mountedFor = this.embedSession();
+    this.nexiMounting = true;
+    this.nexiShippingNotice = null;
+    container.innerHTML = "";
+    try {
+      const order = await Vio.checkout.mountNexiCheckout(container, this.checkoutState.sponsorId, {
+        onCompleted: (paid) => this.onNexiCompleted(paid.order_id),
+        onShipping: (result, err) => {
+          if (err || !result) {
+            this.nexiShippingNotice = "Kunne ikke beregne frakt. Pr\xF8v \xE5 endre adressen.";
+          } else if (!result.ok) {
+            this.nexiShippingNotice = "Vi kan dessverre ikke sende til dette landet.";
+          } else {
+            this.nexiShippingNotice = null;
+          }
+        }
+      });
+      this.nexiMountedOrderId = order.order_id;
+      this.nexiMountedFor = mountedFor;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Nexi mount failed:", err);
+      }
+      this.paymentError = `Kunne ikke laste Nexi: ${err instanceof Error ? err.message : String(err)}`;
+      Vio.checkout.selectPaymentMethod("");
+    } finally {
+      this.nexiMounting = false;
+    }
+  }
+  /** payment-completed: the reservation exists — confirm like the redirect methods do. */
+  onNexiCompleted(paymentId) {
+    const spId = this.checkoutState?.sponsorId ?? 0;
+    const checkoutId = this.checkoutState?.checkoutId ?? "";
+    this.unmountNexi();
+    this.applyReturnOutcome("paid", true, "nexi", spId, checkoutId || paymentId);
+  }
+  unmountNexi() {
+    this.nexiMountedOrderId = null;
+    this.nexiMountedFor = null;
+    this.nexiShippingNotice = null;
+    Vio.checkout.destroyNexi();
+    this.querySelector("#vio-nexi-checkout-container")?.remove();
+  }
+  renderNexiPanel() {
+    return b2`
+      <div class="nexi-panel">
+        ${this.nexiMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Nexi…</div>` : ""}
+        <slot name="vio-nexi"></slot>
+        ${this.nexiShippingNotice ? b2`<div class="payment-notice">${this.nexiShippingNotice}</div>` : ""}
+      </div>
+    `;
+  }
   renderKlarnaPanel() {
     const currency = this.checkoutState?.currency || getGlobalCurrency();
     return b2`
@@ -14359,6 +14780,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountKustom();
       this.unmountQliro();
       this.unmountWalley();
+      this.unmountNexi();
       Vio.checkout.selectPaymentMethod("");
     }}
                           >
@@ -14371,6 +14793,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "kustom" ? this.renderKustomPanel() : ""}
                   ${method === "qliro" ? this.renderQliroPanel() : ""}
                   ${method === "walley" ? this.renderWalleyPanel() : ""}
+                  ${method === "nexi" ? this.renderNexiPanel() : ""}
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
@@ -14464,6 +14887,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("walley") ? b2`
                           <button class="payment-btn" @click=${() => this.onPay("walley")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Walley</span>
+                          </button>
+                        ` : ""}
+                    ${this.methodEnabled("nexi") ? b2`
+                          <button class="payment-btn" @click=${() => this.onPay("nexi")}>
+                            <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Nexi</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
@@ -14590,6 +15018,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "walleyMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "nexiMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "nexiShippingNotice", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroShipping", 2);
