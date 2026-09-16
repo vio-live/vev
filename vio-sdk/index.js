@@ -6816,6 +6816,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.klarnaOrderInFlight = false;
     /** Last backend shippings fetched (per-supplier), for UI reuse. */
     this.lastFetchedShippings = [];
+    /** See `lastShippingsResolved`. */
+    this.shippingsResolved = false;
     /** Per-sponsor payment methods cache + in-flight dedupe. */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.paymentMethodsCache = /* @__PURE__ */ new Map();
@@ -6947,6 +6949,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * this at all.
    */
   async fetchAvailableShippings(sponsorId) {
+    this.shippingsResolved = false;
     try {
       const spId = sponsorId ?? this.state?.sponsorId;
       if (!spId) return [];
@@ -6959,6 +6962,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       if (!cartId) return [];
       const opts = await getCartGraphQLOptions(spId);
       const supplierGroups = await getLineItemsBySupplier(cartId, opts);
+      this.shippingsResolved = Array.isArray(supplierGroups);
       const firstGroup = Array.isArray(supplierGroups) ? supplierGroups[0] : null;
       const shippings = firstGroup?.available_shippings ?? [];
       if (Array.isArray(shippings) && shippings.length > 0) {
@@ -6994,6 +6998,15 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
     }
     return [];
+  }
+  /**
+   * Whether the last `fetchAvailableShippings` got an answer from the backend,
+   * possibly an empty one, rather than failing or finding no cart. The two
+   * return the same empty list, and only an answer means the cart has
+   * nothing it can ship with.
+   */
+  get lastShippingsResolved() {
+    return this.shippingsResolved;
   }
   /** Set the chosen shipping per supplier on the backend cart. */
   async updateShippingsBySupplier(data, sponsorId) {
@@ -8146,7 +8159,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.11.5";
+var SDK_VERSION = "0.11.6";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -12334,6 +12347,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
      * fire per keystroke — without these, typing an address hammers the API). */
     this.loadingShippings = false;
     this.shippingsAttempted = false;
+    this.shippingBlocked = false;
+    this.shippingsReadyFor = null;
     this.boundOnQliroEvent = (e7) => {
       const event = e7.detail;
       if (!event) return;
@@ -12380,6 +12395,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.paymentMethodsResolved = false;
         this.autoSelectAttempted = false;
         this.returningFrom = null;
+        this.shippingBlocked = false;
         this.unmountKlarna();
         this.unmountKustom();
         this.unmountQliro();
@@ -12960,6 +12976,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     ]);
   }
   static {
+    /**
+     * Shown instead of the payment step when the cart's products cannot ship
+     * together. Angelo, 2026-09-16: block the purchase rather than sell it
+     * without shipping, or with a rate that does not fit every product.
+     */
+    this.SHIPPING_BLOCKED_MESSAGE = "Produktene i handlekurven kan ikke sendes sammen. Fjern ett av dem for \xE5 fullf\xF8re kj\xF8pet.";
+  }
+  static {
     /** The payment may or may not have gone through, and we could not find out. */
     this.RETURN_UNVERIFIED_MESSAGE = "Vi kunne ikke bekrefte betalingen. Handlekurven er uendret \u2014 pr\xF8v igjen, eller kontakt support hvis du ble belastet.";
   }
@@ -13304,6 +13328,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (changed.has("open") && this.open) {
       this.autoSelectSoleMethod();
     }
+    if (changed.has("shippingBlocked") && this.shippingBlocked) {
+      this.unmountKlarna();
+      this.unmountKustom();
+      this.unmountQliro();
+      this.unmountWalley();
+      this.paymentError = null;
+    }
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
     void this.mountQliroIfNeeded();
@@ -13320,17 +13351,30 @@ var _VioCheckout = class _VioCheckout extends i4 {
       void this.loadAvailableShippings();
     }
   }
-  /** Fetch the real per-supplier shippings and preselect + persist the first. */
+  /**
+   * Fetch the real per-supplier shippings and preselect + persist the first.
+   *
+   * Also decides whether the cart can ship at all (`shippingBlocked`), and
+   * records which opening the answer belongs to (`shippingsReadyFor`).
+   */
   async loadAvailableShippings() {
     const spId = this.checkoutState?.sponsorId;
     if (!spId) return;
     if (this.items.length === 0) return;
     if (this.loadingShippings) return;
+    const session = this.embedSession();
     this.loadingShippings = true;
     this.shippingsAttempted = true;
     try {
       const shippings = await Vio.checkout.fetchAvailableShippings(spId);
-      if (Array.isArray(shippings) && shippings.length > 0) {
+      if (session !== this.embedSession()) return;
+      if (!Array.isArray(shippings) || shippings.length === 0) {
+        if (Vio.checkout.lastShippingsResolved) {
+          this.availableShippingsList = [];
+          this.shippingBlocked = this.someLineShipsOnItsOwn();
+        }
+      } else {
+        this.shippingBlocked = false;
         this.availableShippingsList = shippings;
         if (!this.selectedShipping || !shippings.some((s4) => s4.id === this.selectedShipping)) {
           const firstOpt = shippings[0];
@@ -13349,7 +13393,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
     } finally {
       this.loadingShippings = false;
+      if (session === this.embedSession()) {
+        this.shippingsReadyFor = session;
+      } else if (this.checkoutState && this.items.length > 0) {
+        void this.loadAvailableShippings();
+      }
     }
+  }
+  /**
+   * Whether some product in the cart has shipping rates of its own. With no
+   * rate shared by all of them, that means they cannot ship TOGETHER. A cart
+   * where no line has rates is left alone: digital products have none, and
+   * shopcart refuses the physical case on its side.
+   */
+  someLineShipsOnItsOwn() {
+    return this.items.some(
+      (i5) => Array.isArray(i5.availableShippings) && i5.availableShippings.length > 0
+    );
   }
   /** Whether all mandatory Leveringsadresse fields are filled. */
   get isAddressValid() {
@@ -13446,6 +13506,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.items.length > 0 && this.availableShippingsList.length === 0 && !this.shippingsAttempted) {
       await this.loadAvailableShippings();
     }
+    if (this.shippingBlocked) return;
     const amount = this.checkoutState.subtotal;
     if (this.klarnaHandle && this.klarnaMountedAmount === amount && this.klarnaMountedShipping === this.selectedShipping) {
       return;
@@ -13538,7 +13599,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** Authorize the selected Klarna method → backend creates the order. */
   async onKlarnaAuthorize() {
-    if (!this.klarnaHandle || this.klarnaAuthorizing) return;
+    if (!this.klarnaHandle || this.klarnaAuthorizing || this.shippingBlocked) return;
     this.paymentError = null;
     this.paymentNotice = null;
     this.klarnaAuthorizing = true;
@@ -13570,6 +13631,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
   }
   async onPay(method) {
+    if (this.shippingBlocked) return;
     this.paymentError = null;
     this.paymentNotice = null;
     if (method === "apple-pay") {
@@ -13643,6 +13705,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   onCompleteOrder() {
     const s4 = this.checkoutState;
     if (!s4 || !s4.paymentMethod) return;
+    if (this.shippingBlocked) return;
     if (s4.paymentMethod !== "vipps" && !this.isAddressValid) {
       this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
       return;
@@ -13834,11 +13897,25 @@ var _VioCheckout = class _VioCheckout extends i4 {
   /**
    * Whether mounting an embedded checkout now would be starting a payment the
    * shopper asked for. Mounting CREATES an order at the provider (and a backend
-   * checkout if there is none), so it must not happen on a confirmation return
-   * or once this checkout's order is confirmed.
+   * checkout if there is none), so it must not happen on a confirmation return,
+   * once this checkout's order is confirmed, or for a cart that cannot ship.
    */
   mayStartEmbeddedPayment() {
-    return !this.returningFrom && !this.orderConfirmed && !this.providerReceipt;
+    return !this.returningFrom && !this.orderConfirmed && !this.providerReceipt && !this.shippingBlocked && this.shippingsSettled();
+  }
+  /**
+   * Whether we know enough about shipping to create an order. The provider
+   * prices the order when it is created, so a first opening waits for the
+   * shippings to answer: the cart may turn out unable to ship at all. A list
+   * already on screen counts, and a later answer that blocks the cart takes
+   * the widget down again (see `updated`).
+   */
+  shippingsSettled() {
+    return this.items.length === 0 || this.availableShippingsList.length > 0 || this.shippingsReadyFor === this.embedSession();
+  }
+  /** Why nothing can be paid: the cart's products cannot ship together. */
+  renderShippingBlocked() {
+    return b2`<div class="payment-error" role="alert">${_VioCheckout.SHIPPING_BLOCKED_MESSAGE}</div>`;
   }
   /**
    * The checkout an embedded widget's order belongs to. Kustom, Qliro and
@@ -14135,7 +14212,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 </div>
               </div>
             ` : ""}
-        ${this.renderKlarnaPanel()}
+        ${this.shippingBlocked ? this.renderShippingBlocked() : this.renderKlarnaPanel()}
         ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
         ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
       </section>
@@ -14268,7 +14345,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             <div class="section-label">
               ${isVipps || isKustom || everyMethodCollectsAddress2 ? "Betaling" : "Steg 2"}
             </div>
-            ${method ? b2`
+            ${this.shippingBlocked ? this.renderShippingBlocked() : method ? b2`
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                     <h3 class="section-heading" style="margin:0;">
                       Betalingsmåte: <b>${this.methodLabel(method)}</b>
@@ -14528,6 +14605,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "paymentMethodsResolved", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "shippingBlocked", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "shippingsReadyFor", 2);
 var VioCheckout = _VioCheckout;
 
 // src/ui/elements.ts
