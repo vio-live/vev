@@ -6594,18 +6594,7 @@ mutation CreatePaymentNexi($checkoutId: String!, $countryCode: String!, $href: S
   }
 }
 `;
-var GET_NEXI_ORDER_QUERY = `
-query GetNexiOrder($checkoutId: String!) {
-  Payment {
-    GetNexiOrder(checkout_id: $checkoutId) {${NEXI_ORDER_FIELDS}
-    }
-  }
-}
-`;
-var UPDATE_NEXI_SHIPPING_MUTATION = `
-mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postalCode: String, $shippingId: String) {
-  Payment {
-    UpdateNexiShipping(checkout_id: $checkoutId, country_code: $countryCode, postal_code: $postalCode, shipping_id: $shippingId) {
+var NEXI_SHIPPING_FIELDS = `
       ok
       reason
       order_id
@@ -6614,6 +6603,22 @@ mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postal
       shipping_price
       shipping_id
       options { id name price }
+      country
+      postal_code`;
+var GET_NEXI_ORDER_QUERY = `
+query GetNexiOrder($checkoutId: String!) {
+  Payment {
+    GetNexiOrder(checkout_id: $checkoutId) {${NEXI_ORDER_FIELDS}
+      shipping {${NEXI_SHIPPING_FIELDS}
+      }
+    }
+  }
+}
+`;
+var UPDATE_NEXI_SHIPPING_MUTATION = `
+mutation UpdateNexiShipping($checkoutId: String!, $countryCode: String!, $postalCode: String, $shippingId: String) {
+  Payment {
+    UpdateNexiShipping(checkout_id: $checkoutId, country_code: $countryCode, postal_code: $postalCode, shipping_id: $shippingId) {${NEXI_SHIPPING_FIELDS}
     }
   }
 }
@@ -7622,6 +7627,17 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     });
     this.nexiHandle = handle;
     const mounted = order;
+    const carried = order.shipping;
+    if (carried?.ok && carried.country) {
+      this.nexiShippingContext = {
+        handle,
+        checkoutId: ownedCheckoutId,
+        address: { countryCode: carried.country, postalCode: carried.postal_code },
+        opts,
+        onShipping: handlers.onShipping
+      };
+      handlers.onShipping?.(carried);
+    }
     handle.on("address-changed", (address) => {
       this.nexiShippingContext = { handle, checkoutId: ownedCheckoutId, address, opts, onShipping: handlers.onShipping };
       void this.repriceNexiShipping(handle, ownedCheckoutId, address, opts, handlers.onShipping);
@@ -8498,7 +8514,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.2";
+var SDK_VERSION = "0.12.3";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
