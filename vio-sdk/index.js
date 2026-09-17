@@ -6588,7 +6588,9 @@ var NEXI_SHIPPING_FIELDS = `
       shipping_id
       options { id name price }
       country
-      postal_code`;
+      postal_code
+      address_source
+      changed`;
 var NEXI_ORDER_FIELDS = `
       order_id
       status
@@ -7646,6 +7648,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         handle,
         checkoutId: ownedCheckoutId,
         address: { countryCode: carried.country, postalCode: carried.postal_code },
+        fromShopper: carried.address_source !== "market",
         opts,
         onShipping: handlers.onShipping
       };
@@ -7662,7 +7665,14 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       handlers.onShipping?.(carried);
     }
     const onAddress = (address) => {
-      this.nexiShippingContext = { handle, checkoutId: ownedCheckoutId, address, opts, onShipping: handlers.onShipping };
+      this.nexiShippingContext = {
+        handle,
+        checkoutId: ownedCheckoutId,
+        address,
+        fromShopper: true,
+        opts,
+        onShipping: handlers.onShipping
+      };
       void this.repriceNexiShipping(
         handle,
         ownedCheckoutId,
@@ -7714,16 +7724,22 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     await this.repriceNexiShipping(ctx.handle, ctx.checkoutId, ctx.address, ctx.opts, ctx.onShipping, shippingId);
   }
   /**
-   * `pay-initialized` → make sure the payment carries the shipping for the
-   * address Nexi will ship to → `payment-order-finalized`. With no address
-   * from the widget, the backend reads the one on the payment. Anything but a
-   * priced shipping stops the payment: charging without it is what failed on
-   * 2026-09-16 (payment 085277846ae44f7498ae94e112435d63).
+   * `pay-initialized` → confirm the shipping for the address Nexi will ship
+   * to → `payment-order-finalized`.
+   *
+   * The payment already carries a shipping (set at creation, re-priced on
+   * every address and pick), so normally nothing changes and Nexi charges.
+   * When the shopper's address was never announced — Nexi fills it in for a
+   * shopper it recognises — the backend reads it from the payment. If that
+   * changes the amount, the payment is STOPPED and the widget reloaded: an
+   * amount that changes while Nexi charges is what failed on 2026-09-16/17
+   * (payments 085277846ae44f7498ae94e112435d63, f6116e6d68294a88927d35b05d907f10).
    */
   async finalizeNexiPayment(handle, checkoutId, opts, onShipping) {
     const ctx = this.nexiShippingContext?.handle === handle ? this.nexiShippingContext : null;
-    const address = ctx?.address ?? null;
-    let ok = false;
+    const address = ctx?.fromShopper ? ctx.address : null;
+    let proceed = false;
+    let reload = false;
     try {
       const result = await updateNexiShipping(
         {
@@ -7734,20 +7750,28 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         },
         opts
       );
-      ok = Boolean(result?.ok);
       if (result?.ok) {
         if (result.shipping_id) this.nexiPreferredShipping = result.shipping_id;
-        if (ctx && !ctx.address && result.country) {
+        if (ctx && result.country) {
           ctx.address = { countryCode: result.country, postalCode: result.postal_code };
+          ctx.fromShopper = true;
         }
+        reload = result.changed === true;
+        proceed = !reload;
       }
-      onShipping?.(result);
+      onShipping?.(result ? { ...result, ...reload ? { repriced_at_pay: true } : {} } : result);
     } catch (err) {
       onShipping?.(null, err);
     }
     try {
-      handle.send?.("payment-order-finalized", ok);
+      handle.send?.("payment-order-finalized", proceed);
     } catch {
+    }
+    if (reload) {
+      try {
+        handle.thawCheckout();
+      } catch {
+      }
     }
   }
   /** address-changed → freeze → UpdateNexiShipping → thaw. */
@@ -8604,7 +8628,7 @@ function toSmallestUnit(amount, currency) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.12.6";
+var SDK_VERSION = "0.12.7";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -14700,7 +14724,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
             this.nexiShippingNotice = "Vi kan dessverre ikke sende til dette landet.";
           } else {
             this.nexiShipping = result;
-            this.nexiShippingNotice = !pickedNow && wanted && result.shipping_id !== wanted ? `Valgt frakt leveres ikke til denne adressen. Vi har valgt ${result.shipping_name ?? "en annen"}.` : null;
+            if (result.repriced_at_pay) {
+              this.nexiShippingNotice = "Frakten er oppdatert for leveringsadressen din. Sjekk totalen og trykk \xABBetal\xBB igjen.";
+            } else {
+              this.nexiShippingNotice = !pickedNow && wanted && result.shipping_id !== wanted ? `Valgt frakt leveres ikke til denne adressen. Vi har valgt ${result.shipping_name ?? "en annen"}.` : null;
+            }
           }
         }
       }, resumePaymentId ? { paymentId: resumePaymentId } : void 0);
