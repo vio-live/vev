@@ -6772,6 +6772,249 @@ function nexiReturnPaymentId(search) {
   }
 }
 
+// src/core/checkout/payments/adyen.ts
+var ADYEN_SESSION_FIELDS = `
+      order_id
+      session_id
+      session_data
+      client_key
+      environment
+      country_code
+      shopper_locale
+      purchase_currency
+      amount
+      total_price
+      shipping_name
+      shipping_price
+      expires_at`;
+var ADYEN_PAYMENT_FIELDS = `
+      order_id
+      status
+      result_code
+      psp_reference
+      payment_method
+      purchase_country
+      purchase_currency
+      total_price
+      shipping_name
+      shipping_price
+      email
+      order_created`;
+var CREATE_PAYMENT_ADYEN_MUTATION = `
+mutation CreatePaymentAdyen($checkoutId: String!, $returnUrl: String!, $countryCode: String, $channel: String, $email: String, $client: String) {
+  Payment {
+    CreatePaymentAdyen(checkout_id: $checkoutId, return_url: $returnUrl, country_code: $countryCode, channel: $channel, email: $email, client: $client) {${ADYEN_SESSION_FIELDS}
+    }
+  }
+}
+`;
+var GET_ADYEN_PAYMENT_QUERY = `
+query GetAdyenPayment($checkoutId: String!, $sessionResult: String, $redirectResult: String) {
+  Payment {
+    GetAdyenPayment(checkout_id: $checkoutId, session_result: $sessionResult, redirect_result: $redirectResult) {${ADYEN_PAYMENT_FIELDS}
+    }
+  }
+}
+`;
+var CONFIRM_ADYEN_PAYMENT_MUTATION = `
+mutation ConfirmAdyenPayment($checkoutId: String!, $sessionId: String!) {
+  Payment {
+    ConfirmAdyenPayment(checkout_id: $checkoutId, session_id: $sessionId) {
+      ok
+      reason
+    }
+  }
+}
+`;
+async function createPaymentAdyen(variables, options) {
+  const json = await executeCartGraphQL(CREATE_PAYMENT_ADYEN_MUTATION, variables, options);
+  return json?.data?.Payment?.CreatePaymentAdyen ?? null;
+}
+async function getAdyenPayment(variables, options) {
+  const json = await executeCartGraphQL(GET_ADYEN_PAYMENT_QUERY, variables, options);
+  return json?.data?.Payment?.GetAdyenPayment ?? null;
+}
+async function confirmAdyenPayment(variables, options) {
+  const json = await executeCartGraphQL(CONFIRM_ADYEN_PAYMENT_MUTATION, variables, options);
+  return json?.data?.Payment?.ConfirmAdyenPayment ?? null;
+}
+var ADYEN_WEB_VERSION = "6.45.0";
+var ADYEN_WEB_JS_SRI = "sha384-7KW64UN6T0xZoacpNpRg2KVxMMVwfqwUNTDmalkE1roPBtjOpWe8JuJoUU7OCMvF";
+var ADYEN_WEB_CSS_SRI = "sha384-A4V58Hp1NTZmMvKn29pBh7249tw4TmfdL2szCtpKvaYfR/ARbXlXRYU20SLp/1VW";
+var ADYEN_ENVIRONMENTS = ["test", "live", "live-us", "live-au", "live-apse", "live-in"];
+function adyenAssetUrls(environment) {
+  const env = ADYEN_ENVIRONMENTS.includes(environment) ? environment : "test";
+  const base = `https://checkoutshopper-${env}.cdn.adyen.com/checkoutshopper/sdk/${ADYEN_WEB_VERSION}`;
+  return { js: `${base}/adyen.js`, css: `${base}/adyen.css` };
+}
+var assetLoads = /* @__PURE__ */ new Map();
+function loadAdyenWeb(environment) {
+  const g2 = globalThis;
+  const { js, css } = adyenAssetUrls(environment);
+  if (g2.AdyenWeb?.AdyenCheckout && g2.__vioAdyenWeb === js) return Promise.resolve();
+  const inFlight = assetLoads.get(js);
+  if (inFlight) return inFlight;
+  const load = new Promise((resolve, reject) => {
+    const doc = g2.document;
+    if (!doc?.head) {
+      reject(new Error("[Adyen] no document to load Adyen Web into"));
+      return;
+    }
+    if (!doc.head.querySelector(`link[data-vio-adyen="${ADYEN_WEB_VERSION}"]`)) {
+      const link = doc.createElement("link");
+      link.rel = "stylesheet";
+      link.href = css;
+      link.integrity = ADYEN_WEB_CSS_SRI;
+      link.crossOrigin = "anonymous";
+      link.setAttribute("data-vio-adyen", ADYEN_WEB_VERSION);
+      doc.head.appendChild(link);
+    }
+    const script = doc.createElement("script");
+    script.src = js;
+    script.async = true;
+    script.integrity = ADYEN_WEB_JS_SRI;
+    script.crossOrigin = "anonymous";
+    script.onload = () => {
+      if (g2.AdyenWeb?.AdyenCheckout && g2.AdyenWeb?.Dropin) {
+        g2.__vioAdyenWeb = js;
+        resolve();
+      } else {
+        reject(new Error("[Adyen] adyen.js loaded but AdyenWeb.AdyenCheckout is missing"));
+      }
+    };
+    script.onerror = () => {
+      reject(new Error(`[Adyen] could not load ${js}`));
+    };
+    doc.head.appendChild(script);
+  }).finally(() => {
+    assetLoads.delete(js);
+  });
+  assetLoads.set(js, load);
+  return load;
+}
+var AdyenOriginError = class extends Error {
+  constructor(origin) {
+    super(
+      `[Adyen] ${origin} is not an allowed origin of this Adyen client key \u2014 add it under Developers > API credentials > Client settings > Allowed origins.`
+    );
+    this.origin = origin;
+    this.name = "AdyenOriginError";
+  }
+};
+var looksLikeOriginProblem = (err) => /origin|client\s?key|14_0381|401|403/i.test(String(err?.message ?? err ?? ""));
+async function mountAdyen(container, session, handlers, options = {}) {
+  if (!session?.session_id || !session.session_data || !session.client_key) {
+    throw new Error("[Adyen] session is missing session_id, session_data or client_key");
+  }
+  await loadAdyenWeb(session.environment);
+  const { AdyenCheckout, Dropin } = globalThis.AdyenWeb;
+  if (options.theme?.accent) {
+    container.style.setProperty("--adyen-sdk-color-background-always-dark", options.theme.accent);
+  }
+  if (options.theme?.radiusMd && /^\d+(\.\d+)?px$/.test(options.theme.radiusMd)) {
+    container.style.setProperty("--adyen-sdk-border-radius-m", options.theme.radiusMd);
+  }
+  let paying = false;
+  let checkout;
+  try {
+    checkout = await AdyenCheckout({
+      session: { id: session.session_id, sessionData: session.session_data },
+      clientKey: session.client_key,
+      environment: session.environment,
+      locale: session.shopper_locale,
+      countryCode: session.country_code,
+      amount: { value: session.amount, currency: session.purchase_currency },
+      beforeSubmit: async (data, _component, actions) => {
+        if (paying) {
+          actions.reject();
+          return;
+        }
+        paying = true;
+        let proceed = false;
+        try {
+          proceed = await handlers.onBeforePay();
+        } catch {
+          proceed = false;
+        }
+        if (proceed) {
+          actions.resolve(data);
+        } else {
+          paying = false;
+          actions.reject();
+        }
+      },
+      onPaymentCompleted: (result) => {
+        paying = false;
+        handlers.onCompleted(result ?? {});
+      },
+      onPaymentFailed: (result) => {
+        paying = false;
+        handlers.onFailed(result ?? {});
+      },
+      onError: (error) => {
+        paying = false;
+        handlers.onError?.(error);
+      }
+    });
+  } catch (err) {
+    if (looksLikeOriginProblem(err)) {
+      throw new AdyenOriginError(globalThis.location?.origin ?? "this page");
+    }
+    throw err;
+  }
+  const dropin = new Dropin(checkout, {
+    // Vio's own confirmation follows; Adyen's success animation would sit
+    // between the payment and it.
+    disableFinalAnimation: true,
+    instantPaymentTypes: ["applepay", "googlepay"]
+  }).mount(container);
+  return {
+    sessionId: session.session_id,
+    unmount: () => {
+      try {
+        dropin.unmount();
+      } catch {
+      }
+    }
+  };
+}
+var ADYEN_RETURN_METHOD = "adyen";
+function adyenReturnParams(search = globalThis?.location?.search ?? "") {
+  try {
+    const params = new URLSearchParams(search);
+    const redirectResult = params.get("redirectResult");
+    if (!redirectResult) return null;
+    return { redirectResult, sessionId: params.get("sessionId") };
+  } catch {
+    return null;
+  }
+}
+var ADYEN_RETURN_QUERY_KEYS = [
+  "vio_payment",
+  "vio_method",
+  "vio_sponsor",
+  "checkout_id",
+  "sessionId",
+  "redirectResult"
+];
+function adyenReturnOutcome(payment) {
+  switch (payment?.status) {
+    case "authorised":
+      return "paid";
+    case "refused":
+    case "cancelled":
+    case "error":
+      return "failed";
+    // pending (Swish, Trustly…) and anything unrecognised: the webhook
+    // decides, and offering to pay again is the one thing not to do.
+    default:
+      return "pending";
+  }
+}
+
+// src/core/version.ts
+var SDK_VERSION = "0.13.0";
+
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
   if (err instanceof Error) return err.message;
@@ -6960,6 +7203,31 @@ function buildCheckoutAddress(address) {
     country_code
   };
 }
+function adyenReturnUrl(params) {
+  let page = null;
+  if (typeof window !== "undefined" && window.location?.href) {
+    try {
+      page = new URL(window.location.href);
+      ADYEN_RETURN_QUERY_KEYS.forEach((k2) => page?.searchParams.delete(k2));
+    } catch {
+      page = null;
+    }
+  }
+  const local = page?.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/.test(page.hostname);
+  const build = (base) => {
+    if (base && local) {
+      const url = new URL(base.toString());
+      Object.entries(params).forEach(([k2, v2]) => url.searchParams.set(k2, String(v2)));
+      return url.toString();
+    }
+    return resolveHttpsReturnUrl(base ? base.toString() : null, params);
+  };
+  const full = build(page);
+  if (full.length <= 1024 || !page) return full;
+  const bare = new URL(page.toString());
+  bare.search = "";
+  return build(bare);
+}
 function resolveHttpsReturnUrl(overrideUrl, params = null) {
   let url = overrideUrl ?? void 0;
   if (!url && typeof window !== "undefined" && window.location) {
@@ -7012,6 +7280,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.qliroController = null;
     /** Live Dibs.Checkout handle while a Nexi widget is mounted. */
     this.nexiHandle = null;
+    /** Live Drop-in while an Adyen session is mounted. */
+    this.adyenHandle = null;
     /**
      * The rate the shopper wants. Before an address it is only remembered (the
      * suggested one, or their pick); every re-pricing asks for it, and the
@@ -7818,6 +8088,84 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async getNexiOrder(checkoutId, sponsorId) {
     const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getNexiOrder(checkoutId, opts);
+  }
+  /**
+   * Adyen: FORM-FIRST. Saves the shopper's form and shipping pick on the
+   * checkout (Adyen collects neither), creates a session with that final
+   * amount and mounts Adyen's Drop-in on it. A session is never updated —
+   * after ANY change the caller destroys this mount and calls again.
+   *
+   * At "Pay" the backend only confirms that the session still pays for the
+   * checkout; when it does not, Adyen is stopped and `onReplaced` tells the
+   * caller to remount. Completion is asked of Adyen through the backend
+   * (`GetAdyenPayment`) — the browser's own result is never the answer.
+   */
+  async mountAdyenCheckout(container, sponsorId, formData, callbacks) {
+    this.destroyAdyen();
+    const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
+      sponsorId,
+      formData,
+      { paymentMethod: "Adyen" }
+    );
+    const session = await createPaymentAdyen(
+      {
+        checkoutId,
+        returnUrl: adyenReturnUrl({
+          vio_payment: "return",
+          vio_method: ADYEN_RETURN_METHOD,
+          vio_sponsor: spId,
+          checkout_id: checkoutId
+        }),
+        countryCode: getGlobalCountryCode(),
+        channel: "Web",
+        email: emailVal,
+        client: `web-sdk ${SDK_VERSION}`
+      },
+      opts
+    );
+    if (!session?.session_id) {
+      throw new Error("[CheckoutManager] Adyen session was not created");
+    }
+    const theme = readVioTheme();
+    this.adyenHandle = await mountAdyen(
+      container,
+      session,
+      {
+        onBeforePay: async () => {
+          const verdict = await confirmAdyenPayment(
+            { checkoutId, sessionId: session.session_id },
+            opts
+          );
+          if (verdict?.ok === true) return true;
+          callbacks.onReplaced(String(verdict?.reason ?? "UNKNOWN"));
+          return false;
+        },
+        onCompleted: (result) => {
+          void getAdyenPayment({ checkoutId, sessionResult: result?.sessionResult }, opts).catch(() => null).then((payment) => callbacks.onCompleted(payment, session));
+        },
+        onFailed: (result) => callbacks.onFailed(result, session),
+        onError: (error) => callbacks.onError?.(error)
+      },
+      { theme: { accent: theme?.accent, radiusMd: theme?.radiusMd } }
+    );
+    return session;
+  }
+  /** Unmount Drop-in. Safe to call when nothing is mounted. */
+  destroyAdyen() {
+    try {
+      this.adyenHandle?.unmount();
+    } catch {
+    }
+    this.adyenHandle = null;
+  }
+  /**
+   * Outcome of the Adyen session a checkout owns. With `redirectResult` (the
+   * return from Vipps, Klarna, Trustly or a redirect-3DS) the redirect is
+   * finalised on the server.
+   */
+  async getAdyenPayment(checkoutId, proof = {}, sponsorId) {
+    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    return getAdyenPayment({ checkoutId, ...proof }, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   setAddress(address) {
@@ -8626,9 +8974,6 @@ function toSmallestUnit(amount, currency) {
   if (zeroDecimal.has(currency.toUpperCase())) return Math.round(amount);
   return Math.round(amount * 100);
 }
-
-// src/core/version.ts
-var SDK_VERSION = "0.12.7";
 
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
@@ -10677,8 +11022,14 @@ function normalizeMethodName(name) {
   return String(name ?? "").toLowerCase().replace(/[^a-z]/g, "");
 }
 var EMBEDDED_METHODS = ["kustom", "qliro", "walley", "nexi"];
+var FORM_FIRST_WIDGET_METHODS = ["adyen"];
+var NO_EXPRESS_BUTTON_METHODS = [
+  ...EMBEDDED_METHODS,
+  ...FORM_FIRST_WIDGET_METHODS
+];
 var COLLECTS_OWN_ADDRESS = [...EMBEDDED_METHODS, "vipps"];
 var isEmbeddedMethod = (name) => EMBEDDED_METHODS.includes(normalizeMethodName(name));
+var isFormFirstWidgetMethod = (name) => FORM_FIRST_WIDGET_METHODS.includes(normalizeMethodName(name));
 var collectsOwnAddress = (name) => COLLECTS_OWN_ADDRESS.includes(normalizeMethodName(name));
 function isMethodEnabled(available, ...names) {
   if (available === null) return true;
@@ -11793,7 +12144,7 @@ var VioProductDetail = class extends i4 {
             </button>
           </div>
 
-          ${this.availableQuantity > 0 && this.methodEnabled(...EMBEDDED_METHODS) ? b2`
+          ${this.availableQuantity > 0 && this.methodEnabled(...NO_EXPRESS_BUTTON_METHODS) ? b2`
                 <button
                   class="buy-now"
                   @click=${this.buyNow}
@@ -12787,6 +13138,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.nexiPicking = false;
     /** The Nexi payment to resume on the next mount — set only by the ?paymentId= return. */
     this.nexiResumePaymentId = null;
+    this.adyenMounting = false;
+    this.adyenRequested = false;
+    this.adyenMounted = false;
+    this.adyenStale = false;
+    this.adyenSettled = false;
+    /** The checkout session (see embedSession) and the purchase the mounted photo is of. */
+    this.adyenMountedFor = null;
+    this.adyenMountedKey = null;
     this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
@@ -12878,6 +13237,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.unmountQliro();
         this.unmountWalley();
         this.unmountNexi();
+        this.unmountAdyen();
+        this.adyenSettled = false;
       }
     };
     this.boundOnPaymentComplete = (e7) => {
@@ -13754,6 +14115,56 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
       }
+      if (vioMethod === ADYEN_RETURN_METHOD && checkoutId) {
+        const adyenReturn = adyenReturnParams(window.location.search);
+        this.cleanReturnQueryParams(ADYEN_RETURN_QUERY_KEYS);
+        if (!adyenReturn) return;
+        this.returningFrom = "adyen";
+        this.adyenSettled = true;
+        this.autoSelectAttempted = true;
+        if (!this.checkoutState) {
+          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          if (spIdToUse) {
+            try {
+              Vio.checkout.open(spIdToUse);
+              Vio.checkout.selectPaymentMethod("adyen");
+            } catch {
+            }
+          }
+        }
+        this.open = true;
+        this.paymentNotice = "Bekrefter betalingen\u2026";
+        let payment = null;
+        let sawStatus = false;
+        try {
+          payment = await Vio.checkout.getAdyenPayment(
+            checkoutId,
+            { redirectResult: adyenReturn.redirectResult },
+            sponsorId || void 0
+          );
+          sawStatus = !!payment;
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] Adyen return could not be verified:", err);
+          }
+        }
+        this.paymentNotice = null;
+        const outcome = sawStatus ? adyenReturnOutcome(payment) : "pending";
+        this.applyReturnOutcome(outcome, sawStatus, "adyen", sponsorId, checkoutId);
+        if (outcome === "paid" && this.confirmedOrder) {
+          this.confirmedOrder = {
+            ...this.confirmedOrder,
+            currency: payment?.purchase_currency ?? this.confirmedOrder.currency,
+            total: payment?.total_price ?? this.confirmedOrder.total
+          };
+          this.addAdyenPaymentDetails(payment);
+        }
+        if (outcome === "failed") {
+          this.returningFrom = null;
+          this.adyenSettled = false;
+        }
+        return;
+      }
       if (vioMethod === "vipps" && checkoutId) {
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
@@ -13839,6 +14250,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     Vio.checkout.removeEventListener("qliro-event", this.boundOnQliroEvent);
     this.unmountKlarna();
     this.unmountNexi();
+    this.unmountAdyen();
     super.disconnectedCallback();
   }
   updated(changed) {
@@ -13854,6 +14266,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountQliro();
       this.unmountWalley();
       this.unmountNexi();
+      this.unmountAdyen();
       this.paymentError = null;
     }
     void this.mountKlarnaIfNeeded();
@@ -13861,6 +14274,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     void this.mountQliroIfNeeded();
     void this.mountWalleyIfNeeded();
     void this.mountNexiIfNeeded();
+    this.dropStaleAdyen();
+    void this.mountAdyenIfNeeded();
   }
   close() {
     this.open = false;
@@ -13998,6 +14413,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       qliro: "qliro",
       walley: "walley",
       nexi: "nexi",
+      // Selected, not mounted: Adyen waits for the form (see adyenRequested).
+      adyen: "adyen",
       vipps: "vipps",
       klarna: this.klarnaAvailable ? "klarna" : void 0,
       applepay: this.applePayAvailable ? "apple-pay" : void 0
@@ -14194,6 +14611,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
     }
     Vio.checkout.selectPaymentMethod(method);
+    if (method === "adyen") {
+      this.adyenRequested = true;
+      return;
+    }
     if (method === "stripe") {
       const selectedOpt = this.shippingList.find((s4) => s4.id === this.selectedShipping);
       if (selectedOpt?.supplierId) {
@@ -14291,6 +14712,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
         return "Walley";
       case "nexi":
         return "Nexi";
+      // Adyen is not a name shoppers know; what they pick from is inside it.
+      case "adyen":
+        return "Kort, Vipps og flere";
       case "vipps":
         return "Vipps";
       case "stripe":
@@ -14303,7 +14727,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /** True for methods that complete via a separate sheet/widget, not the CTA. */
   isExpressMethod(method) {
-    return method === "apple-pay" || method === "klarna" || isEmbeddedMethod(method ?? "");
+    return method === "apple-pay" || method === "klarna" || isEmbeddedMethod(method ?? "") || // Adyen's Drop-in brings its own Pay button.
+    isFormFirstWidgetMethod(method ?? "");
   }
   orderTotal() {
     const s4 = this.checkoutState;
@@ -14830,6 +15255,165 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.nexiPicking = false;
     }
   }
+  /* ── Adyen: our form first, then Adyen's Drop-in on a session ─────────── */
+  /**
+   * What an Adyen session is a photo OF. When any of it changes under a
+   * mounted Drop-in, that session no longer describes the purchase: it is
+   * dropped, and the shopper asks for the payment step again.
+   */
+  adyenPurchaseKey() {
+    return JSON.stringify([
+      this.adyenFormKey(),
+      this.items.map((i5) => [i5.productId, i5.variantId ?? "", i5.quantity]),
+      this.checkoutState?.subtotal ?? 0
+    ]);
+  }
+  /** The part of the photo the shopper types and picks. */
+  adyenFormKey() {
+    const f3 = this.form;
+    return JSON.stringify([
+      f3.firstName,
+      f3.lastName,
+      f3.email,
+      f3.address,
+      f3.postalCode,
+      f3.city,
+      f3.country ?? "",
+      this.selectedShipping
+    ]);
+  }
+  /** A mounted session whose purchase changed is taken down — never patched. */
+  dropStaleAdyen() {
+    if (!this.adyenMounted || this.adyenMounting) return;
+    if (this.adyenMountedKey === this.adyenPurchaseKey()) return;
+    this.unmountAdyen();
+    this.adyenStale = true;
+  }
+  async mountAdyenIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "adyen") return;
+    if (!this.mayStartEmbeddedPayment() || this.adyenSettled) return;
+    if (this.adyenMounting) return;
+    if (this.adyenMounted) {
+      if (this.adyenMountedFor === this.embedSession()) return;
+      this.unmountAdyen();
+    }
+    if (!this.adyenRequested || !this.isAddressValid || !this.hasSelectedShipping) return;
+    this.adyenRequested = false;
+    this.adyenMounting = true;
+    this.adyenStale = false;
+    this.paymentError = null;
+    const spId = this.checkoutState.sponsorId;
+    const mountedFor = this.embedSession();
+    const formKey = this.adyenFormKey();
+    try {
+      const selectedOpt = this.shippingList.find((o7) => o7.id === this.selectedShipping);
+      if (selectedOpt?.supplierId) {
+        await Vio.checkout.updateShippingsBySupplier(
+          [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+          spId
+        );
+      }
+      await this.updateComplete;
+      const container = this.lightContainer("vio-adyen-checkout-container", "vio-adyen");
+      container.innerHTML = "";
+      await Vio.checkout.mountAdyenCheckout(container, spId, this.form, {
+        onCompleted: (payment, session) => this.onAdyenCompleted(spId, payment, session),
+        onFailed: () => {
+          this.unmountAdyen();
+          this.paymentError = "Betalingen ble ikke gjennomf\xF8rt. Pr\xF8v igjen, eller velg en annen betalingsm\xE5te.";
+        },
+        onReplaced: (reason) => {
+          this.unmountAdyen();
+          this.adyenStale = true;
+          if (reason === "ALREADY_PAID") {
+            this.adyenSettled = true;
+            this.paymentNotice = "Denne bestillingen er allerede betalt.";
+          }
+        },
+        onError: (error) => {
+          if (typeof console !== "undefined") console.warn("[VioCheckout] Adyen error:", error);
+        }
+      });
+      if (this.embedSession() !== mountedFor || this.checkoutState?.paymentMethod !== "adyen" || !this.open) {
+        this.unmountAdyen();
+        return;
+      }
+      if (this.adyenFormKey() !== formKey) {
+        this.unmountAdyen();
+        this.adyenStale = true;
+        return;
+      }
+      this.adyenMounted = true;
+      this.adyenMountedFor = mountedFor;
+      this.adyenMountedKey = this.adyenPurchaseKey();
+    } catch (err) {
+      this.unmountAdyen();
+      this.paymentError = err instanceof AdyenOriginError ? "Betaling er ikke aktivert for denne siden enn\xE5. Ta kontakt med butikken." : `Kunne ikke laste betaling: ${err instanceof Error ? err.message : String(err)}`;
+      if (typeof console !== "undefined") console.warn("[VioCheckout] Adyen mount failed:", err);
+    } finally {
+      this.adyenMounting = false;
+    }
+  }
+  onAdyenCompleted(sponsorId, payment, session) {
+    const outcome = adyenReturnOutcome(payment);
+    this.unmountAdyen();
+    if (outcome === "paid") {
+      this.adyenSettled = true;
+      this.confirmOrder("adyen", sponsorId, {
+        chargedTotal: payment?.total_price ?? session.total_price
+      });
+      this.addAdyenPaymentDetails(payment);
+    } else if (outcome === "pending") {
+      this.adyenSettled = true;
+      this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
+    } else {
+      this.paymentError = "Betalingen ble ikke gjennomf\xF8rt. Pr\xF8v igjen, eller velg en annen betalingsm\xE5te.";
+    }
+  }
+  /** What Adyen told us about the payment, on Vio's confirmation. */
+  addAdyenPaymentDetails(payment) {
+    if (!this.confirmedOrder || !payment) return;
+    this.confirmedOrder = {
+      ...this.confirmedOrder,
+      ...payment.psp_reference ? { providerRef: { label: "Betalingsreferanse", value: payment.psp_reference } } : {},
+      ...payment.payment_method ? { paidWith: payment.payment_method } : {},
+      ...payment.email && !this.confirmedOrder.email ? { email: payment.email } : {},
+      ...payment.shipping_name && !this.confirmedOrder.shipping ? { shipping: { name: payment.shipping_name, price: payment.shipping_price ?? 0 } } : {}
+    };
+  }
+  unmountAdyen() {
+    Vio.checkout.destroyAdyen();
+    this.adyenMounted = false;
+    this.adyenMountedFor = null;
+    this.adyenMountedKey = null;
+    this.adyenRequested = false;
+    this.adyenStale = false;
+    this.querySelector("#vio-adyen-checkout-container")?.remove();
+  }
+  renderAdyenPanel() {
+    const ready = this.isAddressValid && this.hasSelectedShipping;
+    const showButton = !this.adyenMounted && !this.adyenMounting && !this.adyenSettled;
+    return b2`
+      <div class="adyen-panel">
+        ${this.adyenMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster betaling…</div>` : ""}
+        ${this.adyenStale && showButton ? b2`<div class="payment-notice">Bestillingen ble endret. Oppdater betalingen for å fortsette.</div>` : ""}
+        ${showButton ? b2`
+              <button
+                class="payment-btn primary complete-cta"
+                ?disabled=${!ready}
+                title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
+                @click=${() => {
+      this.adyenRequested = true;
+    }}
+              >
+                ${this.adyenStale ? "Oppdater betaling" : `G\xE5 til betaling \xB7 ${this.payTotalLabel()}`}
+              </button>
+            ` : ""}
+        <slot name="vio-adyen"></slot>
+      </div>
+    `;
+  }
   renderNexiPanel() {
     return b2`
       <div class="nexi-panel">
@@ -15087,6 +15671,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountQliro();
       this.unmountWalley();
       this.unmountNexi();
+      this.unmountAdyen();
       Vio.checkout.selectPaymentMethod("");
     }}
                           >
@@ -15100,6 +15685,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "qliro" ? this.renderQliroPanel() : ""}
                   ${method === "walley" ? this.renderWalleyPanel() : ""}
                   ${method === "nexi" ? this.renderNexiPanel() : ""}
+                  ${method === "adyen" ? this.renderAdyenPanel() : ""}
                   ${method === "stripe" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
@@ -15198,6 +15784,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("nexi") ? b2`
                           <button class="payment-btn" @click=${() => this.onPay("nexi")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Nexi</span>
+                          </button>
+                        ` : ""}
+                    ${this.methodEnabled("adyen") ? b2`
+                          <button class="payment-btn" @click=${() => this.onPay("adyen")}>
+                            <span style="font-weight:700;font-size:15px;letter-spacing:-0.01em">${this.methodLabel("adyen")}</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
@@ -15336,6 +15927,21 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "nexiPicking", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "adyenMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "adyenRequested", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "adyenMounted", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "adyenStale", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "adyenSettled", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroShipping", 2);
