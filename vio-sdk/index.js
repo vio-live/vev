@@ -6287,15 +6287,23 @@ async function createKlarnaPaymentsWidget(input) {
 }
 
 // src/core/checkout/payments/kustom.ts
-var CREATE_PAYMENT_KUSTOM_MUTATION = `
-mutation CreatePaymentKustom($checkoutId: String!, $countryCode: String!, $href: String!, $email: String) {
-  Payment {
-    CreatePaymentKustom(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email) {
+var KUSTOM_ORDER_FIELDS = `
       order_id
       status
       html_snippet
       purchase_country
       purchase_currency
+      checkout_id
+      environment
+      total_price
+      shipping_name
+      shipping_price
+      order_created
+      reference`;
+var CREATE_PAYMENT_KUSTOM_MUTATION = `
+mutation CreatePaymentKustom($checkoutId: String!, $countryCode: String!, $href: String!, $email: String, $client: String) {
+  Payment {
+    CreatePaymentKustom(checkout_id: $checkoutId, country_code: $countryCode, href: $href, email: $email, client: $client) {${KUSTOM_ORDER_FIELDS}
     }
   }
 }
@@ -6303,12 +6311,15 @@ mutation CreatePaymentKustom($checkoutId: String!, $countryCode: String!, $href:
 var GET_KUSTOM_ORDER_QUERY = `
 query GetKustomOrder($orderId: String!) {
   Payment {
-    GetKustomOrder(order_id: $orderId) {
-      order_id
-      status
-      html_snippet
-      purchase_country
-      purchase_currency
+    GetKustomOrder(order_id: $orderId) {${KUSTOM_ORDER_FIELDS}
+    }
+  }
+}
+`;
+var SYNC_PAYMENT_KUSTOM_MUTATION = `
+mutation SyncPaymentKustom($checkoutId: String!) {
+  Payment {
+    SyncPaymentKustom(checkout_id: $checkoutId) {${KUSTOM_ORDER_FIELDS}
     }
   }
 }
@@ -6320,6 +6331,10 @@ async function createPaymentKustom(variables, options) {
 async function getKustomOrder(orderId, options) {
   const json = await executeCartGraphQL(GET_KUSTOM_ORDER_QUERY, { orderId }, options);
   return json?.data?.Payment?.GetKustomOrder ?? null;
+}
+async function syncPaymentKustom(checkoutId, options) {
+  const json = await executeCartGraphQL(SYNC_PAYMENT_KUSTOM_MUTATION, { checkoutId }, options);
+  return json?.data?.Payment?.SyncPaymentKustom ?? null;
 }
 function kustomCleanHref() {
   if (typeof window === "undefined" || !window.location) return "";
@@ -6336,6 +6351,64 @@ function renderKustomSnippet(container, htmlSnippet) {
     newScript.text = oldScript.text;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
   }
+}
+function kustomApi() {
+  if (typeof window === "undefined") return null;
+  const fn = window._klarnaCheckout;
+  return typeof fn === "function" ? fn : null;
+}
+function suspendKustom() {
+  const api = kustomApi();
+  if (!api) return false;
+  api((a3) => a3.suspend());
+  return true;
+}
+function resumeKustom() {
+  const api = kustomApi();
+  if (!api) return false;
+  api((a3) => a3.resume());
+  return true;
+}
+function installKustomListeners(handlers) {
+  let alive = true;
+  const api = kustomApi();
+  if (api) {
+    api((a3) => {
+      a3.on({
+        load: (data) => alive && handlers.onLoad?.(data),
+        order_total_change: (data) => {
+          const total = Number(data?.order_total);
+          if (alive && Number.isFinite(total)) handlers.onOrderTotalChange?.(total);
+        },
+        shipping_option_change: (data) => alive && handlers.onShippingOptionChange?.(data ?? {}),
+        can_not_complete_order: () => alive && handlers.onCannotComplete?.(),
+        network_error: () => alive && handlers.onNetworkError?.(),
+        redirect_initiated: () => alive && handlers.onRedirectInitiated?.()
+      });
+    });
+  }
+  return {
+    destroy() {
+      alive = false;
+    }
+  };
+}
+var KUSTOM_RETURN_QUERY_KEYS = [
+  "order_id",
+  "payment_processor",
+  "checkout_id",
+  "vio_payment",
+  "vio_method"
+];
+function kustomReturnOutcome(params) {
+  const orderId = params.get("order_id") || "";
+  if (params.get("payment_processor") === "KUSTOM" && orderId) {
+    return { kind: "confirmation", orderId, checkoutId: params.get("checkout_id") || void 0 };
+  }
+  if (params.get("vio_payment") === "rejected" && params.get("vio_method") === "kustom") {
+    return { kind: "rejected", checkoutId: params.get("checkout_id") || void 0 };
+  }
+  return null;
 }
 
 // src/core/checkout/payments/qliro.ts
@@ -7013,7 +7086,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.13.0";
+var SDK_VERSION = "0.14.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -7302,6 +7375,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.paymentMethodsCache = /* @__PURE__ */ new Map();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.paymentMethodsPromises = /* @__PURE__ */ new Map();
+    this.kustomController = null;
     preloadStripeJs();
   }
   open(sponsorId) {
@@ -7642,7 +7716,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * and render its html_snippet into `container`. The widget collects
    * address, shipping and payment by itself; the SDK renders nothing else.
    */
-  async mountKustomCheckout(container, sponsorId) {
+  async mountKustomCheckout(container, sponsorId, handlers = {}) {
     const spId = sponsorId ?? this.state?.sponsorId;
     if (!spId) throw new Error("[CheckoutManager] no sponsor for Kustom");
     const cart = this.cartManager.getCart(spId);
@@ -7669,15 +7743,41 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         checkoutId,
         countryCode: getGlobalCountryCode(),
         href,
-        email: this.state?.address?.email || void 0
+        email: this.state?.address?.email || void 0,
+        client: `web-sdk ${SDK_VERSION}`
       },
       opts
     );
     if (!order?.html_snippet) {
       throw new Error("Kustom order creation failed: missing html_snippet");
     }
+    this.destroyKustomListeners();
     renderKustomSnippet(container, order.html_snippet);
+    this.kustomController = installKustomListeners(handlers);
     return order;
+  }
+  /** Disarm the widget's listeners with the widget they belong to. */
+  destroyKustomListeners() {
+    this.kustomController?.destroy();
+    this.kustomController = null;
+  }
+  /**
+   * The cart changed under an open Kustom widget: lock it, push the cart
+   * into the SAME order, and let the widget refresh itself. Kustom's own
+   * rule — never a new order for a cart change. The widget auto-resumes
+   * after 10 s if the sync never comes back.
+   */
+  async syncKustomOrder(sponsorId) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    const checkoutId = this.state?.checkoutId;
+    if (!spId || !checkoutId) return null;
+    const opts = await getCartGraphQLOptions(spId);
+    suspendKustom();
+    try {
+      return await syncPaymentKustom(checkoutId, opts);
+    } finally {
+      resumeKustom();
+    }
   }
   /** Re-read a Kustom order — used on the confirmation return trip. */
   async getKustomOrder(orderId, sponsorId) {
@@ -13121,6 +13221,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.availableShippingsList = [];
     this.availableMethods = null;
     this.kustomMounting = false;
+    this.kustomSyncing = false;
+    this.kustomShipping = null;
+    this.kustomTotal = null;
+    this.kustomNotice = null;
+    /** The cart the mounted Kustom order describes — see kustomCartKey. */
+    this.kustomMountedKey = null;
     this.kustomMountedOrderId = null;
     /** The checkout session (see embedSession) each embedded widget's order belongs to. */
     this.kustomMountedFor = null;
@@ -13950,9 +14056,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.open = true;
         return;
       }
-      if (!vioPayment && !checkoutId) return;
-      const kustomOrderId = urlParams.get("order_id") || "";
-      if (urlParams.get("payment_processor") === "KUSTOM" && kustomOrderId) {
+      const kustomReturn = kustomReturnOutcome(urlParams);
+      if (kustomReturn?.kind === "rejected") {
+        this.cleanReturnQueryParams([...KUSTOM_RETURN_QUERY_KEYS]);
+        this.kustomNotice = "Bestillingen ble endret. Betalingen ble ikke gjennomf\xF8rt \u2014 pr\xF8v igjen.";
+        return;
+      }
+      if (kustomReturn?.kind === "confirmation") {
+        const kustomOrderId = kustomReturn.orderId;
         this.returningFrom = "kustom";
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
@@ -13969,37 +14080,21 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
         this.open = true;
         this.paymentNotice = "Bekrefter betalingen\u2026";
+        this.cleanReturnQueryParams([...KUSTOM_RETURN_QUERY_KEYS]);
         try {
           const order = await Vio.checkout.getKustomOrder(
             kustomOrderId,
             this.checkoutState?.sponsorId
           );
           this.paymentNotice = null;
-          if (order?.html_snippet) {
-            this.kustomMountedOrderId = order.order_id;
+          if (order?.status === "checkout_complete" && order.html_snippet) {
+            const spId = this.checkoutState?.sponsorId ?? 0;
+            this.showProviderReceipt("kustom", spId, order);
             await this.updateComplete;
-            const container = this.renderRoot?.querySelector(
-              "#vio-kustom-checkout-container"
-            );
-            if (container) {
-              Vio.checkout.renderKustomSnippet(container, order.html_snippet);
-            }
-            if (order.status === "checkout_complete") {
-              this.dispatchEvent(
-                new CustomEvent("vio:payment-success", {
-                  detail: { method: "kustom", orderId: order.order_id },
-                  bubbles: true,
-                  composed: true
-                })
-              );
-              const spId = this.checkoutState?.sponsorId;
-              if (spId) {
-                try {
-                  Vio.cart.clearSponsorCart(spId);
-                } catch {
-                }
-              }
-            }
+            const container = this.lightContainer("vio-kustom-checkout-container", "vio-kustom");
+            Vio.checkout.renderKustomSnippet(container, order.html_snippet);
+          } else {
+            this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           }
         } catch (err) {
           this.paymentNotice = null;
@@ -14008,9 +14103,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
             console.warn("[VioCheckout] Kustom confirmation read failed:", err);
           }
         }
-        this.cleanReturnQueryParams(["order_id", "payment_processor"]);
         return;
       }
+      if (!vioPayment && !checkoutId) return;
       if (urlParams.get("payment_processor") === "QLIRO" && checkoutId) {
         this.returningFrom = "qliro";
         if (!this.checkoutState) {
@@ -14271,6 +14366,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
+    this.syncKustomIfStale();
     void this.mountQliroIfNeeded();
     void this.mountWalleyIfNeeded();
     void this.mountNexiIfNeeded();
@@ -14745,6 +14841,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.checkoutState?.paymentMethod === "nexi" && typeof this.nexiShipping?.shipping_price === "number") {
       return this.nexiShipping.shipping_price;
     }
+    if (this.checkoutState?.paymentMethod === "kustom" && typeof this.kustomShipping?.price === "number") {
+      return this.kustomShipping.price;
+    }
     if (!this.express && this.availableShippingsList.length === 0) return 0;
     const o7 = this.shippingOption;
     if (!o7) return 0;
@@ -14797,7 +14896,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * and is projected here, untouched.
    */
   renderProviderReceipt() {
-    const slot = this.providerReceipt === "walley" ? "vio-walley" : "vio-qliro";
+    const slot = this.providerReceipt === "walley" ? "vio-walley" : this.providerReceipt === "kustom" ? "vio-kustom" : "vio-qliro";
     return b2`
       <section class="section provider-receipt">
         <slot name=${slot}></slot>
@@ -14933,30 +15032,46 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return `${s4?.sponsorId ?? ""}|${s4?.session ?? ""}`;
   }
   /** Klarna Payments widget panel: shipping + category chips + widget + pay button. */
+  /**
+   * The cart a Kustom order describes. When it changes under a mounted
+   * widget, the order is UPDATED in place (Kustom's rule) — see
+   * syncKustomIfStale. The order is a photo of the lines, not of the form:
+   * address and shipping live inside the widget.
+   */
+  kustomCartKey() {
+    return JSON.stringify([
+      this.items.map((i5) => [i5.productId, i5.variantId ?? "", i5.quantity]),
+      this.checkoutState?.subtotal ?? 0
+    ]);
+  }
   /** Mount the Kustom embedded checkout once it's the chosen method. */
   async mountKustomIfNeeded() {
     if (!this.open || !this.checkoutState) return;
     if (this.checkoutState.paymentMethod !== "kustom") return;
     if (!this.mayStartEmbeddedPayment()) return;
-    if (this.kustomMounting) return;
-    const container = this.renderRoot?.querySelector(
-      "#vio-kustom-checkout-container"
-    );
-    if (!container) return;
-    if (this.kustomMountedOrderId && container.childElementCount > 0) {
+    if (this.kustomMounting || this.kustomSyncing) return;
+    if (this.kustomMountedOrderId) {
       if (this.kustomMountedFor === this.embedSession()) return;
       this.unmountKustom();
     }
+    const container = this.lightContainer("vio-kustom-checkout-container", "vio-kustom");
     const mountedFor = this.embedSession();
+    const mountedKey = this.kustomCartKey();
     this.kustomMounting = true;
+    this.kustomNotice = null;
+    this.paymentError = null;
     container.innerHTML = "";
     try {
       const order = await Vio.checkout.mountKustomCheckout(
         container,
-        this.checkoutState.sponsorId
+        this.checkoutState.sponsorId,
+        this.kustomHandlers()
       );
       this.kustomMountedOrderId = order.order_id;
       this.kustomMountedFor = mountedFor;
+      this.kustomMountedKey = mountedKey;
+      this.kustomShipping = order.shipping_name !== void 0 || order.shipping_price !== void 0 ? { name: order.shipping_name, price: order.shipping_price } : null;
+      this.kustomTotal = typeof order.total_price === "number" ? order.total_price : null;
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Kustom mount failed:", err);
@@ -14967,19 +15082,69 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.kustomMounting = false;
     }
   }
+  /** What the widget tells us, kept only to show — never acted on server-side. */
+  kustomHandlers() {
+    return {
+      onOrderTotalChange: (minor) => {
+        this.kustomTotal = minor / 100;
+      },
+      onShippingOptionChange: (o7) => {
+        this.kustomShipping = {
+          name: o7?.name,
+          price: typeof o7?.price === "number" ? o7.price / 100 : void 0
+        };
+      },
+      onCannotComplete: () => {
+        this.kustomNotice = "Betalingen kunne ikke gjennomf\xF8res med valgt metode. Velg en annen betalingsm\xE5te.";
+      },
+      onNetworkError: () => {
+        this.kustomNotice = "Mistet kontakt med betalingsvinduet. Last inn siden p\xE5 nytt.";
+      }
+    };
+  }
+  /**
+   * The cart changed under a mounted Kustom widget: suspend it, push the
+   * cart into the same order, resume it. Never a second order, never a
+   * widget showing a total the backend will not charge (the validation
+   * callback would refuse it). A failed sync takes the widget down.
+   */
+  syncKustomIfStale() {
+    if (!this.kustomMountedOrderId || this.kustomMounting || this.kustomSyncing) return;
+    if (this.providerReceipt || this.returningFrom) return;
+    const key = this.kustomCartKey();
+    if (key === this.kustomMountedKey) return;
+    this.kustomSyncing = true;
+    this.kustomMountedKey = key;
+    void Vio.checkout.syncKustomOrder(this.checkoutState?.sponsorId).then((order) => {
+      if (!order) throw new Error("no order");
+      this.kustomMountedOrderId = order.order_id;
+      this.kustomTotal = typeof order.total_price === "number" ? order.total_price : this.kustomTotal;
+    }).catch((err) => {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] Kustom sync failed:", err);
+      }
+      this.unmountKustom();
+      this.kustomNotice = "Bestillingen ble endret. Last inn betalingen p\xE5 nytt.";
+    }).finally(() => {
+      this.kustomSyncing = false;
+    });
+  }
   unmountKustom() {
     this.kustomMountedOrderId = null;
     this.kustomMountedFor = null;
-    const container = this.renderRoot?.querySelector(
-      "#vio-kustom-checkout-container"
-    );
-    if (container) container.innerHTML = "";
+    this.kustomMountedKey = null;
+    this.kustomShipping = null;
+    this.kustomTotal = null;
+    Vio.checkout.destroyKustomListeners();
+    this.querySelector("#vio-kustom-checkout-container")?.remove();
   }
   renderKustomPanel() {
     return b2`
       <div class="kustom-panel">
         ${this.kustomMounting ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster Kustom…</div>` : ""}
-        <div id="vio-kustom-checkout-container"></div>
+        ${this.kustomSyncing ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Oppdaterer bestillingen…</div>` : ""}
+        ${this.kustomNotice ? b2`<div class="payment-notice">${this.kustomNotice}</div>` : ""}
+        <slot name="vio-kustom"></slot>
       </div>
     `;
   }
@@ -15909,6 +16074,18 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "kustomMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "kustomSyncing", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "kustomShipping", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "kustomTotal", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "kustomNotice", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroMounting", 2);
