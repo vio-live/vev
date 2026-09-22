@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Vio, primaryImageUrl } from "../../vio-sdk";
 import { checkHasVariants, fetchVioProduct, getProductPriceAmount, openCart } from "./vio-helpers";
 import {
@@ -7,6 +7,7 @@ import {
   trackSelectItem,
   trackViewItem,
   trackViewItemList,
+  observeVioImpression,
 } from "./analytics";
 
 /**
@@ -212,6 +213,9 @@ type ProductCardViewProps = {
   loading?: boolean;
   qty: number;
   config?: CardConfig;
+  /** Solo lo pasa la tarjeta SUELTA, para observar su impresión. Dentro de
+   *  una grilla o carrusel queda sin pasar: ahí cuenta el contenedor. */
+  rootRef?: React.Ref<HTMLDivElement>;
 };
 
 export function ProductCardView({
@@ -221,6 +225,7 @@ export function ProductCardView({
   loading,
   qty,
   config = {},
+  rootRef,
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
 
@@ -353,7 +358,7 @@ export function ProductCardView({
   }
 
   return (
-    <div className={`vio-native-card l-${layout}`} style={accentStyle}>
+    <div ref={rootRef} className={`vio-native-card l-${layout}`} style={accentStyle}>
       <div
         className="vnc-image"
         role="button"
@@ -445,6 +450,19 @@ export function VioProductCardSelf({
   useEffect(() => {
     if (product) trackViewItemList([productToItem(product)], product?.title);
   }, [product]);
+
+  // Impresión REAL (≥50% visible ≥1s). Depende de product: el ref recién
+  // apunta a la raíz cargada cuando el producto llegó.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!product) return;
+    return observeVioImpression(
+      rootRef.current,
+      { sponsorId, componentTemplateId: "vev-card" },
+      `vev-card:${sponsorId}:${productId}`,
+    );
+  }, [product, sponsorId, productId]);
+
   return (
     <ProductCardView
       productId={productId}
@@ -453,6 +471,7 @@ export function VioProductCardSelf({
       loading={loading}
       qty={qty}
       config={config}
+      rootRef={rootRef}
     />
   );
 }

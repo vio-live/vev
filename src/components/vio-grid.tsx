@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
-import { productToItem, trackViewItemList } from "./analytics";
+import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 
 /**
  * Vio Product Grid — a responsive grid of product cards. The editor picks the
@@ -44,7 +44,21 @@ export default function VioProductGrid(props: Props) {
   const { products, kicker, heading, columns = 3, gap = 20 } = props;
 
   const [list, setList] = useState<any[]>([]);
+
   const [activeSponsor, setActiveSponsor] = useState(getActiveSponsorId());
+  // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
+  // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
+  // doble conteo. Corre cuando hay productos, porque recién ahí se monta
+  // la raíz real (sin productos se renderiza el estado vacío).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (list.length === 0) return;
+    return observeVioImpression(
+      rootRef.current,
+      { sponsorId: activeSponsor, componentTemplateId: "vev-grid", locationId: heading || kicker || "Vio Grid" },
+      `vev-grid:${activeSponsor}:${heading || kicker || "Vio Grid"}`,
+    );
+  }, [list.length, activeSponsor, heading, kicker]);
   const ids = parseIds(products?.ids);
   const idsKey = ids.join(",");
 
@@ -86,7 +100,7 @@ export default function VioProductGrid(props: Props) {
   }
 
   return (
-    <div className="vio-grid-wrap">
+    <div ref={rootRef} className="vio-grid-wrap">
       {(kicker || heading) && (
         <div className="vio-grid-head">
           <div>
