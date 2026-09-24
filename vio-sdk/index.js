@@ -5927,6 +5927,94 @@ async function prepareApplePay(config) {
   }
 }
 
+// src/core/checkout/payments/stripe-embedded.ts
+var CREATE_PAYMENT_INTENT_STRIPE_MUTATION = `
+mutation CreatePaymentIntentStripe($checkoutId: String!) {
+  Payment {
+    CreatePaymentIntentStripe(checkout_id: $checkoutId) {
+      client_secret
+      publishable_key
+      customer
+    }
+  }
+}
+`;
+async function createStripeIntent(checkoutId, options) {
+  const json = await executeCartGraphQL(
+    CREATE_PAYMENT_INTENT_STRIPE_MUTATION,
+    { checkoutId },
+    options
+  );
+  return json?.data?.Payment?.CreatePaymentIntentStripe ?? null;
+}
+var SETTLED = /* @__PURE__ */ new Set(["succeeded"]);
+var IN_FLIGHT = /* @__PURE__ */ new Set(["processing", "requires_capture"]);
+async function mountStripeElement(container, intent, options) {
+  if (!intent?.client_secret || !intent.publishable_key) {
+    throw new Error("[Stripe] the payment is missing its client secret or publishable key");
+  }
+  await loadStripeJs();
+  const Stripe = globalThis.Stripe;
+  if (typeof Stripe !== "function") {
+    throw new Error("[Stripe] stripe.js loaded but window.Stripe is missing");
+  }
+  const stripe = Stripe(intent.publishable_key);
+  const appearance = { theme: "stripe" };
+  const variables = {};
+  if (options.theme?.accent) variables.colorPrimary = options.theme.accent;
+  if (options.theme?.radiusMd) variables.borderRadius = options.theme.radiusMd;
+  if (Object.keys(variables).length > 0) appearance.variables = variables;
+  const elements = stripe.elements({
+    clientSecret: intent.client_secret,
+    appearance,
+    locale: options.locale ?? "nb"
+  });
+  const element = elements.create("payment", { layout: "tabs" });
+  if (options.onReady) element.on("ready", () => options.onReady?.());
+  if (options.onLoadError) {
+    element.on(
+      "loaderror",
+      (event) => options.onLoadError?.(String(event?.error?.message ?? "Stripe could not load the form"))
+    );
+  }
+  container.innerHTML = "";
+  element.mount(container);
+  let confirming = false;
+  return {
+    async confirm() {
+      if (confirming) return { status: "pending" };
+      confirming = true;
+      try {
+        const result = await stripe.confirmPayment({
+          elements,
+          confirmParams: { return_url: options.returnUrl },
+          redirect: "if_required"
+        });
+        if (result?.error) {
+          return {
+            status: "failed",
+            message: String(result.error.message ?? ""),
+            code: String(result.error.code ?? "")
+          };
+        }
+        const paymentIntent = result?.paymentIntent;
+        const status = String(paymentIntent?.status ?? "");
+        if (SETTLED.has(status)) return { status: "succeeded", paymentIntentId: paymentIntent?.id };
+        if (IN_FLIGHT.has(status)) return { status: "pending", paymentIntentId: paymentIntent?.id };
+        return { status: "failed", code: status };
+      } finally {
+        confirming = false;
+      }
+    },
+    unmount() {
+      try {
+        element.unmount();
+      } catch {
+      }
+    }
+  };
+}
+
 // src/core/checkout/payments/klarna.ts
 var KLARNA_SDK_URL = "https://js.klarna.com/web-sdk/v2/klarna.mjs";
 var sdkCache = /* @__PURE__ */ new Map();
@@ -7086,7 +7174,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.15.0";
+var SDK_VERSION = "0.16.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -7355,6 +7443,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.nexiHandle = null;
     /** Live Drop-in while an Adyen session is mounted. */
     this.adyenHandle = null;
+    this.stripeHandle = null;
     /**
      * The rate the shopper wants. Before an address it is only remembered (the
      * suggested one, or their pick); every re-pricing asks for it, and the
@@ -8284,6 +8373,64 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     );
   }
   // MARK: - Apple Pay (Stripe Payment Request)
+  /**
+   * Which Stripe flow this channel offers: `native` pays on our own page,
+   * `link` sends the shopper to a page hosted by Stripe. The channel's two
+   * toggles decide it and the answer travels in the method's config
+   * (api-microservice, `stripe-offer.ts`). A channel that predates that
+   * field answers `link`, which is what every client did before.
+   */
+  async getStripeMode(sponsorId) {
+    try {
+      const methods = await this.getAvailablePaymentMethods(sponsorId);
+      const stripe = methods?.find((m2) => String(m2?.name ?? "").toLowerCase() === "stripe");
+      const mode = stripe?.config?.find((c4) => c4?.name === "mode")?.value;
+      return mode === "native" ? "native" : "link";
+    } catch {
+      return "link";
+    }
+  }
+  /**
+   * Stripe's Payment Element, mounted on our own page for a checkout that is
+   * ready to be paid. Creating it mints a PaymentIntent, so it happens when
+   * the shopper asks for the payment step, never while they type.
+   *
+   * The order is not born here: `confirm()` only says what Stripe told the
+   * browser. The `payment_intent.succeeded` webhook creates it server-side,
+   * and the caller then reads the checkout to see it land.
+   */
+  async mountStripeCheckout(container, sponsorId, formData, callbacks) {
+    this.destroyStripe();
+    const { spId, checkoutId, opts } = await this.prepareRedirectPayment(sponsorId, formData, {
+      paymentMethod: "Stripe"
+    });
+    const intent = await createStripeIntent(checkoutId, opts);
+    if (!intent?.client_secret) {
+      throw new Error("[CheckoutManager] Stripe payment was not created");
+    }
+    const theme = readVioTheme();
+    const handle = await mountStripeElement(container, intent, {
+      returnUrl: resolveHttpsReturnUrl(null, {
+        vio_payment: "success",
+        vio_method: "stripe",
+        vio_sponsor: spId,
+        checkout_id: checkoutId
+      }),
+      theme: { accent: theme?.accent, radiusMd: theme?.radiusMd },
+      onReady: callbacks?.onReady,
+      onLoadError: callbacks?.onLoadError
+    });
+    this.stripeHandle = handle;
+    return { handle, intent, checkoutId };
+  }
+  /** Unmount the Payment Element. Safe when nothing is mounted. */
+  destroyStripe() {
+    try {
+      this.stripeHandle?.unmount();
+    } catch {
+    }
+    this.stripeHandle = null;
+  }
   /**
    * The Stripe publishable key for a sponsor, taken from its own commerce
    * channel (`GetAvailablePaymentMethods` → Stripe → config.publishableKey).
@@ -13249,6 +13396,19 @@ var _VioCheckout = class _VioCheckout extends i4 {
     /** The checkout session (see embedSession) and the purchase the mounted photo is of. */
     this.adyenMountedFor = null;
     this.adyenMountedKey = null;
+    this.stripeMode = null;
+    this.stripeRequested = false;
+    this.stripeMounting = false;
+    this.stripeMounted = false;
+    this.stripeStale = false;
+    this.stripeSettled = false;
+    this.stripePaying = false;
+    this.stripeReady = false;
+    this.stripeMountedFor = null;
+    this.stripeMountedKey = null;
+    /** The checkout the mounted PaymentIntent pays for. */
+    this.stripeCheckoutId = null;
+    this.stripeElement = null;
     this.qliroShipping = null;
     /**
      * Set while this page load is showing the outcome of an embedded checkout's
@@ -13342,6 +13502,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.unmountNexi();
         this.unmountAdyen();
         this.adyenSettled = false;
+        this.unmountStripe();
+        this.stripeSettled = false;
       }
     };
     this.boundOnPaymentComplete = (e7) => {
@@ -13632,13 +13794,6 @@ var _VioCheckout = class _VioCheckout extends i4 {
     .payment-btn.primary:hover:not(:disabled) { background: #222; border-color: #222; }
     .payment-btn[aria-pressed='true'] {
       border-color: var(--vio-color-accent, #c14a3b);
-    }
-    .apple-pay-note {
-      grid-column: 1 / -1;
-      font-size: 12px;
-      color: var(--vio-color-text-tertiary, #999);
-      text-align: center;
-      margin-top: 4px;
     }
     /* Klarna Payments — inline widget panel, shown once Klarna is selected. */
     .klarna-panel {
@@ -14291,7 +14446,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 outcome = "failed";
                 break;
               }
-              if (_VioCheckout.PAID_STATUSES.has(status) || Boolean(checkout?.origin_payment_id)) {
+              if (_VioCheckout.PAID_STATUSES.has(status) || // A Stripe checkout carries `origin_payment_id` from the
+              // moment the link or the intent is CREATED (shopcart), so for
+              // Stripe that pointer says nothing about who paid. Only the
+              // status does, and it is the webhook that sets it.
+              vioMethod !== "stripe" && Boolean(checkout?.origin_payment_id)) {
                 outcome = "paid";
                 break;
               }
@@ -14364,6 +14523,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountWalley();
       this.unmountNexi();
       this.unmountAdyen();
+      this.unmountStripe();
       this.paymentError = null;
     }
     if (!this.isConnected) return;
@@ -14375,6 +14535,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     void this.mountNexiIfNeeded();
     this.dropStaleAdyen();
     void this.mountAdyenIfNeeded();
+    this.dropStaleStripe();
+    void this.mountStripeIfNeeded();
   }
   close() {
     this.open = false;
@@ -14468,11 +14630,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.loadingPaymentMethods) return;
     this.loadingPaymentMethods = true;
     try {
+      const spId = this.checkoutState.sponsorId;
       const methods = await Vio.checkout.getAvailablePaymentMethods(
-        this.checkoutState.sponsorId
+        spId
       );
       if (Array.isArray(methods)) {
         this.availableMethods = methods.map((m2) => m2.name);
+        this.stripeMode = await Vio.checkout.getStripeMode(spId);
       } else {
         this.availableMethods = null;
       }
@@ -14737,6 +14901,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
       return;
     }
     if (method === "stripe") {
+      if (this.stripeMode === null) {
+        this.stripeMode = await Vio.checkout.getStripeMode(this.checkoutState?.sponsorId);
+      }
+      if (this.stripeMode === "native") {
+        this.stripeRequested = true;
+        return;
+      }
       const selectedOpt = this.shippingList.find((s4) => s4.id === this.selectedShipping);
       if (selectedOpt?.supplierId) {
         try {
@@ -15447,19 +15618,20 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   /* ── Adyen: our form first, then Adyen's Drop-in on a session ─────────── */
   /**
-   * What an Adyen session is a photo OF. When any of it changes under a
-   * mounted Drop-in, that session no longer describes the purchase: it is
-   * dropped, and the shopper asks for the payment step again.
+   * What an embedded payment is a photo OF — an Adyen session, a Stripe
+   * PaymentIntent. When any of it changes underneath, that photo no longer
+   * describes the purchase: it is dropped, and the shopper asks for the
+   * payment step again.
    */
-  adyenPurchaseKey() {
+  embedPurchaseKey() {
     return JSON.stringify([
-      this.adyenFormKey(),
+      this.embedFormKey(),
       this.items.map((i5) => [i5.productId, i5.variantId ?? "", i5.quantity]),
       this.checkoutState?.subtotal ?? 0
     ]);
   }
   /** The part of the photo the shopper types and picks. */
-  adyenFormKey() {
+  embedFormKey() {
     const f3 = this.form;
     return JSON.stringify([
       f3.firstName,
@@ -15475,7 +15647,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   /** A mounted session whose purchase changed is taken down — never patched. */
   dropStaleAdyen() {
     if (!this.adyenMounted || this.adyenMounting) return;
-    if (this.adyenMountedKey === this.adyenPurchaseKey()) return;
+    if (this.adyenMountedKey === this.embedPurchaseKey()) return;
     this.unmountAdyen();
     this.adyenStale = true;
   }
@@ -15495,7 +15667,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.paymentError = null;
     const spId = this.checkoutState.sponsorId;
     const mountedFor = this.embedSession();
-    const formKey = this.adyenFormKey();
+    const formKey = this.embedFormKey();
     try {
       const selectedOpt = this.shippingList.find((o7) => o7.id === this.selectedShipping);
       if (selectedOpt?.supplierId) {
@@ -15529,14 +15701,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.unmountAdyen();
         return;
       }
-      if (this.adyenFormKey() !== formKey) {
+      if (this.embedFormKey() !== formKey) {
         this.unmountAdyen();
         this.adyenStale = true;
         return;
       }
       this.adyenMounted = true;
       this.adyenMountedFor = mountedFor;
-      this.adyenMountedKey = this.adyenPurchaseKey();
+      this.adyenMountedKey = this.embedPurchaseKey();
     } catch (err) {
       this.unmountAdyen();
       this.paymentError = err instanceof AdyenOriginError ? "Betaling er ikke aktivert for denne siden enn\xE5. Ta kontakt med butikken." : `Kunne ikke laste betaling: ${err instanceof Error ? err.message : String(err)}`;
@@ -15601,6 +15773,178 @@ var _VioCheckout = class _VioCheckout extends i4 {
               </button>
             ` : ""}
         <slot name="vio-adyen"></slot>
+      </div>
+    `;
+  }
+  /* ── Stripe, native: the Payment Element on our own page ──────────────── */
+  /** A mounted Element whose purchase changed is taken down — never patched. */
+  dropStaleStripe() {
+    if (!this.stripeMounted || this.stripeMounting) return;
+    if (this.stripeMountedKey === this.embedPurchaseKey()) return;
+    this.unmountStripe();
+    this.stripeStale = true;
+  }
+  async mountStripeIfNeeded() {
+    if (!this.open || !this.checkoutState) return;
+    if (this.checkoutState.paymentMethod !== "stripe" || this.stripeMode !== "native") return;
+    if (!this.mayStartEmbeddedPayment() || this.stripeSettled) return;
+    if (this.stripeMounting) return;
+    if (this.stripeMounted) {
+      if (this.stripeMountedFor === this.embedSession()) return;
+      this.unmountStripe();
+    }
+    if (!this.stripeRequested || !this.isAddressValid || !this.hasSelectedShipping) return;
+    this.stripeRequested = false;
+    this.stripeMounting = true;
+    this.stripeStale = false;
+    this.paymentError = null;
+    const spId = this.checkoutState.sponsorId;
+    const mountedFor = this.embedSession();
+    const formKey = this.embedFormKey();
+    try {
+      const selectedOpt = this.shippingList.find((o7) => o7.id === this.selectedShipping);
+      if (selectedOpt?.supplierId) {
+        await Vio.checkout.updateShippingsBySupplier(
+          [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+          spId
+        );
+      }
+      await this.updateComplete;
+      const container = this.lightContainer("vio-stripe-checkout-container", "vio-stripe");
+      container.innerHTML = "";
+      this.stripeReady = false;
+      const mounted = await Vio.checkout.mountStripeCheckout(container, spId, this.form, {
+        // `mount()` resolves before Stripe paints anything — seconds before,
+        // on a cold cache. Its own "ready" is what turns the spinner off.
+        onReady: () => {
+          this.stripeReady = true;
+        },
+        onLoadError: (message) => {
+          this.unmountStripe();
+          this.paymentError = `Kunne ikke laste betaling: ${message}`;
+        }
+      });
+      if (this.embedSession() !== mountedFor || this.checkoutState?.paymentMethod !== "stripe" || !this.open) {
+        this.unmountStripe();
+        return;
+      }
+      if (this.embedFormKey() !== formKey) {
+        this.unmountStripe();
+        this.stripeStale = true;
+        return;
+      }
+      this.stripeElement = mounted.handle;
+      this.stripeCheckoutId = mounted.checkoutId;
+      this.stripeMounted = true;
+      this.stripeMountedFor = mountedFor;
+      this.stripeMountedKey = this.embedPurchaseKey();
+    } catch (err) {
+      this.unmountStripe();
+      this.paymentError = `Kunne ikke laste betaling: ${err instanceof Error ? err.message : String(err)}`;
+      if (typeof console !== "undefined") console.warn("[VioCheckout] Stripe mount failed:", err);
+    } finally {
+      this.stripeMounting = false;
+    }
+  }
+  /**
+   * Pay with the mounted Element. Stripe answers the BROWSER; the order is
+   * created server-side by the `payment_intent.succeeded` webhook, so a
+   * success is then waited for on the checkout itself.
+   */
+  async onStripePay() {
+    if (!this.stripeElement || this.stripePaying) return;
+    const spId = this.checkoutState?.sponsorId ?? 0;
+    const checkoutId = this.stripeCheckoutId;
+    const charged = (this.checkoutState?.subtotal ?? 0) + this.shippingMajor();
+    this.stripePaying = true;
+    this.paymentError = null;
+    try {
+      const outcome = await this.stripeElement.confirm();
+      if (outcome.status === "failed") {
+        this.paymentError = outcome.message || "Betalingen ble ikke gjennomf\xF8rt. Pr\xF8v igjen, eller velg en annen betalingsm\xE5te.";
+        return;
+      }
+      this.stripeSettled = true;
+      this.unmountStripe();
+      const settled = checkoutId ? await this.waitForStripeOrder(checkoutId, spId) : "pending";
+      if (settled === "paid") {
+        this.confirmOrder("stripe", spId, { chargedTotal: charged });
+      } else if (settled === "failed") {
+        this.stripeSettled = false;
+        this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
+      } else {
+        this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
+      }
+    } catch (err) {
+      this.paymentError = `Betalingen kunne ikke fullf\xF8res: ${err instanceof Error ? err.message : String(err)}`;
+      if (typeof console !== "undefined") console.warn("[VioCheckout] Stripe confirm failed:", err);
+    } finally {
+      this.stripePaying = false;
+    }
+  }
+  /**
+   * Wait for Stripe's webhook to make the checkout paid — the same window the
+   * redirect return uses, and ONLY the status: a Stripe checkout carries
+   * `origin_payment_id` from the moment the intent is created, so that
+   * pointer would read as paid before anyone paid.
+   */
+  async waitForStripeOrder(checkoutId, sponsorId) {
+    for (const delayMs of _VioCheckout.RETURN_VERIFY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((r6) => setTimeout(r6, delayMs));
+      try {
+        const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
+        const status = String(checkout?.status ?? "").toLowerCase();
+        if (_VioCheckout.FAILED_STATUSES.has(status)) return "failed";
+        if (_VioCheckout.PAID_STATUSES.has(status)) return "paid";
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.warn("[VioCheckout] Stripe order check failed:", err);
+        }
+      }
+    }
+    return "pending";
+  }
+  unmountStripe() {
+    Vio.checkout.destroyStripe();
+    this.stripeReady = false;
+    this.stripeElement = null;
+    this.stripeCheckoutId = null;
+    this.stripeMounted = false;
+    this.stripeMountedFor = null;
+    this.stripeMountedKey = null;
+    this.stripeRequested = false;
+    this.stripeStale = false;
+    this.querySelector("#vio-stripe-checkout-container")?.remove();
+  }
+  renderStripePanel() {
+    const ready = this.isAddressValid && this.hasSelectedShipping;
+    const showButton = !this.stripeMounted && !this.stripeMounting && !this.stripeSettled;
+    return b2`
+      <div class="stripe-panel">
+        ${this.stripeMounting || this.stripeMounted && !this.stripeReady ? b2`<div style="font-size:13px;opacity:0.7;padding:8px 0;">Laster betaling…</div>` : ""}
+        ${this.stripeStale && showButton ? b2`<div class="payment-notice">Bestillingen ble endret. Oppdater betalingen for å fortsette.</div>` : ""}
+        ${showButton ? b2`
+              <button
+                class="payment-btn primary complete-cta"
+                ?disabled=${!ready}
+                title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
+                @click=${() => {
+      this.stripeRequested = true;
+    }}
+              >
+                ${this.stripeStale ? "Oppdater betaling" : `G\xE5 til betaling \xB7 ${this.payTotalLabel()}`}
+              </button>
+            ` : ""}
+        <slot name="vio-stripe"></slot>
+        ${this.stripeMounted ? b2`
+              <button
+                class="payment-btn primary complete-cta"
+                ?disabled=${this.stripePaying || !this.stripeReady}
+                @click=${() => void this.onStripePay()}
+              >
+                ${this.stripePaying ? "Betaler\u2026" : `Betal ${this.payTotalLabel()}`}
+              </button>
+            ` : ""}
       </div>
     `;
   }
@@ -15875,7 +16219,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "walley" ? this.renderWalleyPanel() : ""}
                   ${method === "nexi" ? this.renderNexiPanel() : ""}
                   ${method === "adyen" ? this.renderAdyenPanel() : ""}
-                  ${method === "stripe" ? b2`
+                  ${method === "stripe" && this.stripeMode === "native" ? this.renderStripePanel() : ""}
+                  ${method === "stripe" && this.stripeMode !== "native" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
                           @click=${() => void this.onPay("stripe")}
@@ -15984,11 +16329,6 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           <button class="payment-btn" @click=${() => this.onPay("vipps")}>
                             <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
                           </button>
-                        ` : ""}
-                    ${this.methodEnabled("apple-pay") && !this.applePayAvailable ? b2`
-                          <div class="apple-pay-note">
-                             Pay krever Safari på iOS eller macOS med Apple Pay konfigurert.
-                          </div>
                         ` : ""}
                   </div>
                 `}
@@ -16143,6 +16483,30 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "adyenSettled", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeMode", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeRequested", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeMounting", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeMounted", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeStale", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeSettled", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripePaying", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "stripeReady", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "qliroShipping", 2);
