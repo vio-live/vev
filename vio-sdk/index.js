@@ -4157,10 +4157,13 @@ function createCommerceClient(options) {
 
 // src/core/checkout/payments/vipps.ts
 var CREATE_PAYMENT_VIPPS_MUTATION = `
-mutation CreatePaymentVipps($checkoutId: String!, $email: String!, $returnUrl: String!) {
+mutation CreatePaymentVipps($checkoutId: String!, $email: String, $returnUrl: String!, $express: Boolean) {
   Payment {
-    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl) {
+    CreatePaymentVipps(checkout_id: $checkoutId, email: $email, return_url: $returnUrl, express: $express) {
       payment_url
+      reference
+      express
+      reason
     }
   }
 }
@@ -7174,7 +7177,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.16.0";
+var SDK_VERSION = "0.17.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -7694,12 +7697,13 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const addr = typeof formData === "object" && formData !== null ? formData : this.state?.address;
     const addressObj = !isVipps ? buildCheckoutAddress(addr) : null;
     const emailVal = (typeof formData === "string" ? formData : formData?.email) || this.state?.address?.email || "";
-    if (!emailVal || !emailVal.includes("@")) {
+    const hasEmail = !!emailVal && emailVal.includes("@");
+    if (!hasEmail && !isVipps) {
       throw new Error("[CheckoutManager] email is required to start the payment");
     }
     const updateVars = {
       checkoutId,
-      email: emailVal,
+      ...hasEmail ? { email: emailVal } : {},
       buyerAcceptsPurchaseConditions: true,
       buyerAcceptsTermsConditions: true,
       ...extraUpdateVars
@@ -7771,10 +7775,21 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     throw new Error("Stripe payment link generation failed: missing checkout_url");
   }
   /**
-   * Vipps payment link: same flow as Stripe — CreatePaymentVipps → redirect to
-   * payment_url.
+   * Vipps: create the payment via Vio Commerce and redirect to Vipps'
+   * landing page (on a phone it opens the app; on a desktop it offers to
+   * send the payment to the phone).
+   *
+   * `express: true` asks for Vipps Express — address and delivery chosen
+   * inside the app, the email handed back with the payment — which is what
+   * the Vipps buttons on the product and the cart ask for. When the cart
+   * cannot have it (several suppliers, digital goods, no rate for the
+   * country) the backend creates NO payment and answers `express: false`
+   * with the reason; this resolves with that answer, without redirecting,
+   * so the caller can open the ordinary checkout instead. Without the flag
+   * the backend decides: Express while the cart has no delivery yet, a
+   * plain payment once the shopper chose one in our form.
    */
-  async startVippsPayment(sponsorId, formData) {
+  async startVippsPayment(sponsorId, formData, options = {}) {
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
       sponsorId,
       formData,
@@ -7787,14 +7802,30 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       checkout_id: checkoutId
     });
     const vippsRes = await createPaymentVipps(
-      { checkoutId, email: emailVal, returnUrl },
+      {
+        checkoutId,
+        ...emailVal && emailVal.includes("@") ? { email: emailVal } : {},
+        returnUrl,
+        ...options.express !== void 0 ? { express: options.express } : {}
+      },
       opts
     );
     if (vippsRes?.payment_url) {
       _CheckoutManager.redirectTo(vippsRes.payment_url);
       return vippsRes;
     }
+    if (options.express === true && vippsRes?.express === false) {
+      return vippsRes;
+    }
     throw new Error("Vipps payment link generation failed: missing payment_url");
+  }
+  /**
+   * The Vipps Express button: the shopper taps it and the app opens with
+   * address and delivery already there. Resolves with `{ express: false,
+   * reason }` — and nothing redirected — when this cart cannot have it.
+   */
+  async startVippsExpress(sponsorId) {
+    return this.startVippsPayment(sponsorId, void 0, { express: true });
   }
   /** Vipps' own payment state for the checkout — see getVippsStatus in
    * cart-queries.ts for why this exists instead of trusting GetCheckout. */
@@ -12256,10 +12287,29 @@ var VioProductDetail = class extends i4 {
       })
     );
   }
+  /**
+   * Buy with Vipps — Express: the app opens with address and delivery
+   * already there, nothing to fill in here (Vipps' own recommendation,
+   * 2026-09-29). When this cart cannot have Express, or Vipps cannot be
+   * started, the checkout opens with Vipps preselected, as before.
+   */
   buyWithVipps() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
     this.addCurrentToCart();
     this.close();
+    void this.startVippsExpressOrCheckout();
+  }
+  async startVippsExpressOrCheckout() {
+    let fallback = true;
+    try {
+      const res = await Vio.checkout.startVippsExpress(this.sponsorId);
+      fallback = !res?.payment_url;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioProductDetail] Vipps Express not started:", err);
+      }
+    }
+    if (!fallback) return;
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
@@ -13119,15 +13169,34 @@ var VioCart = class extends i4 {
       })
     );
   }
+  /**
+   * Vipps — Express: the app collects address and delivery, so the cart
+   * goes straight to Vipps. When this cart cannot have Express (several
+   * suppliers, digital goods, no rate) or Vipps cannot be started, the
+   * checkout opens with Vipps preselected, as before.
+   */
   onVipps() {
     if (this.itemCount === 0) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
+    void this.startVippsExpressOrCheckout(firstSponsorId);
+  }
+  async startVippsExpressOrCheckout(sponsorId) {
+    let fallback = true;
+    try {
+      const res = await Vio.checkout.startVippsExpress(sponsorId);
+      fallback = !res?.payment_url;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCart] Vipps Express not started:", err);
+      }
+    }
+    if (!fallback) return;
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: firstSponsorId, paymentMethod: "vipps", express: false }
+        detail: { sponsorId, paymentMethod: "vipps", express: false }
       })
     );
   }
@@ -14907,17 +14976,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       Vio.checkout.selectPaymentMethod("nexi");
       return;
     }
-    if (method === "vipps") {
-      const email = String(this.form.email ?? "").trim();
-      if (!email || !email.includes("@")) {
-        if (this.checkoutState?.paymentMethod !== "vipps") {
-          Vio.checkout.selectPaymentMethod("vipps");
-          return;
-        }
-        this.paymentError = "Vennligst fyll inn e-postadressen din.";
-        return;
-      }
-    } else {
+    if (method !== "vipps") {
       const missing = !this.isAddressValid ? "Vennligst fyll ut alle feltene i leveringsadresse." : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode." : null;
       if (missing) {
         if (this.checkoutState?.paymentMethod !== method) {
