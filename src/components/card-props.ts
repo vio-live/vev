@@ -83,6 +83,23 @@ export const CARD_CONFIG_PROPS: any[] = [
   { name: "discountText", title: "Discount text (manual)", type: "string", initialValue: "-25 %" },
   { name: "annonse", title: "'Annonse' label", type: "boolean", initialValue: false },
   { name: "annonseText", title: "Annonse text", type: "string", initialValue: "Annonse" },
+  // Vipps Express straight from the card: the app opens with address and
+  // delivery already there. Off by default — it is a new button on pages that
+  // already exist; the detail, cart and checkout show theirs on their own.
+  {
+    name: "vippsButton",
+    title: "Vipps Express button",
+    type: "select",
+    initialValue: "hidden",
+    options: {
+      display: "dropdown",
+      items: [
+        { value: "hidden", label: "Off" },
+        { value: "bar", label: "Full-width bar (under the card)" },
+      ],
+    },
+  },
+  { name: "vippsLabel", title: "Vipps button label", type: "string", initialValue: "Kjøp nå med" },
 ];
 
 export const CARD_EDITABLE_CSS: any[] = [
@@ -90,6 +107,7 @@ export const CARD_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .vnc-image", title: "Image", properties: ["border-radius", "aspect-ratio", "background-color"] },
   { selector: ".vio-native-card .vnc-add", title: "Button (icon)", properties: ["background", "color", "border-radius", "box-shadow", "width", "height"] },
   { selector: ".vio-native-card .vnc-btn-text", title: "Button (text)", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
+  { selector: ".vio-native-card .vnc-btn-vipps", title: "Vipps button", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .vnc-badge", title: "Discount badge", properties: ["background", "color", "border-radius", "font-size", "padding"] },
   { selector: ".vio-native-card .vnc-brand", title: "Brand", properties: ["color", "font-size", "letter-spacing", "font-weight"] },
   { selector: ".vio-native-card .vnc-name", title: "Name", properties: ["color", "font-size", "font-weight", "font-family", "line-height"] },
@@ -114,6 +132,8 @@ export function pickCardConfig(props: Record<string, any>) {
     discountText,
     annonse,
     annonseText,
+    vippsButton,
+    vippsLabel,
   } = props;
   return {
     layout,
@@ -130,5 +150,7 @@ export function pickCardConfig(props: Record<string, any>) {
     discountText,
     annonse,
     annonseText,
+    vippsButton,
+    vippsLabel,
   };
 }

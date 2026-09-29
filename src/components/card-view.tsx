@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Vio, primaryImageUrl } from "../../vio-sdk";
-import { checkHasVariants, fetchVioProduct, getProductPriceAmount, openCart } from "./vio-helpers";
+import { checkHasVariants, ensureVioInit, fetchVioProduct, getProductPriceAmount, openCart, withRetry } from "./vio-helpers";
 import {
   productToItem,
   trackAddToCart,
+  trackEvent,
   trackSelectItem,
   trackViewItem,
   trackViewItemList,
@@ -32,6 +33,8 @@ export type CardConfig = {
   discountText?: string;
   annonse?: boolean;
   annonseText?: string;
+  vippsButton?: string; // hidden | bar
+  vippsLabel?: string;
 };
 
 const STYLE_ID = "vio-native-card-styles";
@@ -90,6 +93,15 @@ const CARD_CSS = `
 .vio-native-card .vnc-btn-text:hover { opacity: 0.88; }
 .vio-native-card .vnc-btn-pill { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 10px 16px; border-radius: 999px; }
 .vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+.vio-native-card .vnc-btn-vipps {
+  width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: #ff5b24; color: #fff; font-family: inherit; font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em; transition: background 0.15s;
+}
+.vio-native-card .vnc-btn-vipps:hover { background: #ec4f1c; }
+.vio-native-card .vnc-btn-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
+.vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; text-transform: none; }
 
 .vio-native-card .vnc-meta { padding-top: 14px; display: flex; flex-direction: column; flex: 1; }
 .vio-native-card .vnc-brand {
@@ -206,6 +218,56 @@ export function useCartQty(productId?: number, sponsorId = 1): number {
   return qty;
 }
 
+/**
+ * What the channel offers for Vipps, per sponsor: "express" (the button opens
+ * the Vipps app), "checkout" (Vipps is offered but the seller switched Express
+ * off → the button opens the checkout with Vipps preselected) or "none" (not
+ * offered → no button at all). Read the same way the SDK's product detail reads
+ * it, once per sponsor for every card on the page.
+ */
+type VippsOffer = "express" | "checkout" | "none";
+const vippsOfferCache = new Map<number, Promise<VippsOffer>>();
+
+function loadVippsOffer(sponsorId: number): Promise<VippsOffer> {
+  let pending = vippsOfferCache.get(sponsorId);
+  if (!pending) {
+    pending = withRetry(async (): Promise<VippsOffer> => {
+      ensureVioInit();
+      await Vio.bootstrap();
+      const methods: any[] = (await Vio.checkout.getAvailablePaymentMethods(sponsorId)) ?? [];
+      const vipps = methods.find((m) => String(m?.name ?? "").toLowerCase() === "vipps");
+      if (!vipps) return "none";
+      const express = vipps.config?.find?.((c: any) => c?.name === "express")?.value;
+      return express === "false" ? "checkout" : "express";
+    }, { attempts: 3, label: `vipps offer ${sponsorId}` });
+    vippsOfferCache.set(sponsorId, pending);
+    // A failed lookup is not remembered: the next card asks again.
+    pending.catch(() => vippsOfferCache.delete(sponsorId));
+  }
+  return pending;
+}
+
+function useVippsOffer(sponsorId: number, wanted: boolean): VippsOffer | "unknown" {
+  const [offer, setOffer] = useState<VippsOffer | "unknown">("unknown");
+  useEffect(() => {
+    if (!wanted) return;
+    let cancelled = false;
+    loadVippsOffer(sponsorId).then(
+      (value) => {
+        if (!cancelled) setOffer(value);
+      },
+      (err) => {
+        console.warn("[Vio] Vipps offer lookup failed", err);
+        if (!cancelled) setOffer("none");
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [sponsorId, wanted]);
+  return offer;
+}
+
 type ProductCardViewProps = {
   productId?: number;
   sponsorId?: number;
@@ -228,6 +290,8 @@ export function ProductCardView({
   rootRef,
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
+  const [vippsBusy, setVippsBusy] = useState(false);
+  const vippsOffer = useVippsOffer(Number(sponsorId), (config.vippsButton ?? "hidden") !== "hidden");
 
   useEffect(() => {
     injectCardStyles();
@@ -248,6 +312,8 @@ export function ProductCardView({
     discountText = "-25 %",
     annonse = false,
     annonseText = "Annonse",
+    vippsButton = "hidden",
+    vippsLabel = "Kjøp nå med",
   } = config;
 
   const p = product;
@@ -304,6 +370,54 @@ export function ProductCardView({
       openCart();
     } catch (err: any) {
       console.warn("[Vio] addToCart error", err);
+    }
+  };
+
+  // Vipps Express from the card: the product goes into the cart and the Vipps
+  // app opens with address and delivery already there — same as the SDK's
+  // product detail. Variants need a choice first, so they open the detail.
+  // When the seller has Express off, or Vipps could not start, the checkout
+  // opens with Vipps preselected instead (analytics then fires begin_checkout
+  // from the vio:checkout-open event, so it is only sent by hand here).
+  const doVipps = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!p || vippsBusy) return;
+    if (hasVariants) {
+      openDetail();
+      return;
+    }
+    setVippsBusy(true);
+    try {
+      const item = productToItem(p, { quantity: 1 });
+      Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1 });
+      trackAddToCart(item);
+      let redirected = false;
+      if (vippsOffer === "express") {
+        trackEvent("begin_checkout", {
+          currency: p.price?.currency_code,
+          value: priceAmount ?? undefined,
+          payment_type: "vipps_express",
+          sponsorId: Number(sponsorId),
+          items: [item],
+        });
+        try {
+          const res = await Vio.checkout.startVippsExpress(Number(sponsorId));
+          redirected = !!res?.payment_url;
+        } catch (err) {
+          console.warn("[Vio] Vipps Express not started", err);
+        }
+      }
+      if (!redirected) {
+        document.dispatchEvent(
+          new CustomEvent("vio:checkout-open", {
+            detail: { sponsorId: Number(sponsorId), paymentMethod: "vipps", express: false },
+          })
+        );
+      }
+    } catch (err: any) {
+      console.warn("[Vio] Vipps button error", err);
+    } finally {
+      setVippsBusy(false);
     }
   };
 
@@ -402,6 +516,18 @@ export function ProductCardView({
       {buttonStyle === "bar" ? (
         <button className="vnc-btn-text vnc-btn-bar" onClick={onButton}>
           {inCart ? `${buttonLabel} · ${qty}` : buttonLabel}
+        </button>
+      ) : null}
+
+      {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout") ? (
+        <button
+          className="vnc-btn-vipps"
+          onClick={doVipps}
+          disabled={vippsBusy}
+          aria-label={`${vippsLabel} Vipps`}
+        >
+          <span>{vippsLabel}</span>
+          <span className="vnc-vipps-badge">vipps</span>
         </button>
       ) : null}
     </div>
