@@ -5958,7 +5958,7 @@ async function mountStripeElement(container, intent, options) {
   if (typeof Stripe !== "function") {
     throw new Error("[Stripe] stripe.js loaded but window.Stripe is missing");
   }
-  const stripe = Stripe(intent.publishable_key);
+  const stripe = intent.stripe_account ? Stripe(intent.publishable_key, { stripeAccount: intent.stripe_account }) : Stripe(intent.publishable_key);
   const appearance = { theme: "stripe" };
   const variables = {};
   if (options.theme?.accent) variables.colorPrimary = options.theme.accent;
@@ -7436,6 +7436,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
      * Connect account (acct_…) — stored defensively by prefix. */
     this.applePayPublishableKey = null;
     this.applePayConnectedAccount = null;
+    /** Stripe Connect account of the channel, from its Stripe config. */
+    this.stripeConnectAccount = null;
     this.klarnaAvailableCache = null;
     /** Live q1 listeners while a Qliro widget is mounted. */
     this.qliroController = null;
@@ -8404,10 +8406,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const { spId, checkoutId, opts } = await this.prepareRedirectPayment(sponsorId, formData, {
       paymentMethod: "Stripe"
     });
-    const intent = await createStripeIntent(checkoutId, opts);
-    if (!intent?.client_secret) {
+    const minted = await createStripeIntent(checkoutId, opts);
+    if (!minted?.client_secret) {
       throw new Error("[CheckoutManager] Stripe payment was not created");
     }
+    const account = minted.stripe_account ?? await this.resolveStripeConnectAccount(spId);
+    const intent = account ? { ...minted, stripe_account: account } : minted;
     const theme = readVioTheme();
     const handle = await mountStripeElement(container, intent, {
       returnUrl: resolveHttpsReturnUrl(null, {
@@ -8448,6 +8452,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       const methods = await this.getAvailablePaymentMethods(sponsorId);
       const stripe = methods?.find((m2) => String(m2?.name ?? "").toLowerCase() === "stripe");
       const key = stripe?.config?.find((c4) => c4?.name === "publishableKey")?.value;
+      const account = stripe?.config?.find((c4) => c4?.name === "stripeAccount")?.value;
+      this.stripeConnectAccount = typeof account === "string" && account.startsWith("acct_") ? account : null;
       if (typeof key === "string" && key.startsWith("pk_")) {
         this.applePayPublishableKey = key;
         return key;
@@ -9208,7 +9214,18 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * (Stripe will route to the platform account in that case).
    */
   findStripeConnectAccount() {
-    return void 0;
+    return this.stripeConnectAccount ?? void 0;
+  }
+  /** The sponsor's connected account, read fresh from its channel config. */
+  async resolveStripeConnectAccount(sponsorId) {
+    try {
+      const methods = await this.getAvailablePaymentMethods(sponsorId);
+      const stripe = methods?.find((m2) => String(m2?.name ?? "").toLowerCase() === "stripe");
+      const account = stripe?.config?.find((c4) => c4?.name === "stripeAccount")?.value;
+      return typeof account === "string" && account.startsWith("acct_") ? account : void 0;
+    } catch {
+      return void 0;
+    }
   }
   emit() {
     this.dispatchEvent(
