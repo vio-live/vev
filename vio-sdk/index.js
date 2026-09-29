@@ -14672,7 +14672,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.autoSelectAttempted) return;
     this.autoSelectAttempted = true;
     if (this.checkoutState?.paymentMethod) return;
-    const methods = this.availableMethods;
+    const methods = this.offeredMethods();
     if (!Array.isArray(methods) || methods.length !== 1) return;
     const id = String(methods[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
     const usable = {
@@ -14694,6 +14694,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
   methodEnabled(...names) {
     return isMethodEnabled(this.availableMethods, ...names);
+  }
+  /**
+   * Stripe's Payment Element shows the wallets of the account that charges —
+   * Apple Pay and Google Pay among them. Offering our own Apple Pay button
+   * next to it is the same wallet twice, on the same screen, paying through
+   * the same account: when Stripe pays on our page, Stripe owns the wallets
+   * (Angelo, 2026-09-24). The cart's express button is another surface and
+   * keeps its own Apple Pay — the Element does not exist there.
+   */
+  stripeOwnsWallets() {
+    return this.stripeMode === "native" && this.methodEnabled("stripe");
+  }
+  /** The methods the shopper actually sees (see stripeOwnsWallets). */
+  offeredMethods() {
+    const methods = this.availableMethods;
+    if (!Array.isArray(methods) || !this.stripeOwnsWallets()) return methods;
+    return methods.filter((m2) => !isMethodEnabled([m2], "apple-pay"));
   }
   async refreshApplePay() {
     Vio.checkout.clearApplePayCache();
@@ -16277,7 +16294,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ` : b2`
                   <h3 class="section-heading">Velg betalingsmåte</h3>
                   <div class="payment-grid">
-                    ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
+                    ${this.methodEnabled("apple-pay") && this.applePayAvailable && !this.stripeOwnsWallets() ? b2`
                           <button
                             class="payment-btn primary"
                             @click=${() => this.onPay("apple-pay")}
