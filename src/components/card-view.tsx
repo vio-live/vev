@@ -38,9 +38,14 @@ export type CardConfig = {
 };
 
 const STYLE_ID = "vio-native-card-styles";
+// The card's height follows its content: the Vev frame of the single card is
+// auto-height (Vev measures what we render), so a card that always filled the
+// frame could never make it grow — adding a button under the meta squeezed the
+// image instead. min-height keeps cards of one grid row / carousel the same
+// height, and the image never gives up its 1:1.
 const CARD_CSS = `
 .vio-native-card {
-  box-sizing: border-box; width: 100%; height: 100%; cursor: pointer;
+  box-sizing: border-box; width: 100%; height: auto; min-height: 100%; cursor: pointer;
   display: flex; flex-direction: column;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
   color: var(--vio-color-text, #0a0a0a); -webkit-tap-highlight-color: transparent;
@@ -49,7 +54,7 @@ const CARD_CSS = `
 .vio-native-card.l-horizontal .vnc-image { width: 42%; flex-shrink: 0; }
 .vio-native-card.l-horizontal .vnc-meta { padding-top: 0; justify-content: center; }
 .vio-native-card .vnc-image {
-  position: relative; aspect-ratio: 1 / 1; width: 100%;
+  position: relative; aspect-ratio: 1 / 1; width: 100%; flex-shrink: 0;
   background-color: var(--vio-color-surface-muted, #f2f2f2);
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; transition: opacity 0.2s ease;
