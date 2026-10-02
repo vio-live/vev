@@ -46,13 +46,14 @@ const STYLE_ID = "vio-native-card-styles";
 const CARD_CSS = `
 .vio-native-card {
   box-sizing: border-box; width: 100%; height: auto; min-height: 100%; cursor: pointer;
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; container-type: inline-size;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
   color: var(--vio-color-text, #0a0a0a); -webkit-tap-highlight-color: transparent;
 }
 .vio-native-card.l-horizontal { flex-direction: row; gap: 14px; align-items: stretch; }
 .vio-native-card.l-horizontal .vnc-image { width: 42%; flex-shrink: 0; }
 .vio-native-card.l-horizontal .vnc-meta { padding-top: 0; justify-content: center; }
+.vio-native-card.l-horizontal .vnc-btn-bar, .vio-native-card.l-horizontal .vnc-btn-vipps { margin-top: 12px; }
 .vio-native-card .vnc-image {
   position: relative; aspect-ratio: 1 / 1; width: 100%; flex-shrink: 0;
   background-color: var(--vio-color-surface-muted, #f2f2f2);
@@ -107,7 +108,20 @@ const CARD_CSS = `
 .vio-native-card .vnc-btn-vipps:hover { background: #ec4f1c; }
 .vio-native-card .vnc-btn-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
 .vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; text-transform: none; }
+/* Narrow cards (a phone's two-column grid, a dense desktop grid): the bars
+   keep one line by shrinking their type instead of wrapping the badge. */
+@container (max-width: 220px) {
+  .vio-native-card .vnc-btn-bar, .vio-native-card .vnc-btn-vipps { padding: 11px 8px; font-size: 10.5px; letter-spacing: 0.04em; gap: 6px; }
+  .vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 15px; }
+}
+/* Horizontal: the bars only get the right-hand column, so they go compact earlier. */
+@container (max-width: 420px) {
+  .vio-native-card.l-horizontal .vnc-btn-bar, .vio-native-card.l-horizontal .vnc-btn-vipps { padding: 11px 8px; font-size: 10.5px; letter-spacing: 0.04em; gap: 6px; }
+  .vio-native-card.l-horizontal .vnc-btn-vipps .vnc-vipps-badge { font-size: 15px; }
+}
 
+.vio-native-card .vnc-body { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.vio-native-card.l-horizontal .vnc-body { justify-content: center; }
 .vio-native-card .vnc-meta { padding-top: 14px; display: flex; flex-direction: column; flex: 1; }
 .vio-native-card .vnc-brand {
   font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -516,25 +530,29 @@ export function ProductCardView({
         {isOverlay && !isImageOnly ? <div className="vnc-overlay-meta">{metaBlock}</div> : null}
       </div>
 
-      {!isImageOnly && !isOverlay ? <div className="vnc-meta">{metaBlock}</div> : null}
+      {/* Meta and the bar buttons share one column, so in the horizontal
+          layout they are the right-hand side and never a third column. */}
+      <div className="vnc-body">
+        {!isImageOnly && !isOverlay ? <div className="vnc-meta">{metaBlock}</div> : null}
 
-      {buttonStyle === "bar" ? (
-        <button className="vnc-btn-text vnc-btn-bar" onClick={onButton}>
-          {inCart ? `${buttonLabel} · ${qty}` : buttonLabel}
-        </button>
-      ) : null}
+        {buttonStyle === "bar" ? (
+          <button className="vnc-btn-text vnc-btn-bar" onClick={onButton}>
+            {inCart ? `${buttonLabel} · ${qty}` : buttonLabel}
+          </button>
+        ) : null}
 
-      {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout") ? (
-        <button
-          className="vnc-btn-vipps"
-          onClick={doVipps}
-          disabled={vippsBusy}
-          aria-label={`${vippsLabel} Vipps`}
-        >
-          <span>{vippsLabel}</span>
-          <span className="vnc-vipps-badge">vipps</span>
-        </button>
-      ) : null}
+        {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout") ? (
+          <button
+            className="vnc-btn-vipps"
+            onClick={doVipps}
+            disabled={vippsBusy}
+            aria-label={`${vippsLabel} Vipps`}
+          >
+            <span>{vippsLabel}</span>
+            <span className="vnc-vipps-badge">vipps</span>
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
