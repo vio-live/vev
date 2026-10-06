@@ -6587,7 +6587,7 @@ function installQliroListeners(options) {
   let q1 = null;
   let destroyed = false;
   let orderUpdatedRegistered = false;
-  let pending = null;
+  let pending2 = null;
   const emit = (event) => {
     try {
       onEvent?.(event);
@@ -6595,10 +6595,10 @@ function installQliroListeners(options) {
     }
   };
   const settle = () => {
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    const { resolve } = pending;
-    pending = null;
+    if (!pending2) return;
+    clearTimeout(pending2.timer);
+    const { resolve } = pending2;
+    pending2 = null;
     try {
       q1?.unlock();
     } catch {
@@ -6610,8 +6610,8 @@ function installQliroListeners(options) {
     return !echo || echo === version;
   };
   const settleIfAcknowledged = () => {
-    if (!pending) return;
-    if (pending.echoes.some((echo) => acknowledges(echo, pending.version))) {
+    if (!pending2) return;
+    if (pending2.echoes.some((echo) => acknowledges(echo, pending2.version))) {
       settle();
     }
   };
@@ -6647,22 +6647,22 @@ function installQliroListeners(options) {
   const controller = {
     async sync() {
       if (destroyed) return null;
-      if (pending) settle();
+      if (pending2) settle();
       try {
         q1?.lock();
         if (q1 && !orderUpdatedRegistered) {
           orderUpdatedRegistered = true;
           q1.onOrderUpdated((order) => {
-            if (!pending) return;
+            if (!pending2) return;
             const echoed = order?.merchantUpdateVersion ?? order?.MerchantUpdateVersion ?? null;
-            pending.echoes.push(echoed);
+            pending2.echoes.push(echoed);
             settleIfAcknowledged();
           });
         }
       } catch {
       }
       const settled = new Promise((resolve) => {
-        pending = {
+        pending2 = {
           version: null,
           echoes: [],
           resolve,
@@ -6683,8 +6683,8 @@ function installQliroListeners(options) {
         await settled;
         return result;
       }
-      if (pending) {
-        pending.version = result.update_version;
+      if (pending2) {
+        pending2.version = result.update_version;
         settleIfAcknowledged();
       }
       await settled;
@@ -6894,9 +6894,9 @@ function storage() {
     return null;
   }
 }
-function rememberNexiPending(pending) {
+function rememberNexiPending(pending2) {
   try {
-    storage()?.setItem(NEXI_PENDING_KEY, JSON.stringify({ ...pending, createdAt: Date.now() }));
+    storage()?.setItem(NEXI_PENDING_KEY, JSON.stringify({ ...pending2, createdAt: Date.now() }));
   } catch {
   }
 }
@@ -8076,10 +8076,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     const opts = await getCartGraphQLOptions(spId);
     const stored = resume ? readNexiPending() : null;
-    const pending = stored && stored.paymentId === resume?.paymentId ? stored : null;
+    const pending2 = stored && stored.paymentId === resume?.paymentId ? stored : null;
     let checkoutId = this.state?.checkoutId;
-    if (!checkoutId && pending && pending.sponsorId === spId) {
-      checkoutId = pending.checkoutId;
+    if (!checkoutId && pending2 && pending2.sponsorId === spId) {
+      checkoutId = pending2.checkoutId;
       if (this.state) this.state = { ...this.state, checkoutId };
     }
     if (!checkoutId) {
@@ -8094,7 +8094,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     const ownedCheckoutId = checkoutId;
     let order = null;
-    if (pending && pending.checkoutId === ownedCheckoutId) {
+    if (pending2 && pending2.checkoutId === ownedCheckoutId) {
       try {
         order = await getNexiOrder(ownedCheckoutId, opts);
       } catch {
@@ -8105,7 +8105,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         handlers.onCompleted?.(order);
         return order;
       }
-      if (order && (order.status !== "Created" || order.order_id !== pending.paymentId)) {
+      if (order && (order.status !== "Created" || order.order_id !== pending2.paymentId)) {
         order = null;
       }
     }
@@ -8413,6 +8413,23 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * (api-microservice, `stripe-offer.ts`). A channel that predates that
    * field answers `link`, which is what every client did before.
    */
+  /**
+   * Does this channel's Vipps offer Express — the buy-now buttons that open
+   * the app with address and delivery? Vio Commerce announces it as
+   * `config.express` on the Vipps method, the way Stripe announces `mode`;
+   * the seller switches it on its Vipps row. Unknown means yes: Express is
+   * the default, and the backend refuses it with a reason if it cannot.
+   */
+  async getVippsExpressEnabled(sponsorId) {
+    try {
+      const methods = await this.getAvailablePaymentMethods(sponsorId);
+      const vipps = methods?.find((m2) => String(m2?.name ?? "").toLowerCase() === "vipps");
+      const express = vipps?.config?.find((c4) => c4?.name === "express")?.value;
+      return express !== "false";
+    } catch {
+      return true;
+    }
+  }
   async getStripeMode(sponsorId) {
     try {
       const methods = await this.getAvailablePaymentMethods(sponsorId);
@@ -9108,9 +9125,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (typeof sessionStorage === "undefined") return;
     const raw = sessionStorage.getItem(KLARNA_PENDING_KEY);
     if (!raw) return;
-    let pending;
+    let pending2;
     try {
-      pending = JSON.parse(raw);
+      pending2 = JSON.parse(raw);
     } catch {
       sessionStorage.removeItem(KLARNA_PENDING_KEY);
       return;
@@ -9118,7 +9135,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const fromUrl = readKlarnaTokenFromUrl();
     if (fromUrl) {
       cleanUrlParams([fromUrl.param]);
-      await this.completeKlarnaOrder(fromUrl.token, pending, { authorizationToken: fromUrl.token });
+      await this.completeKlarnaOrder(fromUrl.token, pending2, { authorizationToken: fromUrl.token });
       return;
     }
     if (typeof window !== "undefined" && typeof console !== "undefined" && window.location.search) {
@@ -9132,7 +9149,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     await listenForKlarnaCompletion({
       config: { clientId: cfg.klarnaClientId, locale: getGlobalLocale(), environment: cfg.klarnaEnvironment },
       onComplete: (result) => {
-        void this.completeKlarnaOrder(result.authorizationToken, pending, result);
+        void this.completeKlarnaOrder(result.authorizationToken, pending2, result);
       },
       onError: (err) => {
         if (typeof console !== "undefined") {
@@ -9963,6 +9980,55 @@ var VioFacade = class {
 };
 var _vioGlobal = globalThis;
 var Vio = _vioGlobal.__VIO_FACADE__ ?? (_vioGlobal.__VIO_FACADE__ = new VioFacade());
+
+// src/core/checkout/payments/vipps-button.ts
+var VIPPS_BUTTON_SCRIPT = "https://cdn.vippsmobilepay.com/js/button/button.js";
+var VIPPS_BUTTON_TAG = "vipps-mobilepay-button";
+var pending = null;
+function ensureVippsButton(timeoutMs = 0) {
+  if (typeof document === "undefined" || typeof customElements === "undefined") {
+    return Promise.resolve(false);
+  }
+  if (customElements.get(VIPPS_BUTTON_TAG)) return Promise.resolve(true);
+  if (!pending) {
+    pending = new Promise((resolve) => {
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = timeoutMs > 0 ? setTimeout(() => done(false), timeoutMs) : void 0;
+      customElements.whenDefined(VIPPS_BUTTON_TAG).then(
+        () => done(true),
+        () => done(false)
+      );
+      if (!document.querySelector(`script[src="${VIPPS_BUTTON_SCRIPT}"]`)) {
+        const script = document.createElement("script");
+        script.async = true;
+        script.src = VIPPS_BUTTON_SCRIPT;
+        script.onerror = () => done(false);
+        document.head.appendChild(script);
+      }
+    });
+    void pending.then((ok) => {
+      if (!ok) pending = null;
+    });
+  }
+  return pending;
+}
+function vippsButtonAttributes(verb = "buy", opts = {}) {
+  return {
+    brand: "vipps",
+    language: opts.language ?? "no",
+    verb,
+    variant: "primary",
+    rounded: "true",
+    stretched: opts.stretched === false ? "false" : "true",
+    ...opts.compact ? { compact: "true" } : {}
+  };
+}
 
 // src/react/index.ts
 import * as React from "react";
@@ -11354,6 +11420,7 @@ var VioProductDetail = class extends i4 {
     this.adding = false;
     this.applePayOk = false;
     this.availableMethods = null;
+    this.vippsOfficial = false;
     /** Race guard: only the latest fetch may write state (two quick taps on
      * different cards would otherwise let the slow response win). */
     this.fetchSeq = 0;
@@ -11734,6 +11801,8 @@ var VioProductDetail = class extends i4 {
     }
     .buy-vipps:hover:not(:disabled) { background: #ec4f1c; }
     .buy-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Vipps' own button (web component) — same slot, their drawing. */
+    .buy-vipps-official { display: block; width: 100%; margin-top: 10px; cursor: pointer; }
     /* Apple Pay express button — black, per Apple's button guidelines. Only
        shown in Safari (canApplePay). The  glyph is the Apple logo (Safari). */
     .buy-applepay {
@@ -11818,6 +11887,7 @@ var VioProductDetail = class extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    void this.loadVippsButton();
     document.addEventListener("vio:product-click", this.boundProductClick);
   }
   disconnectedCallback() {
@@ -12293,6 +12363,10 @@ var VioProductDetail = class extends i4 {
    * 2026-09-29). When this cart cannot have Express, or Vipps cannot be
    * started, the checkout opens with Vipps preselected, as before.
    */
+  /** Vipps' own button when its script answers; our orange one otherwise. */
+  async loadVippsButton() {
+    this.vippsOfficial = await ensureVippsButton();
+  }
   buyWithVipps() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
     this.addCurrentToCart();
@@ -12302,6 +12376,7 @@ var VioProductDetail = class extends i4 {
   async startVippsExpressOrCheckout() {
     let fallback = true;
     try {
+      if (!await Vio.checkout.getVippsExpressEnabled(this.sponsorId)) throw new Error("express off");
       const res = await Vio.checkout.startVippsExpress(this.sponsorId);
       fallback = !res?.payment_url;
     } catch (err) {
@@ -12509,17 +12584,30 @@ var VioProductDetail = class extends i4 {
                 </button>
               ` : ""}
 
-          ${this.availableQuantity > 0 && this.methodEnabled("vipps") ? b2`
-                <button
-                  class="buy-vipps"
-                  @click=${this.buyWithVipps}
-                  ?disabled=${this.adding}
-                  aria-label="Kjøp nå med Vipps"
-                >
-                  <span>Kjøp nå med</span>
-                  <span class="vipps-badge">vipps</span>
-                </button>
-              ` : ""}
+          ${this.availableQuantity > 0 && this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
+                  <vipps-mobilepay-button
+                    class="buy-vipps-official"
+                    brand="vipps"
+                    language="no"
+                    verb="buy"
+                    variant="primary"
+                    rounded="true"
+                    stretched="true"
+                    role="button"
+                    aria-label="Kjøp nå med Vipps"
+                    @click=${this.buyWithVipps}
+                  ></vipps-mobilepay-button>
+                ` : b2`
+                  <button
+                    class="buy-vipps"
+                    @click=${this.buyWithVipps}
+                    ?disabled=${this.adding}
+                    aria-label="Kjøp nå med Vipps"
+                  >
+                    <span>Kjøp nå med</span>
+                    <span class="vipps-badge">vipps</span>
+                  </button>
+                ` : ""}
 
           ${p3.description ? b2`
                 <div>
@@ -12608,6 +12696,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "vippsOfficial", 2);
 function normalizeValues(raw) {
   if (Array.isArray(raw)) {
     return raw.map((v2) => String(v2).trim()).filter((v2) => v2.length > 0);
@@ -12633,6 +12724,7 @@ var VioCart = class extends i4 {
     this.itemCount = 0;
     this.applePayAvailable = false;
     this.availableMethods = null;
+    this.vippsOfficial = false;
     /** Whether the method lookup has been attempted — see boundOnCartChange. */
     this.paymentMethodsAttempted = false;
     this.confirmedOrder = null;
@@ -12913,6 +13005,7 @@ var VioCart = class extends i4 {
       transition: background 0.15s;
     }
     .vipps-btn:hover { background: #ec4f1c; }
+    .vipps-btn-official { display: block; width: 100%; margin-bottom: 10px; cursor: pointer; }
     .vipps-btn .vipps-logo {
       font-size: 20px;
       font-weight: 800;
@@ -13011,6 +13104,7 @@ var VioCart = class extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    void this.loadVippsButton();
     this.carts = Vio.cart.getAllCarts();
     this.itemCount = Vio.cart.itemCount;
     Vio.cart.addEventListener("change", this.boundOnCartChange);
@@ -13181,9 +13275,14 @@ var VioCart = class extends i4 {
     if (firstSponsorId === void 0) return;
     void this.startVippsExpressOrCheckout(firstSponsorId);
   }
+  /** Vipps' own button when its script answers; our orange one otherwise. */
+  async loadVippsButton() {
+    this.vippsOfficial = await ensureVippsButton();
+  }
   async startVippsExpressOrCheckout(sponsorId) {
     let fallback = true;
     try {
+      if (!await Vio.checkout.getVippsExpressEnabled(sponsorId)) throw new Error("express off");
       const res = await Vio.checkout.startVippsExpress(sponsorId);
       fallback = !res?.payment_url;
     } catch (err) {
@@ -13348,15 +13447,28 @@ var VioCart = class extends i4 {
                         />
                       </button>
                     ` : ""}
-                ${this.methodEnabled("vipps") ? b2`
-                      <button
-                        class="vipps-btn"
-                        @click=${this.onVipps}
-                        aria-label="Betal med Vipps"
-                      >
-                        <span class="vipps-logo">vipps</span>
-                      </button>
-                    ` : ""}
+                ${this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
+                        <vipps-mobilepay-button
+                          class="vipps-btn-official"
+                          brand="vipps"
+                          language="no"
+                          verb="pay"
+                          variant="primary"
+                          rounded="true"
+                          stretched="true"
+                          role="button"
+                          aria-label="Betal med Vipps"
+                          @click=${this.onVipps}
+                        ></vipps-mobilepay-button>
+                      ` : b2`
+                        <button
+                          class="vipps-btn"
+                          @click=${this.onVipps}
+                          aria-label="Betal med Vipps"
+                        >
+                          <span class="vipps-logo">vipps</span>
+                        </button>
+                      ` : ""}
               </div>
             `}
       </aside>
@@ -13415,6 +13527,9 @@ __decorateClass([
 ], VioCart.prototype, "availableMethods", 2);
 __decorateClass([
   r5()
+], VioCart.prototype, "vippsOfficial", 2);
+__decorateClass([
+  r5()
 ], VioCart.prototype, "confirmedOrder", 2);
 
 // src/ui/components/vio-checkout.ts
@@ -13450,6 +13565,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.selectedShipping = "";
     this.availableShippingsList = [];
     this.availableMethods = null;
+    this.vippsOfficial = false;
     this.kustomMounting = false;
     this.kustomSyncing = false;
     this.kustomShipping = null;
@@ -14133,6 +14249,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    void this.loadVippsButton();
     this.checkoutState = Vio.checkout.currentState;
     this.items = Vio.checkout.items;
     Vio.checkout.addEventListener("change", this.boundOnCheckoutChange);
@@ -14216,6 +14333,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * anything else (including an unrecognized state) is treated as failed —
    * fail-closed by default rather than guessing.
    */
+  /** Vipps' own button when its script answers; our orange one otherwise. */
+  async loadVippsButton() {
+    this.vippsOfficial = await ensureVippsButton();
+  }
   async pollVippsStatus(checkoutId, sponsorId) {
     let sawStatus = false;
     for (let attempt = 0; attempt < _VioCheckout.VIPPS_STATUS_MAX_ATTEMPTS; attempt++) {
@@ -14939,6 +15060,23 @@ var _VioCheckout = class _VioCheckout extends i4 {
       form.scrollIntoView?.({ behavior: "smooth", block: "start" });
     });
   }
+  /**
+   * Vipps from the checkout: Express when the channel allows it, so the
+   * shopper picks the delivery inside the app — our rate on the cart is the
+   * one preselected there — and never silently keeps the default our form
+   * chose for them. When the cart cannot have Express (several suppliers)
+   * the backend says so without creating a payment, and the plain payment
+   * follows: profile shared, the rate already on the cart.
+   */
+  async startVippsFromCheckout() {
+    const sponsorId = this.checkoutState?.sponsorId;
+    const express = await Vio.checkout.getVippsExpressEnabled(sponsorId);
+    if (express) {
+      const res = await Vio.checkout.startVippsPayment(sponsorId, this.form, { express: true });
+      if (res?.payment_url) return;
+    }
+    await Vio.checkout.startVippsPayment(sponsorId, this.form);
+  }
   async onApplePay() {
     if (this.applePayInProgress) return;
     this.applePayInProgress = true;
@@ -15023,7 +15161,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     if (method === "vipps") {
       this.vippsLoading = true;
-      void Vio.checkout.startVippsPayment(this.checkoutState?.sponsorId, this.form).catch((err) => {
+      void this.startVippsFromCheckout().catch((err) => {
         this.paymentError = `Kunne ikke starte Vipps-betaling: ${err instanceof Error ? err.message : String(err)}`;
       }).finally(() => {
         this.vippsLoading = false;
@@ -16419,8 +16557,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("vipps")}>
-                            <span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>
+                          <button class="payment-btn" @click=${() => this.onPay("vipps")} aria-label="Vipps">
+                            ${this.vippsOfficial ? b2`<vipps-mobilepay-button
+                                  brand="vipps"
+                                  variant="primary"
+                                  rounded="true"
+                                  compact="true"
+                                  style="pointer-events:none"
+                                ></vipps-mobilepay-button>` : b2`<span style="color:#ff5b24;font-weight:800;font-size:17px;letter-spacing:-0.02em">vipps</span>`}
                           </button>
                         ` : ""}
                   </div>
@@ -16528,6 +16672,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "vippsOfficial", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "kustomMounting", 2);
@@ -16867,6 +17014,8 @@ export {
   UPDATE_CHECKOUT_MUTATION,
   UPDATE_ITEM_MUTATION,
   UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
+  VIPPS_BUTTON_SCRIPT,
+  VIPPS_BUTTON_TAG,
   Vio,
   VioApi,
   VioApiError,
@@ -16887,6 +17036,7 @@ export {
   createVioApi,
   deleteItem,
   displayPrice,
+  ensureVippsButton,
   executeCartGraphQL,
   formatPrice,
   getAvailablePaymentMethods,
@@ -16901,7 +17051,8 @@ export {
   showApplePaySheet,
   updateCheckout,
   updateItem,
-  updateShippingsBySupplier
+  updateShippingsBySupplier,
+  vippsButtonAttributes
 };
 /*! Bundled license information:
 

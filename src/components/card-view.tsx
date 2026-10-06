@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Vio, primaryImageUrl } from "../../vio-sdk";
+import { Vio, ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
 import { checkHasVariants, ensureVioInit, fetchVioProduct, getProductPriceAmount, openCart, withRetry } from "./vio-helpers";
 import {
   productToItem,
@@ -107,6 +107,7 @@ const CARD_CSS = `
 }
 .vio-native-card .vnc-btn-vipps:hover { background: #ec4f1c; }
 .vio-native-card .vnc-btn-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
+.vio-native-card .vnc-btn-vipps-official { display: block; width: 100%; margin-top: 10px; cursor: pointer; }
 .vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; text-transform: none; }
 /* Narrow cards (a phone's two-column grid, a dense desktop grid): the bars
    keep one line by shrinking their type instead of wrapping the badge. */
@@ -310,7 +311,21 @@ export function ProductCardView({
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
   const [vippsBusy, setVippsBusy] = useState(false);
-  const vippsOffer = useVippsOffer(Number(sponsorId), (config.vippsButton ?? "hidden") !== "hidden");
+  const wantVipps = (config.vippsButton ?? "hidden") !== "hidden";
+  const vippsOffer = useVippsOffer(Number(sponsorId), wantVipps);
+  // Vipps' own button (their web component, loaded from their CDN) when it
+  // answers; the orange bar we always drew otherwise.
+  const [vippsOfficial, setVippsOfficial] = useState(false);
+  useEffect(() => {
+    if (!wantVipps) return;
+    let cancelled = false;
+    ensureVippsButton().then((ok: boolean) => {
+      if (!cancelled) setVippsOfficial(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [wantVipps]);
 
   useEffect(() => {
     injectCardStyles();
@@ -541,17 +556,27 @@ export function ProductCardView({
           </button>
         ) : null}
 
-        {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout") ? (
-          <button
-            className="vnc-btn-vipps"
-            onClick={doVipps}
-            disabled={vippsBusy}
-            aria-label={`${vippsLabel} Vipps`}
-          >
-            <span>{vippsLabel}</span>
-            <span className="vnc-vipps-badge">vipps</span>
-          </button>
-        ) : null}
+        {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout")
+          ? vippsOfficial
+            ? React.createElement("vipps-mobilepay-button", {
+                ...vippsButtonAttributes("buy"),
+                className: "vnc-btn-vipps-official",
+                role: "button",
+                "aria-label": `${vippsLabel} Vipps`,
+                onClick: doVipps,
+              } as any)
+            : (
+              <button
+                className="vnc-btn-vipps"
+                onClick={doVipps}
+                disabled={vippsBusy}
+                aria-label={`${vippsLabel} Vipps`}
+              >
+                <span>{vippsLabel}</span>
+                <span className="vnc-vipps-badge">vipps</span>
+              </button>
+            )
+          : null}
       </div>
     </div>
   );
