@@ -67,3 +67,6 @@ export interface VioThemeOverrides {
   spaceXl?: string;
 }
 export function applyVioTheme(overrides: VioThemeOverrides, target?: any): void;
+
+export function ensureVippsButton(timeoutMs?: number): Promise<boolean>;
+export function vippsButtonAttributes(verb?: string, opts?: Record<string, any>): Record<string, string>;
