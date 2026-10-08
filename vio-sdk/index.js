@@ -4114,6 +4114,19 @@ var GET_PRODUCTS_BY_IDS = (
   }
 `
 );
+var GET_PRODUCT_SELLER = (
+  /* GraphQL */
+  `
+  query GetProductSeller($productIds: [Int!], $useCache: Boolean!) {
+    Channel {
+      GetProductsByIds(product_ids: $productIds, useCache: $useCache) {
+        id
+        supplier_company
+      }
+    }
+  }
+`
+);
 var ChannelProduct = class {
   constructor(client) {
     this.client = client;
@@ -4134,6 +4147,24 @@ var ChannelProduct = class {
     };
     const data = await this.client.request(GET_PRODUCTS_BY_IDS, variables);
     return data.Channel?.GetProductsByIds ?? [];
+  }
+  /**
+   * The seller's Company name for one product, or null (none set, or an API
+   * that does not have the field yet). Never throws.
+   *
+   * Never from the cache, on purpose: graphql caches product answers by
+   * path whatever fields the query asked, so this narrow query, written to
+   * the cache, would hand the next full product query a product with no
+   * price and no images. `useCache: false` neither reads nor writes it.
+   */
+  async getSellerCompany(productId) {
+    try {
+      const data = await this.client.request(GET_PRODUCT_SELLER, { productIds: [productId], useCache: false });
+      const name = String(data.Channel?.GetProductsByIds?.[0]?.supplier_company ?? "").trim();
+      return name || null;
+    } catch {
+      return null;
+    }
   }
 };
 var Channel = class {
@@ -7192,7 +7223,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.18.0";
+var SDK_VERSION = "0.19.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -11441,6 +11472,8 @@ var VioProductDetail = class extends i4 {
     this.autoOpen = true;
     this.currency = "NOK";
     this.product = null;
+    this.sellerName = null;
+    this.sellerSettled = false;
     this.isLoading = false;
     this.fetchError = "";
     this.selectedOptions = {};
@@ -11931,6 +11964,8 @@ var VioProductDetail = class extends i4 {
     setTimeout(() => {
       if (!this.open) {
         this.product = null;
+        this.sellerName = null;
+        this.sellerSettled = false;
         this.selectedOptions = {};
         this.quantity = 1;
         this.activeImageIndex = 0;
@@ -11947,6 +11982,8 @@ var VioProductDetail = class extends i4 {
     const seq = ++this.fetchSeq;
     this.isLoading = true;
     this.fetchError = "";
+    this.sellerName = null;
+    this.sellerSettled = false;
     let products = null;
     let lastError = null;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -11975,6 +12012,7 @@ var VioProductDetail = class extends i4 {
     }
     this.optMapCache = /* @__PURE__ */ new WeakMap();
     this.product = products?.[0] ?? null;
+    if (this.product) void this.loadSeller(productIdNum, seq);
     if (this.product) {
       try {
         const price = Number(
@@ -12455,13 +12493,29 @@ var VioProductDetail = class extends i4 {
     void this.applePayHandle.show();
     this.close();
   }
+  /** The seller's Company name; the brand when there is none; nothing while asking. */
+  headerName() {
+    if (this.sellerName) return this.sellerName;
+    return this.sellerSettled ? this.product?.brand ?? "" : "";
+  }
+  async loadSeller(productId, seq) {
+    let name = null;
+    try {
+      name = await Vio.commerceFor(this.sponsorId).channel.product.getSellerCompany(productId);
+    } catch {
+      name = null;
+    }
+    if (seq !== this.fetchSeq) return;
+    this.sellerName = name;
+    this.sellerSettled = true;
+  }
   render() {
     return b2`
       <div class="backdrop" @click=${this.close}></div>
       <div class="modal" role="dialog" aria-label="Produkt">
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar">
-          <span class="topbar-brand">${this.product?.brand ?? ""}</span>
+          <span class="topbar-brand">${this.headerName()}</span>
           <button class="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
@@ -12701,6 +12755,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "product", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "sellerName", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "sellerSettled", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "isLoading", 2);
