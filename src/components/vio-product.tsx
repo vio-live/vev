@@ -12,14 +12,18 @@ import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS } from "./card-props";
 
 type Props = {
   product?: { productId?: number; sponsorId?: number };
+  /** Vev's image field: { url, key } — or a bare url from older values. */
+  image?: { url?: string } | string;
 } & CardConfig;
 
-export default function VioProductCard({ product, ...config }: Props) {
+export default function VioProductCard({ product, image, ...config }: Props) {
+  const imageOverride = typeof image === "string" ? image : image?.url;
   return (
     <VioProductCardSelf
       productId={product?.productId}
       sponsorId={product?.sponsorId ?? 1}
       config={config}
+      imageOverride={imageOverride || undefined}
     />
   );
 }
@@ -38,6 +42,15 @@ registerVevComponent(VioProductCard, {
         { name: "productId", type: "number" },
         { name: "sponsorId", type: "number" },
       ],
+    },
+    // Their own picture in place of the product's (Angelo, 2026-10-08): a
+    // campaign shot, a cut-out on the page's colour. Only on this card — the
+    // product's detail and the cart keep the product's photos.
+    {
+      name: "image",
+      title: "Custom image",
+      type: "image",
+      description: "Replaces the product's photo on this card. Leave empty to use the product's.",
     },
     ...CARD_CONFIG_PROPS,
   ],

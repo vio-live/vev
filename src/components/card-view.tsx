@@ -118,9 +118,9 @@ const CARD_CSS = `
 .vio-native-card .vnc-btn-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
 .vio-native-card .vnc-btn-vipps-official { display: block; width: 100%; margin-top: 10px; cursor: pointer; }
 .vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; text-transform: none; }
-/* Under the name (Angelo, 2026-10-08): the price and the retailer follow it. */
-.vio-native-card .vnc-meta .vnc-btn-vipps, .vio-native-card .vnc-meta .vnc-btn-vipps-official { margin: 0 0 12px; }
-/* Under the image, when there is no name to sit under. */
+/* Under the price (Angelo, 2026-10-08); the retailer follows it. */
+.vio-native-card .vnc-meta .vnc-btn-vipps, .vio-native-card .vnc-meta .vnc-btn-vipps-official { margin: -4px 0 12px; }
+/* Under the image, when the card shows no meta in its body (overlay, image only). */
 .vio-native-card .vnc-body > .vnc-btn-vipps:first-child,
 .vio-native-card .vnc-body > .vnc-btn-vipps-official:first-child { margin-top: 12px; }
 /* Narrow cards (a phone's two-column grid, a dense desktop grid): the bars
@@ -146,7 +146,17 @@ const CARD_CSS = `
   font-size: 16px; font-weight: 500; line-height: 1.3; margin: 0 0 10px;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.vio-native-card .vnc-price { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+.vio-native-card .vnc-price { font-size: 16px; font-weight: 700; line-height: 1.3; margin-bottom: 16px; }
+/* Cards side by side line up whatever their product (Angelo, 2026-10-08):
+   the brand keeps its line when a product has none, the name always takes
+   two lines, and on a card too narrow for one line (under ~120px) the price takes two — so the price, the
+   Vipps button and everything under them sit at the same height on every
+   card. Only in the body: over the image (overlay) nothing needs aligning. */
+.vio-native-card .vnc-meta .vnc-brand { min-height: 1.3em; line-height: 1.3; }
+.vio-native-card .vnc-meta .vnc-name { min-height: 2.6em; }
+@container (max-width: 120px) {
+  .vio-native-card .vnc-meta .vnc-price { min-height: 2.6em; }
+}
 .vio-native-card .vnc-retailer {
   font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--vio-color-text-tertiary, #999); font-weight: 500; margin-top: auto;
@@ -285,6 +295,8 @@ type ProductCardViewProps = {
   rootRef?: React.Ref<HTMLDivElement>;
   /** A block of its own (not inside a carousel or grid). */
   standalone?: boolean;
+  /** A picture the editor chose for this card, in place of the product's. */
+  imageOverride?: string;
 };
 
 export function ProductCardView({
@@ -296,6 +308,7 @@ export function ProductCardView({
   config = {},
   rootRef,
   standalone = false,
+  imageOverride,
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
   const [vippsBusy, setVippsBusy] = useState(false);
@@ -359,7 +372,8 @@ export function ProductCardView({
   } = config;
 
   const p = product;
-  const img = p ? primaryImageUrl(p) ?? "" : "";
+  // The editor may put its own picture on the card; the product's otherwise.
+  const img = imageOverride || (p ? primaryImageUrl(p) ?? "" : "");
   const brand = p?.brand ?? "";
   const name = p?.title ?? "";
   // Products with options show a "from" price (uses the correct product base
@@ -497,16 +511,16 @@ export function ProductCardView({
       : null;
 
   const showMeta = !isImageOnly && !isOverlay;
-  // The Vipps button goes right under the name — or right under the image when
-  // there is no name in the card's body to sit under (Angelo, 2026-10-08).
-  const vippsUnderName = showMeta && showName && !!name;
-
-  const metaBlock = (
+  // Name, then price, then the Vipps button (Angelo, 2026-10-08) — or the
+  // button right under the image when the card has no meta in its body.
+  const metaBlock = (inBody: boolean) => (
     <>
-      {showBrand && brand ? <div className="vnc-brand">{brand}</div> : null}
+      {/* In the body the brand keeps its line even when a product has none,
+          so cards side by side line up (see the CSS). */}
+      {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || "\u00a0"}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
-      {vippsUnderName && !isOverlay ? vippsEl : null}
       {showPrice && price ? <div className="vnc-price">{price}</div> : null}
+      {inBody ? vippsEl : null}
       {showRetailer && retailer ? <div className="vnc-retailer">{retailer}</div> : null}
     </>
   );
@@ -578,14 +592,13 @@ export function ProductCardView({
           </button>
         ) : null}
 
-        {isOverlay && !isImageOnly ? <div className="vnc-overlay-meta">{metaBlock}</div> : null}
+        {isOverlay && !isImageOnly ? <div className="vnc-overlay-meta">{metaBlock(false)}</div> : null}
       </div>
 
       {/* Meta and the bar buttons share one column, so in the horizontal
           layout they are the right-hand side and never a third column. */}
       <div className="vnc-body">
-        {vippsUnderName ? null : vippsEl}
-        {showMeta ? <div className="vnc-meta">{metaBlock}</div> : null}
+        {showMeta ? <div className="vnc-meta">{metaBlock(true)}</div> : vippsEl}
 
         {buttonStyle === "bar" ? (
           <button className="vnc-btn-text vnc-btn-bar" onClick={onButton}>
@@ -626,10 +639,12 @@ export function VioProductCardSelf({
   productId,
   sponsorId = 1,
   config,
+  imageOverride,
 }: {
   productId?: number;
   sponsorId?: number;
   config?: CardConfig;
+  imageOverride?: string;
 }) {
   const { product, loading } = useVioProduct(productId, sponsorId);
   const qty = useCartQty(productId, sponsorId);
@@ -663,6 +678,7 @@ export function VioProductCardSelf({
       config={config}
       rootRef={rootRef}
       standalone
+      imageOverride={imageOverride}
     />
   );
 }
