@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
+import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
@@ -14,7 +15,7 @@ import { observeVioImpression, productToItem, trackViewItemList } from "./analyt
 
 const STYLE_ID = "vio-grid-styles";
 const GRID_CSS = `
-.vio-grid-wrap { width: 100%; font-family: var(--vio-font-sans, -apple-system, sans-serif); color: var(--vio-color-text, #0a0a0a); }
+.vio-grid-wrap { position: relative; width: 100%; font-family: var(--vio-font-sans, -apple-system, sans-serif); color: var(--vio-color-text, #0a0a0a); }
 .vio-grid-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .vio-grid-kicker { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--vio-color-accent, #c14a3b); font-weight: 600; margin-bottom: 6px; }
 .vio-grid-heading { font-family: var(--vio-font-serif, 'Tinos', Georgia, serif); font-size: 26px; font-weight: 400; margin: 0; }
@@ -51,6 +52,8 @@ export default function VioProductGrid(props: Props) {
   // doble conteo. Corre cuando hay productos, porque recién ahí se monta
   // la raíz real (sin productos se renderiza el estado vacío).
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Editor only: the frame Vev gives this block cuts it (see editor-fit).
+  const cutByFrame = useCutByFrame(rootRef, true, list.length);
   useEffect(() => {
     if (list.length === 0) return;
     return observeVioImpression(
@@ -101,6 +104,7 @@ export default function VioProductGrid(props: Props) {
 
   return (
     <div ref={rootRef} className="vio-grid-wrap">
+      {cutByFrame ? <CutByFrameNotice /> : null}
       {(kicker || heading) && (
         <div className="vio-grid-head">
           <div>
