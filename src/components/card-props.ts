@@ -3,6 +3,24 @@
  * carousel, grid) so they expose the same card-styling controls to the editor.
  */
 
+import { getActiveSponsorId, loadVippsOffer } from "./vio-helpers";
+
+/**
+ * The Vipps button is offered in the panel only when the channel has Vipps
+ * (Angelo, 2026-10-08): the editor asks the payment methods the same way the
+ * card does before drawing it. Only a known "no" hides it — a lookup that
+ * fails (no key yet, a network hiccup) leaves the option where it was,
+ * rather than hiding something we could not check.
+ */
+async function channelLacksVipps(ctx: any): Promise<boolean> {
+  const sponsorId = Number(ctx?.value?.product?.sponsorId) || getActiveSponsorId();
+  try {
+    return (await loadVippsOffer(sponsorId)) === "none";
+  } catch {
+    return false;
+  }
+}
+
 export const CARD_CONFIG_PROPS: any[] = [
   {
     name: "layout",
@@ -91,15 +109,24 @@ export const CARD_CONFIG_PROPS: any[] = [
     title: "Vipps Express button",
     type: "select",
     initialValue: "hidden",
+    hidden: channelLacksVipps,
     options: {
       display: "dropdown",
       items: [
         { value: "hidden", label: "Off" },
-        { value: "bar", label: "Full-width bar (under the card)" },
+        { value: "bar", label: "Full-width bar (under the name)" },
       ],
     },
   },
-  { name: "vippsLabel", title: "Vipps button label", type: "string", initialValue: "Kjøp nå med" },
+  {
+    name: "vippsLabel",
+    title: "Vipps button label",
+    type: "string",
+    initialValue: "Kjøp nå med",
+    // Only with the button on, and only where there can be one.
+    hidden: async (ctx: any) =>
+      (ctx?.value?.vippsButton ?? "hidden") === "hidden" || (await channelLacksVipps(ctx)),
+  },
 ];
 
 export const CARD_EDITABLE_CSS: any[] = [

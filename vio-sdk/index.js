@@ -5219,6 +5219,21 @@ async function getCheckout(checkoutId, options) {
   const json = await executeCartGraphQL(GET_CHECKOUT_QUERY, { checkoutId }, options);
   return json?.data?.Checkout?.GetCheckout;
 }
+var GET_CHECKOUT_ORDER_NUMBER_QUERY = `
+query GetCheckoutOrderNumber($checkoutId: String!) {
+  Checkout {
+    GetCheckout(checkout_id: $checkoutId) {
+      id
+      order_id
+    }
+  }
+}
+`;
+async function getCheckoutOrderNumber(checkoutId, options) {
+  const json = await executeCartGraphQL(GET_CHECKOUT_ORDER_NUMBER_QUERY, { checkoutId }, options);
+  const n6 = Number(json?.data?.Checkout?.GetCheckout?.order_id);
+  return Number.isInteger(n6) && n6 > 0 ? n6 : null;
+}
 async function getAvailablePaymentMethods(options) {
   const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, options);
   return json?.data?.Payment?.GetAvailablePaymentMethods;
@@ -7177,7 +7192,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.17.0";
+var SDK_VERSION = "0.18.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -7556,6 +7571,20 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async getCheckout(checkoutId, sponsorId) {
     const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
     return getCheckout(checkoutId, opts);
+  }
+  /**
+   * The Vio order number (#4497) a checkout became, or null: not born yet,
+   * or an API that does not say it. Never throws — it is a line on a
+   * receipt, and a receipt does not fail for it.
+   */
+  async getOrderNumber(checkoutId, sponsorId) {
+    if (!checkoutId) return null;
+    try {
+      const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+      return await getCheckoutOrderNumber(checkoutId, opts);
+    } catch {
+      return null;
+    }
   }
   /**
    * Payment methods enabled for the sponsor (backend-configured). Memoised per
@@ -13553,6 +13582,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.confirmedMethod = null;
     this.paymentError = null;
     this.paymentNotice = null;
+    this.verifyingReturn = null;
+    /** The checkout whose confirmation is on screen — see fillOrderNumber. */
+    this.confirmedCheckoutId = null;
     this.confirmedOrder = null;
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
@@ -13691,6 +13723,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.confirmedOrder = null;
         this.paymentError = null;
         this.paymentNotice = null;
+        this.verifyingReturn = null;
+        this.confirmedCheckoutId = null;
         this.express = false;
         this.availableMethods = null;
         this.paymentMethodsResolved = false;
@@ -13960,6 +13994,37 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     @media (prefers-reduced-motion: reduce) {
       .payment-spinner { animation: none; }
+    }
+    /* Back from a payment page: only this until we know. */
+    .verifying {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 10px;
+      padding: 56px 16px;
+    }
+    .verifying-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--vio-color-border, #e5e5e5);
+      border-top-color: var(--vio-color-accent, #c14a3b);
+      border-radius: 50%;
+      animation: vio-payment-spin 0.8s linear infinite;
+    }
+    .verifying-text {
+      margin: 6px 0 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--vio-color-text, #1a1a1a);
+    }
+    .verifying-hint {
+      margin: 0;
+      font-size: 13px;
+      color: var(--vio-color-text-secondary, #666);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .verifying-spinner { animation: none; }
     }
     .payment-btn {
       padding: 20px;
@@ -14366,12 +14431,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.confirmedOrder = {
         items: [],
         currency: getGlobalCurrency(),
-        total: 0,
-        orderId: checkoutId || void 0
+        total: 0
       };
       this.confirmedMethod = vioMethod;
       this.orderConfirmed = true;
       this.open = true;
+      void this.fillOrderNumber(checkoutId, sponsorId);
       this.dispatchEvent(
         new CustomEvent("vio:payment-success", {
           bubbles: true,
@@ -14439,14 +14504,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
         } catch {
         }
         this.open = true;
-        this.paymentNotice = "Bekrefter betalingen\u2026";
+        this.verifyingReturn = "Bekrefter betalingen\u2026";
         this.cleanReturnQueryParams([...KUSTOM_RETURN_QUERY_KEYS]);
         try {
           const order = await Vio.checkout.getKustomOrder(
             kustomOrderId,
             this.checkoutState?.sponsorId
           );
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           if (order?.status === "checkout_complete" && order.html_snippet) {
             const spId = this.checkoutState?.sponsorId ?? 0;
             this.showProviderReceipt("kustom", spId, order);
@@ -14457,7 +14522,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           }
         } catch (err) {
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Kustom confirmation read failed:", err);
@@ -14483,13 +14548,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
         this.autoSelectAttempted = true;
         this.open = true;
-        this.paymentNotice = "Bekrefter betalingen\u2026";
+        this.verifyingReturn = "Bekrefter betalingen\u2026";
         try {
           const order = await Vio.checkout.getQliroOrder(
             checkoutId,
             this.checkoutState?.sponsorId
           );
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           if (order?.status === "Completed") {
             const spId = this.checkoutState?.sponsorId ?? sponsorId ?? 0;
             const result = { order: { orderId: order.order_id }, chargedTotal: order.total_price };
@@ -14511,7 +14576,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             }
           }
         } catch (err) {
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Qliro confirmation read failed:", err);
@@ -14536,13 +14601,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
         } catch {
         }
         this.open = true;
-        this.paymentNotice = "Bekrefter betalingen\u2026";
+        this.verifyingReturn = "Bekrefter betalingen\u2026";
         try {
           const order = await Vio.checkout.getWalleyOrder(
             checkoutId,
             this.checkoutState?.sponsorId
           );
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           if (order?.html_snippet) {
             this.walleyMountedOrderId = order.order_id;
             await this.updateComplete;
@@ -14557,7 +14622,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             }
           }
         } catch (err) {
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
           this.paymentError = _VioCheckout.RETURN_UNVERIFIED_MESSAGE;
           if (typeof console !== "undefined") {
             console.warn("[VioCheckout] Walley confirmation read failed:", err);
@@ -14588,7 +14653,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
         }
         this.open = true;
-        this.paymentNotice = "Bekrefter betalingen\u2026";
+        this.verifyingReturn = "Bekrefter betalingen\u2026";
         let payment = null;
         let sawStatus = false;
         try {
@@ -14603,7 +14668,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             console.warn("[VioCheckout] Adyen return could not be verified:", err);
           }
         }
-        this.paymentNotice = null;
+        this.verifyingReturn = null;
         const outcome = sawStatus ? adyenReturnOutcome(payment) : "pending";
         this.applyReturnOutcome(outcome, sawStatus, "adyen", sponsorId, checkoutId);
         if (outcome === "paid" && this.confirmedOrder) {
@@ -14632,9 +14697,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
         }
         this.open = true;
-        this.paymentNotice = "Bekrefter betalingen med Vipps\u2026";
+        this.verifyingReturn = "Bekrefter betalingen med Vipps\u2026";
         const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
-        this.paymentNotice = null;
+        this.verifyingReturn = null;
         this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
       } else if (vioPayment === "success") {
@@ -14642,7 +14707,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         let sawStatus = false;
         if (checkoutId) {
           this.open = true;
-          this.paymentNotice = "Bekrefter betalingen\u2026";
+          this.verifyingReturn = "Bekrefter betalingen\u2026";
           for (const delayMs of _VioCheckout.RETURN_VERIFY_DELAYS_MS) {
             if (delayMs > 0) await new Promise((r6) => setTimeout(r6, delayMs));
             try {
@@ -14667,7 +14732,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               }
             }
           }
-          this.paymentNotice = null;
+          this.verifyingReturn = null;
         }
         this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
@@ -15201,11 +15266,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const r6 = result ?? {};
     const shippingPrice = this.shippingMajor();
     const email = String(this.form.email ?? "").trim();
+    const checkoutId = this.checkoutState?.checkoutId;
+    const providerOrderId = r6.order?.orderId != null ? String(r6.order.orderId) : "";
     this.confirmedOrder = {
       items: [...this.items],
       currency: this.checkoutState?.currency ?? "",
       total: typeof r6.chargedTotal === "number" ? r6.chargedTotal : this.checkoutState?.subtotal ?? 0,
-      orderId: r6.order?.orderId,
+      ...providerOrderId ? { providerRef: { label: `Ordre hos ${this.methodLabel(method)}`, value: providerOrderId } } : {},
       ...shippingPrice > 0 ? { shipping: { name: this.summaryShippingName() || "Frakt", price: shippingPrice } } : {},
       ...email ? { email } : {}
     };
@@ -15220,6 +15287,33 @@ var _VioCheckout = class _VioCheckout extends i4 {
       })
     );
     Vio.cart.clearSponsorCart(sponsorId);
+    void this.fillOrderNumber(checkoutId, sponsorId);
+  }
+  static {
+    /** Waits between asks for the Vio order number: the order is often born a
+     * moment after the payment (Vipps and Stripe through their webhook). */
+    this.ORDER_NUMBER_DELAYS_MS = [0, 1500, 3e3, 5e3, 8e3];
+  }
+  /**
+   * Puts the Vio order number (#4497) on the confirmation once the order
+   * exists. Until then the line is simply not there — never the checkout's
+   * uuid in its place, which is what it used to print. Stops if the shopper
+   * closes the drawer or another confirmation takes its place.
+   */
+  async fillOrderNumber(checkoutId, sponsorId) {
+    this.confirmedCheckoutId = checkoutId || null;
+    if (!checkoutId) return;
+    const stillShowing = () => this.orderConfirmed && this.confirmedCheckoutId === checkoutId;
+    for (const delayMs of _VioCheckout.ORDER_NUMBER_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((r6) => setTimeout(r6, delayMs));
+      if (!stillShowing()) return;
+      const n6 = await Vio.checkout.getOrderNumber(checkoutId, sponsorId || void 0);
+      if (!stillShowing()) return;
+      if (n6 && this.confirmedOrder) {
+        this.confirmedOrder = { ...this.confirmedOrder, orderId: String(n6) };
+        return;
+      }
+    }
   }
   methodLabel(method) {
     switch (method) {
@@ -15310,7 +15404,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         </div>
 
         <div class="body">
-          ${this.providerReceipt ? this.renderProviderReceipt() : this.orderConfirmed ? this.renderConfirmation() : this.express ? this.renderKlarnaExpress() : this.renderCheckoutBody()}
+          ${this.providerReceipt ? this.renderProviderReceipt() : this.orderConfirmed ? this.renderConfirmation() : this.verifyingReturn ? this.renderVerifying() : this.express ? this.renderKlarnaExpress() : this.renderCheckoutBody()}
         </div>
       </div>
     `;
@@ -15355,11 +15449,22 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
     }
   }
+  /** Back from the payment page, asking whether it was paid — and nothing
+   * else on screen while we do. */
+  renderVerifying() {
+    return b2`
+      <section class="verifying" role="status" aria-live="polite">
+        <span class="verifying-spinner" aria-hidden="true"></span>
+        <p class="verifying-text">${this.verifyingReturn}</p>
+        <p class="verifying-hint">Dette kan ta litt tid. Ikke lukk siden.</p>
+      </section>
+    `;
+  }
   renderConfirmation() {
     const o7 = this.confirmedOrder;
     const email = o7?.email || String(this.form.email ?? "").trim();
     const details = [];
-    if (o7?.orderId) details.push(["Ordrenummer", o7.orderId]);
+    if (o7?.orderId) details.push(["Ordrenummer", `#${o7.orderId}`]);
     details.push(["Betalingsm\xE5te", o7?.paidWith || this.methodLabel(this.confirmedMethod)]);
     if (o7?.providerRef) details.push([o7.providerRef.label, o7.providerRef.value]);
     if (email) details.push(["Kvittering til", email]);
@@ -16651,6 +16756,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "paymentNotice", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "verifyingReturn", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "confirmedOrder", 2);

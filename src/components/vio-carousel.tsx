@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
+import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
@@ -17,6 +18,7 @@ import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
 const STYLE_ID = "vio-carousel-styles";
 const CAROUSEL_CSS = `
 .vio-carousel {
+  position: relative;
   width: 100%;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
   color: var(--vio-color-text, #0a0a0a);
@@ -95,6 +97,8 @@ export default function VioProductCarousel(props: Props) {
   // doble conteo. Corre cuando hay productos, porque recién ahí se monta
   // la raíz real (sin productos se renderiza el estado vacío).
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Editor only: the frame Vev gives this block cuts it (see editor-fit).
+  const cutByFrame = useCutByFrame(rootRef, true, list.length);
   useEffect(() => {
     if (list.length === 0) return;
     return observeVioImpression(
@@ -151,6 +155,7 @@ export default function VioProductCarousel(props: Props) {
 
   return (
     <div ref={rootRef} className="vio-carousel">
+      {cutByFrame ? <CutByFrameNotice /> : null}
       {(kicker || heading || disclaimer) && (
         <div className="vio-carousel-head">
           <div className="vio-carousel-titles">

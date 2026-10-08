@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Vio, ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
-import { checkHasVariants, ensureVioInit, fetchVioProduct, getProductPriceAmount, openCart, withRetry } from "./vio-helpers";
+import {
+  checkHasVariants,
+  fetchVioProduct,
+  getProductPriceAmount,
+  loadVippsOffer,
+  openCart,
+  type VippsOffer,
+} from "./vio-helpers";
+import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
 import {
   productToItem,
   trackAddToCart,
@@ -45,6 +53,7 @@ const STYLE_ID = "vio-native-card-styles";
 // height, and the image never gives up its 1:1.
 const CARD_CSS = `
 .vio-native-card {
+  position: relative;
   box-sizing: border-box; width: 100%; height: auto; min-height: 100%; cursor: pointer;
   display: flex; flex-direction: column; container-type: inline-size;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
@@ -109,6 +118,11 @@ const CARD_CSS = `
 .vio-native-card .vnc-btn-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
 .vio-native-card .vnc-btn-vipps-official { display: block; width: 100%; margin-top: 10px; cursor: pointer; }
 .vio-native-card .vnc-btn-vipps .vnc-vipps-badge { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; text-transform: none; }
+/* Under the name (Angelo, 2026-10-08): the price and the retailer follow it. */
+.vio-native-card .vnc-meta .vnc-btn-vipps, .vio-native-card .vnc-meta .vnc-btn-vipps-official { margin: 0 0 12px; }
+/* Under the image, when there is no name to sit under. */
+.vio-native-card .vnc-body > .vnc-btn-vipps:first-child,
+.vio-native-card .vnc-body > .vnc-btn-vipps-official:first-child { margin-top: 12px; }
 /* Narrow cards (a phone's two-column grid, a dense desktop grid): the bars
    keep one line by shrinking their type instead of wrapping the badge. */
 @container (max-width: 220px) {
@@ -238,35 +252,6 @@ export function useCartQty(productId?: number, sponsorId = 1): number {
   return qty;
 }
 
-/**
- * What the channel offers for Vipps, per sponsor: "express" (the button opens
- * the Vipps app), "checkout" (Vipps is offered but the seller switched Express
- * off → the button opens the checkout with Vipps preselected) or "none" (not
- * offered → no button at all). Read the same way the SDK's product detail reads
- * it, once per sponsor for every card on the page.
- */
-type VippsOffer = "express" | "checkout" | "none";
-const vippsOfferCache = new Map<number, Promise<VippsOffer>>();
-
-function loadVippsOffer(sponsorId: number): Promise<VippsOffer> {
-  let pending = vippsOfferCache.get(sponsorId);
-  if (!pending) {
-    pending = withRetry(async (): Promise<VippsOffer> => {
-      ensureVioInit();
-      await Vio.bootstrap();
-      const methods: any[] = (await Vio.checkout.getAvailablePaymentMethods(sponsorId)) ?? [];
-      const vipps = methods.find((m) => String(m?.name ?? "").toLowerCase() === "vipps");
-      if (!vipps) return "none";
-      const express = vipps.config?.find?.((c: any) => c?.name === "express")?.value;
-      return express === "false" ? "checkout" : "express";
-    }, { attempts: 3, label: `vipps offer ${sponsorId}` });
-    vippsOfferCache.set(sponsorId, pending);
-    // A failed lookup is not remembered: the next card asks again.
-    pending.catch(() => vippsOfferCache.delete(sponsorId));
-  }
-  return pending;
-}
-
 function useVippsOffer(sponsorId: number, wanted: boolean): VippsOffer | "unknown" {
   const [offer, setOffer] = useState<VippsOffer | "unknown">("unknown");
   useEffect(() => {
@@ -298,6 +283,8 @@ type ProductCardViewProps = {
   /** Solo lo pasa la tarjeta SUELTA, para observar su impresión. Dentro de
    *  una grilla o carrusel queda sin pasar: ahí cuenta el contenedor. */
   rootRef?: React.Ref<HTMLDivElement>;
+  /** A block of its own (not inside a carousel or grid). */
+  standalone?: boolean;
 };
 
 export function ProductCardView({
@@ -308,9 +295,30 @@ export function ProductCardView({
   qty,
   config = {},
   rootRef,
+  standalone = false,
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
   const [vippsBusy, setVippsBusy] = useState(false);
+  // The card's own root, also handed to whoever passed rootRef (impressions).
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const setRoot = (el: HTMLDivElement | null) => {
+    localRef.current = el;
+    if (typeof rootRef === "function") rootRef(el);
+    else if (rootRef) (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+  };
+  // Vipps' own button wraps to two lines (64px) below 220px wide; its
+  // compact form ("Kjøp nå" + logo) keeps one line down to 160px.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = localRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.getBoundingClientRect().width < 220));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [product, loading]);
+  // Only a card that is a block of its own: inside a carousel or grid the
+  // frame belongs to the container, which says it once.
+  const cutByFrame = useCutByFrame(localRef, standalone, product);
   const wantVipps = (config.vippsButton ?? "hidden") !== "hidden";
   const vippsOffer = useVippsOffer(Number(sponsorId), wantVipps);
   // Vipps' own button (their web component, loaded from their CDN) when it
@@ -465,16 +473,43 @@ export function ProductCardView({
     buttonAction === "detail" ? openDetail() : doAdd();
   };
 
+  const vippsEl =
+    vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout")
+      ? vippsOfficial
+        ? React.createElement("vipps-mobilepay-button", {
+            ...vippsButtonAttributes("buy", { compact: narrow }),
+            className: "vnc-btn-vipps-official",
+            role: "button",
+            "aria-label": `${vippsLabel} Vipps`,
+            onClick: doVipps,
+          } as any)
+        : (
+          <button
+            className="vnc-btn-vipps"
+            onClick={doVipps}
+            disabled={vippsBusy}
+            aria-label={`${vippsLabel} Vipps`}
+          >
+            {narrow ? null : <span>{vippsLabel}</span>}
+            <span className="vnc-vipps-badge">vipps</span>
+          </button>
+        )
+      : null;
+
+  const showMeta = !isImageOnly && !isOverlay;
+  // The Vipps button goes right under the name — or right under the image when
+  // there is no name in the card's body to sit under (Angelo, 2026-10-08).
+  const vippsUnderName = showMeta && showName && !!name;
+
   const metaBlock = (
     <>
       {showBrand && brand ? <div className="vnc-brand">{brand}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
+      {vippsUnderName && !isOverlay ? vippsEl : null}
       {showPrice && price ? <div className="vnc-price">{price}</div> : null}
       {showRetailer && retailer ? <div className="vnc-retailer">{retailer}</div> : null}
     </>
   );
-
-  const showMeta = !isImageOnly && !isOverlay;
 
   // Loading — skeleton in the card's shape.
   if (loading) {
@@ -506,7 +541,8 @@ export function ProductCardView({
   }
 
   return (
-    <div ref={rootRef} className={`vio-native-card l-${layout}`} style={accentStyle}>
+    <div ref={setRoot} className={`vio-native-card l-${layout}`} style={accentStyle}>
+      {cutByFrame ? <CutByFrameNotice /> : null}
       <div
         className="vnc-image"
         role="button"
@@ -548,7 +584,8 @@ export function ProductCardView({
       {/* Meta and the bar buttons share one column, so in the horizontal
           layout they are the right-hand side and never a third column. */}
       <div className="vnc-body">
-        {!isImageOnly && !isOverlay ? <div className="vnc-meta">{metaBlock}</div> : null}
+        {vippsUnderName ? null : vippsEl}
+        {showMeta ? <div className="vnc-meta">{metaBlock}</div> : null}
 
         {buttonStyle === "bar" ? (
           <button className="vnc-btn-text vnc-btn-bar" onClick={onButton}>
@@ -556,27 +593,6 @@ export function ProductCardView({
           </button>
         ) : null}
 
-        {vippsButton !== "hidden" && (vippsOffer === "express" || vippsOffer === "checkout")
-          ? vippsOfficial
-            ? React.createElement("vipps-mobilepay-button", {
-                ...vippsButtonAttributes("buy"),
-                className: "vnc-btn-vipps-official",
-                role: "button",
-                "aria-label": `${vippsLabel} Vipps`,
-                onClick: doVipps,
-              } as any)
-            : (
-              <button
-                className="vnc-btn-vipps"
-                onClick={doVipps}
-                disabled={vippsBusy}
-                aria-label={`${vippsLabel} Vipps`}
-              >
-                <span>{vippsLabel}</span>
-                <span className="vnc-vipps-badge">vipps</span>
-              </button>
-            )
-          : null}
       </div>
     </div>
   );
@@ -646,6 +662,7 @@ export function VioProductCardSelf({
       qty={qty}
       config={config}
       rootRef={rootRef}
+      standalone
     />
   );
 }

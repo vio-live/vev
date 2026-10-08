@@ -455,3 +455,33 @@ export function openProductInfo(productId: number, sponsorId: number, currency?:
 export function openCart(): void {
   document.dispatchEvent(new CustomEvent("vio:open-cart"));
 }
+
+/**
+ * What the channel offers for Vipps, per sponsor: "express" (the button opens
+ * the Vipps app), "checkout" (Vipps is offered but the seller switched Express
+ * off → the button opens the checkout with Vipps preselected) or "none" (not
+ * offered → no button at all). Read the same way the SDK's product detail reads
+ * it, once per sponsor for every card on the page — and by the editor, to
+ * offer the button only on a channel that has Vipps.
+ */
+export type VippsOffer = "express" | "checkout" | "none";
+const vippsOfferCache = new Map<number, Promise<VippsOffer>>();
+
+export function loadVippsOffer(sponsorId: number): Promise<VippsOffer> {
+  let pending = vippsOfferCache.get(sponsorId);
+  if (!pending) {
+    pending = withRetry(async (): Promise<VippsOffer> => {
+      ensureVioInit();
+      await Vio.bootstrap();
+      const methods: any[] = (await Vio.checkout.getAvailablePaymentMethods(sponsorId)) ?? [];
+      const vipps = methods.find((m) => String(m?.name ?? "").toLowerCase() === "vipps");
+      if (!vipps) return "none";
+      const express = vipps.config?.find?.((c: any) => c?.name === "express")?.value;
+      return express === "false" ? "checkout" : "express";
+    }, { attempts: 3, label: `vipps offer ${sponsorId}` });
+    vippsOfferCache.set(sponsorId, pending);
+    // A failed lookup is not remembered: the next card asks again.
+    pending.catch(() => vippsOfferCache.delete(sponsorId));
+  }
+  return pending;
+}
