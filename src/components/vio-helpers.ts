@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Vio } from "../../vio-sdk";
 
 /**
@@ -111,12 +112,37 @@ export function persistSponsorId(id: number): void {
   }
 }
 
-// The active sponsor is resolved dynamically per config.
-export function getActiveSponsorId(): number {
+/** The page's active sponsor: what Vio Config set (it persists and announces
+ * every change), else `fallback` — the demo sponsor, unless the caller has a
+ * better one, such as the sponsor a product was picked under. */
+export function getActiveSponsorId(fallback = 4): number {
   const runtime = (globalThis as { __VIO_SPONSOR_ID__?: number }).__VIO_SPONSOR_ID__;
   const persisted = getPersistedSponsorId();
-  const resolved = persisted || runtime || 4;
-  return resolved;
+  return persisted || runtime || fallback;
+}
+
+/**
+ * The active sponsor, live. Vio Config announces each change on
+ * `vio:sponsor-changed`, and a block that reads the sponsor here re-renders
+ * for the new one instead of keeping the one it mounted with — which is how
+ * the single card went on showing a product the new sponsor's channel does
+ * not carry (QA, 2026-10-08). Vev mounts blocks in no fixed order: a block
+ * mounted before the Config starts from what the last visit persisted (or
+ * `fallback`) and follows the Config's first announcement.
+ */
+export function useActiveSponsorId(fallback?: number): number {
+  const [sponsorId, setSponsorId] = useState(() => getActiveSponsorId(fallback));
+  useEffect(() => {
+    // The Config may have spoken between this block's render and its effects.
+    setSponsorId(getActiveSponsorId(fallback));
+    const onChange = (e: Event) => {
+      const next = Number((e as CustomEvent).detail);
+      if (Number.isFinite(next) && next > 0) setSponsorId(next);
+    };
+    window.addEventListener("vio:sponsor-changed", onChange);
+    return () => window.removeEventListener("vio:sponsor-changed", onChange);
+  }, [fallback]);
+  return sponsorId;
 }
 
 export type CountryConfig = {

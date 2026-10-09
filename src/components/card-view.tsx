@@ -6,9 +6,10 @@ import {
   getProductPriceAmount,
   loadVippsOffer,
   openCart,
+  useActiveSponsorId,
   type VippsOffer,
 } from "./vio-helpers";
-import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
+import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame, useFrameWidth } from "./editor-fit";
 import {
   productToItem,
   trackAddToCart,
@@ -46,11 +47,34 @@ export type CardConfig = {
 };
 
 const STYLE_ID = "vio-native-card-styles";
+// A card that is a block of its own never renders wider than this: Vev
+// positions a frame per breakpoint and the card fills it, so a page built on
+// the phone showed, on a desktop, one card across the whole column with a
+// photo to match (QA, 2026-10-08); narrower than CARD_MIN_WIDTH nothing on
+// it can be read. The CSS caps the width; in the editor the card says when
+// its frame is past either limit.
+const CARD_MAX_WIDTH = 480;
+const CARD_MIN_WIDTH = 120;
+const TOO_WIDE_NOTICE = `This card is wider than ${CARD_MAX_WIDTH} px: on a desktop screen its photo fills the column. Shrink the frame or use a Grid or a Carousel.`;
+const TOO_NARROW_NOTICE = "This card is too narrow to be readable. Widen the frame.";
 // The card's height follows its content: the Vev frame of the single card is
 // auto-height (Vev measures what we render), so a card that always filled the
 // frame could never make it grow — adding a button under the meta squeezed the
 // image instead. min-height keeps cards of one grid row / carousel the same
 // height, and the image never gives up its 1:1.
+//
+// Corners follow Vio Config's "Corners" choice through three variables of
+// the card's own — `--vio-card-radius` (the card and its photo),
+// `--vio-card-bar-radius` (the bar buttons), `--vio-card-badge-radius`
+// (chips, badges, skeleton) — whose fallbacks are today's pixels. Not the
+// SDK's `--vio-radius-*` directly: the SDK injects its own scale on :root
+// at load, so a card reading those would take the SDK's look under
+// "default" (an 8px photo corner, 4px bars). Vio Config removes the card
+// variables for "default" (this look stays), squares them for "sharp" and
+// hands them the theme's lg / md / sm for "rounded" (applyCardCorners in
+// vio-config.tsx). The round icon button and the pill are shapes, not
+// sizes — a squared circle is another control — so they keep 50% / 999px
+// in every preset, as the SDK keeps its own round controls.
 const CARD_CSS = `
 .vio-native-card {
   position: relative;
@@ -58,7 +82,10 @@ const CARD_CSS = `
   display: flex; flex-direction: column; container-type: inline-size;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
   color: var(--vio-color-text, #0a0a0a); -webkit-tap-highlight-color: transparent;
+  border-radius: var(--vio-card-radius, 0px);
 }
+/* A block of its own: never wider than CARD_MAX_WIDTH, centred in a wider frame. */
+.vio-native-card.vnc-standalone { max-width: ${CARD_MAX_WIDTH}px; margin-left: auto; margin-right: auto; }
 .vio-native-card.l-horizontal { flex-direction: row; gap: 14px; align-items: stretch; }
 .vio-native-card.l-horizontal .vnc-image { width: 42%; flex-shrink: 0; }
 .vio-native-card.l-horizontal .vnc-meta { padding-top: 0; justify-content: center; }
@@ -67,7 +94,7 @@ const CARD_CSS = `
   position: relative; aspect-ratio: 1 / 1; width: 100%; flex-shrink: 0;
   background-color: var(--vio-color-surface-muted, #f2f2f2);
   display: flex; align-items: center; justify-content: center;
-  overflow: hidden; transition: opacity 0.2s ease;
+  overflow: hidden; border-radius: var(--vio-card-radius, 0px); transition: opacity 0.2s ease;
 }
 .vio-native-card:hover .vnc-image img { opacity: 0.92; }
 .vio-native-card .vnc-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -75,15 +102,16 @@ const CARD_CSS = `
 .vio-native-card .vnc-badge {
   position: absolute; top: 10px; left: 10px; z-index: 3;
   background: var(--vnc-accent, #0a0a0a); color: #fff;
-  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
 }
 .vio-native-card .vnc-annonse {
   position: absolute; top: 10px; right: 10px; z-index: 3;
   background: rgba(255,255,255,0.9); color: #666;
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 3px;
+  padding: 3px 7px; border-radius: var(--vio-card-badge-radius, 3px);
 }
 
+/* A circle in every preset — the shape is the control (see the note above CARD_CSS). */
 .vio-native-card .vnc-add {
   position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px;
   border-radius: 50%; background: rgba(255, 255, 255, 0.96); border: none;
@@ -106,10 +134,11 @@ const CARD_CSS = `
   transition: opacity 0.15s ease;
 }
 .vio-native-card .vnc-btn-text:hover { opacity: 0.88; }
+/* A pill in every preset, like the circle above. */
 .vio-native-card .vnc-btn-pill { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 10px 16px; border-radius: 999px; }
-.vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+.vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: var(--vio-card-bar-radius, 6px); text-transform: uppercase; letter-spacing: 0.08em; }
 .vio-native-card .vnc-btn-vipps {
-  width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: 6px; cursor: pointer;
+  width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: var(--vio-card-bar-radius, 6px); cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   background: #ff5b24; color: #fff; font-family: inherit; font-size: 12px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.08em; transition: background 0.15s;
@@ -172,7 +201,7 @@ const CARD_CSS = `
 .vio-native-card.l-overlay .vnc-overlay-meta .vnc-price { color: #fff; margin-bottom: 4px; }
 
 /* Skeleton while a product loads. */
-.vio-native-card .vnc-skel { background: #ececec; border-radius: 4px; animation: vio-skel 1.2s ease-in-out infinite; }
+.vio-native-card .vnc-skel { background: #ececec; border-radius: var(--vio-card-badge-radius, 4px); animation: vio-skel 1.2s ease-in-out infinite; }
 @keyframes vio-skel { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .vio-native-card .vnc-unavailable { color: #b0b0b0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 `;
@@ -332,6 +361,11 @@ export function ProductCardView({
   // Only a card that is a block of its own: inside a carousel or grid the
   // frame belongs to the container, which says it once.
   const cutByFrame = useCutByFrame(localRef, standalone, product);
+  const frameWidth = useFrameWidth(localRef, standalone, product);
+  const notices: string[] = [];
+  if (cutByFrame) notices.push(CUT_BY_FRAME_NOTICE);
+  if (frameWidth != null && frameWidth > CARD_MAX_WIDTH) notices.push(TOO_WIDE_NOTICE);
+  if (frameWidth != null && frameWidth < CARD_MIN_WIDTH) notices.push(TOO_NARROW_NOTICE);
   const wantVipps = (config.vippsButton ?? "hidden") !== "hidden";
   const vippsOffer = useVippsOffer(Number(sponsorId), wantVipps);
   // Vipps' own button (their web component, loaded from their CDN) when it
@@ -370,6 +404,7 @@ export function ProductCardView({
     vippsButton = "hidden",
     vippsLabel = "Kjøp nå med",
   } = config;
+  const rootClass = `vio-native-card l-${layout}${standalone ? " vnc-standalone" : ""}`;
 
   const p = product;
   // The editor may put its own picture on the card; the product's otherwise.
@@ -528,7 +563,7 @@ export function ProductCardView({
   // Loading — skeleton in the card's shape.
   if (loading) {
     return (
-      <div className={`vio-native-card l-${layout}`} style={accentStyle} aria-busy="true">
+      <div className={rootClass} style={accentStyle} aria-busy="true">
         <div className="vnc-image">
           <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
         </div>
@@ -546,7 +581,7 @@ export function ProductCardView({
   // Fetch failed / product not found — discreet placeholder (never a blank hole).
   if (productId != null && !p) {
     return (
-      <div className={`vio-native-card l-${layout}`} style={accentStyle}>
+      <div className={rootClass} style={accentStyle}>
         <div className="vnc-image vnc-unavailable" role="img" aria-label="Kunne ikke laste produkt">
           <span>Utilgjengelig</span>
         </div>
@@ -555,8 +590,8 @@ export function ProductCardView({
   }
 
   return (
-    <div ref={setRoot} className={`vio-native-card l-${layout}`} style={accentStyle}>
-      {cutByFrame ? <CutByFrameNotice /> : null}
+    <div ref={setRoot} className={rootClass} style={accentStyle}>
+      <EditorNotices notices={notices} />
       <div
         className="vnc-image"
         role="button"
@@ -646,8 +681,14 @@ export function VioProductCardSelf({
   config?: CardConfig;
   imageOverride?: string;
 }) {
-  const { product, loading } = useVioProduct(productId, sponsorId);
-  const qty = useCartQty(productId, sponsorId);
+  // The page's active sponsor (Vio Config's choice, live), not the one the
+  // product was picked under: switching the sponsor must switch what every
+  // card shows, and a product the new channel does not carry shows as
+  // unavailable — as in the carousel and grid, which read the same source.
+  // The picked sponsor only serves while nothing has set one on the page.
+  const activeSponsor = useActiveSponsorId(sponsorId);
+  const { product, loading } = useVioProduct(productId, activeSponsor);
+  const qty = useCartQty(productId, activeSponsor);
 
   // Impression (view_item_list of one) — fired here so a standalone card counts,
   // without double-firing when the same view renders inside a carousel / grid
@@ -663,15 +704,15 @@ export function VioProductCardSelf({
     if (!product) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId, componentTemplateId: "vev-card" },
-      `vev-card:${sponsorId}:${productId}`,
+      { sponsorId: activeSponsor, componentTemplateId: "vev-card" },
+      `vev-card:${activeSponsor}:${productId}`,
     );
-  }, [product, sponsorId, productId]);
+  }, [product, activeSponsor, productId]);
 
   return (
     <ProductCardView
       productId={productId}
-      sponsorId={sponsorId}
+      sponsorId={activeSponsor}
       product={product}
       loading={loading}
       qty={qty}

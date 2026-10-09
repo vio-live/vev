@@ -4,7 +4,7 @@ import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { fetchVioProducts, getActiveSponsorId } from "./vio-helpers";
+import { fetchVioProducts, useActiveSponsorId } from "./vio-helpers";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 
 /**
@@ -46,7 +46,8 @@ export default function VioProductGrid(props: Props) {
 
   const [list, setList] = useState<any[]>([]);
 
-  const [activeSponsor, setActiveSponsor] = useState(getActiveSponsorId());
+  // The page's active sponsor, live — the same source as the card and the carousel.
+  const activeSponsor = useActiveSponsorId();
   // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
   // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
   // doble conteo. Corre cuando hay productos, porque recién ahí se monta
@@ -67,11 +68,6 @@ export default function VioProductGrid(props: Props) {
 
   useEffect(() => {
     injectStyles();
-    const handleSponsorChange = (e: Event) => {
-      setActiveSponsor((e as CustomEvent).detail);
-    };
-    window.addEventListener("vio:sponsor-changed", handleSponsorChange);
-    return () => window.removeEventListener("vio:sponsor-changed", handleSponsorChange);
   }, []);
 
   useEffect(() => {
