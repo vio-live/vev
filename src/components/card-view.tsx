@@ -9,7 +9,7 @@ import {
   useActiveSponsorId,
   type VippsOffer,
 } from "./vio-helpers";
-import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
+import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame, useFrameWidth } from "./editor-fit";
 import {
   productToItem,
   trackAddToCart,
@@ -47,6 +47,16 @@ export type CardConfig = {
 };
 
 const STYLE_ID = "vio-native-card-styles";
+// A card that is a block of its own never renders wider than this: Vev
+// positions a frame per breakpoint and the card fills it, so a page built on
+// the phone showed, on a desktop, one card across the whole column with a
+// photo to match (QA, 2026-10-08); narrower than CARD_MIN_WIDTH nothing on
+// it can be read. The CSS caps the width; in the editor the card says when
+// its frame is past either limit.
+const CARD_MAX_WIDTH = 480;
+const CARD_MIN_WIDTH = 120;
+const TOO_WIDE_NOTICE = `This card is wider than ${CARD_MAX_WIDTH} px: on a desktop screen its photo fills the column. Shrink the frame or use a Grid or a Carousel.`;
+const TOO_NARROW_NOTICE = "This card is too narrow to be readable. Widen the frame.";
 // The card's height follows its content: the Vev frame of the single card is
 // auto-height (Vev measures what we render), so a card that always filled the
 // frame could never make it grow — adding a button under the meta squeezed the
@@ -69,6 +79,8 @@ const CARD_CSS = `
   color: var(--vio-color-text, #0a0a0a); -webkit-tap-highlight-color: transparent;
   border-radius: var(--vio-radius-lg, 0);
 }
+/* A block of its own: never wider than CARD_MAX_WIDTH, centred in a wider frame. */
+.vio-native-card.vnc-standalone { max-width: ${CARD_MAX_WIDTH}px; margin-left: auto; margin-right: auto; }
 .vio-native-card.l-horizontal { flex-direction: row; gap: 14px; align-items: stretch; }
 .vio-native-card.l-horizontal .vnc-image { width: 42%; flex-shrink: 0; }
 .vio-native-card.l-horizontal .vnc-meta { padding-top: 0; justify-content: center; }
@@ -344,6 +356,11 @@ export function ProductCardView({
   // Only a card that is a block of its own: inside a carousel or grid the
   // frame belongs to the container, which says it once.
   const cutByFrame = useCutByFrame(localRef, standalone, product);
+  const frameWidth = useFrameWidth(localRef, standalone, product);
+  const notices: string[] = [];
+  if (cutByFrame) notices.push(CUT_BY_FRAME_NOTICE);
+  if (frameWidth != null && frameWidth > CARD_MAX_WIDTH) notices.push(TOO_WIDE_NOTICE);
+  if (frameWidth != null && frameWidth < CARD_MIN_WIDTH) notices.push(TOO_NARROW_NOTICE);
   const wantVipps = (config.vippsButton ?? "hidden") !== "hidden";
   const vippsOffer = useVippsOffer(Number(sponsorId), wantVipps);
   // Vipps' own button (their web component, loaded from their CDN) when it
@@ -382,6 +399,7 @@ export function ProductCardView({
     vippsButton = "hidden",
     vippsLabel = "Kjøp nå med",
   } = config;
+  const rootClass = `vio-native-card l-${layout}${standalone ? " vnc-standalone" : ""}`;
 
   const p = product;
   // The editor may put its own picture on the card; the product's otherwise.
@@ -540,7 +558,7 @@ export function ProductCardView({
   // Loading — skeleton in the card's shape.
   if (loading) {
     return (
-      <div className={`vio-native-card l-${layout}`} style={accentStyle} aria-busy="true">
+      <div className={rootClass} style={accentStyle} aria-busy="true">
         <div className="vnc-image">
           <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
         </div>
@@ -558,7 +576,7 @@ export function ProductCardView({
   // Fetch failed / product not found — discreet placeholder (never a blank hole).
   if (productId != null && !p) {
     return (
-      <div className={`vio-native-card l-${layout}`} style={accentStyle}>
+      <div className={rootClass} style={accentStyle}>
         <div className="vnc-image vnc-unavailable" role="img" aria-label="Kunne ikke laste produkt">
           <span>Utilgjengelig</span>
         </div>
@@ -567,8 +585,8 @@ export function ProductCardView({
   }
 
   return (
-    <div ref={setRoot} className={`vio-native-card l-${layout}`} style={accentStyle}>
-      {cutByFrame ? <CutByFrameNotice /> : null}
+    <div ref={setRoot} className={rootClass} style={accentStyle}>
+      <EditorNotices notices={notices} />
       <div
         className="vnc-image"
         role="button"
