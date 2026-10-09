@@ -160,6 +160,31 @@ const DENSITY_PRESETS = {
   roomy: { spaceSm: "10px", spaceMd: "20px", spaceLg: "32px", spaceXl: "44px" },
 } as const;
 
+/**
+ * The Vev card's corners (card-view.tsx) come from three variables of its
+ * own, with today's pixels as their fallbacks — not from `--vio-radius-*`
+ * directly, because the SDK injects its scale on :root at load and the card
+ * would take the SDK's look under "default" (an 8px photo corner, 4px bars)
+ * instead of its own. "default" removes them (the fallbacks apply, nothing
+ * changes); "sharp" squares them; "rounded" hands them the theme's
+ * lg / md / sm, which CORNER_PRESETS sets through applyVioTheme.
+ */
+const CARD_CORNER_VARS = {
+  "--vio-card-radius": "--vio-radius-lg",
+  "--vio-card-bar-radius": "--vio-radius-md",
+  "--vio-card-badge-radius": "--vio-radius-sm",
+} as const;
+
+function applyCardCorners(preset: string): void {
+  if (typeof document === "undefined") return;
+  const style = document.documentElement.style;
+  for (const [cardVar, token] of Object.entries(CARD_CORNER_VARS)) {
+    if (preset === "sharp") style.setProperty(cardVar, "0px");
+    else if (preset === "rounded") style.setProperty(cardVar, `var(${token})`);
+    else style.removeProperty(cardVar);
+  }
+}
+
 export default function VioConfig({
   apiKey,
   environment = DEFAULT_ENVIRONMENT,
@@ -311,6 +336,7 @@ export default function VioConfig({
       ...CORNER_PRESETS[themeCorners as keyof typeof CORNER_PRESETS],
       ...DENSITY_PRESETS[themeDensity as keyof typeof DENSITY_PRESETS],
     });
+    applyCardCorners(themeCorners);
   }, [
     themeColorAccent,
     themeColorTextOnAccent,
