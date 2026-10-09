@@ -6,6 +6,7 @@ import {
   getProductPriceAmount,
   loadVippsOffer,
   openCart,
+  useActiveSponsorId,
   type VippsOffer,
 } from "./vio-helpers";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
@@ -646,8 +647,14 @@ export function VioProductCardSelf({
   config?: CardConfig;
   imageOverride?: string;
 }) {
-  const { product, loading } = useVioProduct(productId, sponsorId);
-  const qty = useCartQty(productId, sponsorId);
+  // The page's active sponsor (Vio Config's choice, live), not the one the
+  // product was picked under: switching the sponsor must switch what every
+  // card shows, and a product the new channel does not carry shows as
+  // unavailable — as in the carousel and grid, which read the same source.
+  // The picked sponsor only serves while nothing has set one on the page.
+  const activeSponsor = useActiveSponsorId(sponsorId);
+  const { product, loading } = useVioProduct(productId, activeSponsor);
+  const qty = useCartQty(productId, activeSponsor);
 
   // Impression (view_item_list of one) — fired here so a standalone card counts,
   // without double-firing when the same view renders inside a carousel / grid
@@ -663,15 +670,15 @@ export function VioProductCardSelf({
     if (!product) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId, componentTemplateId: "vev-card" },
-      `vev-card:${sponsorId}:${productId}`,
+      { sponsorId: activeSponsor, componentTemplateId: "vev-card" },
+      `vev-card:${activeSponsor}:${productId}`,
     );
-  }, [product, sponsorId, productId]);
+  }, [product, activeSponsor, productId]);
 
   return (
     <ProductCardView
       productId={productId}
-      sponsorId={sponsorId}
+      sponsorId={activeSponsor}
       product={product}
       loading={loading}
       qty={qty}
