@@ -52,6 +52,14 @@ const STYLE_ID = "vio-native-card-styles";
 // frame could never make it grow — adding a button under the meta squeezed the
 // image instead. min-height keeps cards of one grid row / carousel the same
 // height, and the image never gives up its 1:1.
+//
+// Corners follow the theme's radius tokens — Vio Config's "Corners" choice
+// (the SDK scale by default, 0 for sharp, larger for rounded; CORNER_PRESETS
+// in vio-config.tsx): `sm` for chips and badges, `md` for the bar buttons,
+// `lg` for the card and its photo. The round icon button and the pill are
+// shapes, not sizes — a squared circle is another control — so they keep
+// 50% / 999px in every preset, as the SDK keeps its own round controls. The
+// fallbacks only serve a page without the SDK's token stylesheet.
 const CARD_CSS = `
 .vio-native-card {
   position: relative;
@@ -59,6 +67,7 @@ const CARD_CSS = `
   display: flex; flex-direction: column; container-type: inline-size;
   font-family: var(--vio-font-sans, -apple-system, sans-serif);
   color: var(--vio-color-text, #0a0a0a); -webkit-tap-highlight-color: transparent;
+  border-radius: var(--vio-radius-lg, 0);
 }
 .vio-native-card.l-horizontal { flex-direction: row; gap: 14px; align-items: stretch; }
 .vio-native-card.l-horizontal .vnc-image { width: 42%; flex-shrink: 0; }
@@ -68,7 +77,7 @@ const CARD_CSS = `
   position: relative; aspect-ratio: 1 / 1; width: 100%; flex-shrink: 0;
   background-color: var(--vio-color-surface-muted, #f2f2f2);
   display: flex; align-items: center; justify-content: center;
-  overflow: hidden; transition: opacity 0.2s ease;
+  overflow: hidden; border-radius: var(--vio-radius-lg, 0); transition: opacity 0.2s ease;
 }
 .vio-native-card:hover .vnc-image img { opacity: 0.92; }
 .vio-native-card .vnc-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -76,15 +85,16 @@ const CARD_CSS = `
 .vio-native-card .vnc-badge {
   position: absolute; top: 10px; left: 10px; z-index: 3;
   background: var(--vnc-accent, #0a0a0a); color: #fff;
-  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-radius-sm, 4px);
 }
 .vio-native-card .vnc-annonse {
   position: absolute; top: 10px; right: 10px; z-index: 3;
   background: rgba(255,255,255,0.9); color: #666;
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 3px;
+  padding: 3px 7px; border-radius: var(--vio-radius-sm, 3px);
 }
 
+/* A circle in every preset — the shape is the control (see the note above CARD_CSS). */
 .vio-native-card .vnc-add {
   position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px;
   border-radius: 50%; background: rgba(255, 255, 255, 0.96); border: none;
@@ -107,10 +117,11 @@ const CARD_CSS = `
   transition: opacity 0.15s ease;
 }
 .vio-native-card .vnc-btn-text:hover { opacity: 0.88; }
+/* A pill in every preset, like the circle above. */
 .vio-native-card .vnc-btn-pill { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 10px 16px; border-radius: 999px; }
-.vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+.vio-native-card .vnc-btn-bar { width: 100%; margin-top: 10px; padding: 14px; border-radius: var(--vio-radius-md, 6px); text-transform: uppercase; letter-spacing: 0.08em; }
 .vio-native-card .vnc-btn-vipps {
-  width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: 6px; cursor: pointer;
+  width: 100%; margin-top: 10px; padding: 14px; border: none; border-radius: var(--vio-radius-md, 6px); cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   background: #ff5b24; color: #fff; font-family: inherit; font-size: 12px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.08em; transition: background 0.15s;
@@ -173,7 +184,7 @@ const CARD_CSS = `
 .vio-native-card.l-overlay .vnc-overlay-meta .vnc-price { color: #fff; margin-bottom: 4px; }
 
 /* Skeleton while a product loads. */
-.vio-native-card .vnc-skel { background: #ececec; border-radius: 4px; animation: vio-skel 1.2s ease-in-out infinite; }
+.vio-native-card .vnc-skel { background: #ececec; border-radius: var(--vio-radius-sm, 4px); animation: vio-skel 1.2s ease-in-out infinite; }
 @keyframes vio-skel { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .vio-native-card .vnc-unavailable { color: #b0b0b0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 `;

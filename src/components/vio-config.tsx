@@ -490,6 +490,11 @@ export default function VioConfig({
           ...cartPositionStyle(cartPosition),
           width: cartSize,
           height: cartSize,
+          // A circle in every "Corners" preset, its badge a pill: the round
+          // shape is what makes a floating icon read as the cart, the SDK
+          // keeps its own round controls outside the radius scale too, and
+          // the scale's `xl` (16px by default) would turn today's circle
+          // into a rounded square on every page.
           borderRadius: 9999,
           background: cartColor || "#0a0a0a",
           color: "#fff",
