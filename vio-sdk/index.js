@@ -7223,7 +7223,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.19.0";
+var SDK_VERSION = "0.20.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -11459,6 +11459,134 @@ function isMethodEnabled(available, ...names) {
   );
 }
 
+// src/ui/dialog-focus.ts
+var DialogFocus = class {
+  constructor(opts) {
+    this.opts = opts;
+    this.opener = null;
+    this.active = false;
+    this.onKeydown = (e7) => {
+      if (e7.defaultPrevented) return;
+      if (e7.key === "Escape" || e7.key === "Esc") {
+        if (this.opts.canClose && !this.opts.canClose()) return;
+        e7.preventDefault();
+        e7.stopPropagation();
+        this.opts.close();
+        return;
+      }
+      if (e7.key !== "Tab" || e7.altKey || e7.ctrlKey || e7.metaKey) return;
+      const container = this.opts.container();
+      if (!container) return;
+      const items = tabbableIn(container);
+      if (items.length === 0) {
+        e7.preventDefault();
+        focusElement(container);
+        return;
+      }
+      const active = deepActiveElement();
+      const index = active ? items.indexOf(active) : -1;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e7.shiftKey) {
+        if (index <= 0) {
+          e7.preventDefault();
+          focusElement(last);
+        }
+      } else if (index === -1 || index === items.length - 1) {
+        e7.preventDefault();
+        focusElement(first);
+      }
+    };
+  }
+  /**
+   * Call from `updated()` when `open` changed. Lit reports `open` as changed
+   * on the first render too (from undefined to its initial value): with the
+   * same value twice this is a no-op, so that first call does nothing.
+   */
+  update(open) {
+    if (open === this.active) return;
+    this.active = open;
+    if (open) this.opened();
+    else this.closed();
+  }
+  opened() {
+    this.opener = deepActiveElement();
+    this.opts.host.addEventListener("keydown", this.onKeydown);
+    const container = this.opts.container();
+    if (container) focusInto(container);
+  }
+  closed() {
+    this.opts.host.removeEventListener("keydown", this.onKeydown);
+    const opener = this.opener;
+    this.opener = null;
+    const active = deepActiveElement();
+    if (!active || !isWithin(active, this.opts.host)) return;
+    if (opener && opener.isConnected && isRestorable(opener)) {
+      focusElement(opener);
+    } else if (active instanceof HTMLElement) {
+      active.blur();
+    }
+  }
+};
+function deepActiveElement() {
+  if (typeof document === "undefined") return null;
+  let el = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el;
+}
+var TABBABLE_CANDIDATES = "a[href], area[href], button, input, select, textarea, iframe, summary, [tabindex], [contenteditable]";
+function tabbableIn(container) {
+  const out = [];
+  walkChildren(container, out);
+  return out;
+}
+function walkChildren(parent, out) {
+  for (const child of Array.from(parent.children)) {
+    if (child instanceof HTMLSlotElement) {
+      const assigned = child.assignedElements({ flatten: true });
+      if (assigned.length > 0) {
+        for (const el of assigned) visit2(el, out);
+        continue;
+      }
+    }
+    visit2(child, out);
+  }
+}
+function visit2(el, out) {
+  if (isTabbable(el)) out.push(el);
+  if (el.shadowRoot) walkChildren(el.shadowRoot, out);
+  else walkChildren(el, out);
+}
+function isTabbable(el) {
+  if (!(el instanceof HTMLElement) || !el.matches(TABBABLE_CANDIDATES)) return false;
+  const tabindex = el.getAttribute("tabindex");
+  if (tabindex !== null && Number(tabindex) < 0) return false;
+  if (el.hasAttribute("disabled")) return false;
+  if (el instanceof HTMLInputElement && el.type === "hidden") return false;
+  if (el.getAttribute("contenteditable") === "false" && !el.matches("a[href], button, input, select, textarea, iframe, [tabindex]")) return false;
+  if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
+  if (typeof el.checkVisibility === "function" && !el.checkVisibility()) return false;
+  return true;
+}
+function focusInto(container) {
+  const first = tabbableIn(container)[0];
+  focusElement(first ?? container);
+}
+function focusElement(el) {
+  el.focus({ preventScroll: true });
+}
+function isRestorable(el) {
+  return el instanceof HTMLElement && el !== document.body && el !== document.documentElement;
+}
+function isWithin(node, ancestor) {
+  let n6 = node;
+  while (n6) {
+    if (n6 === ancestor) return true;
+    n6 = n6.parentNode ?? (n6 instanceof ShadowRoot ? n6.host : null);
+  }
+  return false;
+}
+
 // src/ui/components/vio-product-detail.ts
 var STRIPE_LOGO_SRC = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
@@ -11490,6 +11618,12 @@ var VioProductDetail = class extends i4 {
     this.optMapCache = /* @__PURE__ */ new WeakMap();
     /** Pre-prepared Apple Pay handle — show() fires synchronously on tap. */
     this.applePayHandle = null;
+    /** Keyboard and focus while open: Escape closes, Tab stays inside, focus returns to the opener. */
+    this.dialogFocus = new DialogFocus({
+      host: this,
+      container: () => this.renderRoot.querySelector(".modal"),
+      close: () => this.close()
+    });
     this.boundProductClick = (e7) => {
       if (!this.autoOpen) return;
       const ev = e7;
@@ -11533,6 +11667,8 @@ var VioProductDetail = class extends i4 {
       overflow-y: auto;
     }
     :host([open]) .modal { transform: translateY(0); }
+    /* Focus lands on the panel itself only as a fallback — no ring for it. */
+    .modal:focus { outline: none; }
 
     .handle { display: none; }
 
@@ -11541,7 +11677,7 @@ var VioProductDetail = class extends i4 {
       .modal {
         top: auto;
         height: 92vh;
-        border-radius: 16px 16px 0 0;
+        border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
       }
       .handle {
@@ -11555,7 +11691,7 @@ var VioProductDetail = class extends i4 {
         width: 40px;
         height: 4px;
         background: var(--vio-color-border, #e5e5e5);
-        border-radius: 2px;
+        border-radius: var(--vio-radius-sm, 2px);
       }
     }
 
@@ -11920,9 +12056,9 @@ var VioProductDetail = class extends i4 {
       );
       background-size: 200% 100%;
       animation: vio-skeleton-shimmer 1.4s ease-in-out infinite;
-      border-radius: 8px;
+      border-radius: var(--vio-radius-lg, 8px);
     }
-    .sk-image { width: 100%; aspect-ratio: 1; border-radius: 12px; }
+    .sk-image { width: 100%; aspect-ratio: 1; border-radius: var(--vio-radius-lg, 12px); }
     .sk-line { height: 14px; }
     .sk-brand { width: 38%; height: 10px; margin-top: 6px; }
     .sk-title { width: 85%; height: 26px; }
@@ -11955,6 +12091,9 @@ var VioProductDetail = class extends i4 {
   disconnectedCallback() {
     document.removeEventListener("vio:product-click", this.boundProductClick);
     super.disconnectedCallback();
+  }
+  updated(changed) {
+    if (changed.has("open")) this.dialogFocus.update(this.open);
   }
   show() {
     this.open = true;
@@ -12512,7 +12651,7 @@ var VioProductDetail = class extends i4 {
   render() {
     return b2`
       <div class="backdrop" @click=${this.close}></div>
-      <div class="modal" role="dialog" aria-label="Produkt">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Produkt" tabindex="-1">
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar">
           <span class="topbar-brand">${this.headerName()}</span>
@@ -12823,6 +12962,12 @@ var VioCart = class extends i4 {
     this.preparedTotal = -1;
     /** In-flight guard for loadAvailablePaymentMethods. */
     this.loadingPaymentMethods = false;
+    /** Keyboard and focus while open: Escape closes, Tab stays inside, focus returns to the opener. */
+    this.dialogFocus = new DialogFocus({
+      host: this,
+      container: () => this.renderRoot.querySelector(".drawer"),
+      close: () => this.close()
+    });
     this.boundOnCartChange = (e7) => {
       const detail = e7.detail;
       this.carts = detail.cartsBySponsor;
@@ -12865,6 +13010,8 @@ var VioCart = class extends i4 {
       box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
     }
     :host([open]) .drawer { transform: translateX(0); }
+    /* Focus lands on the drawer itself only as a fallback — no ring for it. */
+    .drawer:focus { outline: none; }
 
     .handle { display: none; }
 
@@ -12877,7 +13024,7 @@ var VioCart = class extends i4 {
         bottom: 0;
         width: 100%;
         height: 88vh;
-        border-radius: 16px 16px 0 0;
+        border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
         transform: translateY(100%);
         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
       }
@@ -12892,7 +13039,7 @@ var VioCart = class extends i4 {
         width: 40px;
         height: 4px;
         background: var(--vio-color-border, #e5e5e5);
-        border-radius: 2px;
+        border-radius: var(--vio-radius-sm, 2px);
       }
     }
 
@@ -12985,7 +13132,7 @@ var VioCart = class extends i4 {
       height: 24px;
       border: 1px solid var(--vio-color-border, #e5e5e5);
       background: #fff;
-      border-radius: 2px;
+      border-radius: var(--vio-radius-sm, 2px);
       cursor: pointer;
       font-size: 12px;
       color: var(--vio-color-text, #0a0a0a);
@@ -13042,7 +13189,7 @@ var VioCart = class extends i4 {
       background: #000;
       color: #fff;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--vio-radius-lg, 8px);
       font-size: 19px;
       font-weight: 500;
       line-height: 1;
@@ -13064,7 +13211,7 @@ var VioCart = class extends i4 {
       background: #ffb3c7;
       color: #0a0a0a;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--vio-radius-lg, 8px);
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
@@ -13085,7 +13232,7 @@ var VioCart = class extends i4 {
       background: #ff5b24;
       color: #fff;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--vio-radius-lg, 8px);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -13109,7 +13256,7 @@ var VioCart = class extends i4 {
       background: #635bff;
       color: #fff;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--vio-radius-lg, 8px);
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
@@ -13247,6 +13394,7 @@ var VioCart = class extends i4 {
     return isMethodEnabled(this.availableMethods, ...names);
   }
   updated(changed) {
+    if (changed.has("open")) this.dialogFocus.update(this.open);
     if (changed.has("open") && this.open) {
       this.confirmedOrder = null;
       this.preparedTotal = -1;
@@ -13426,7 +13574,7 @@ var VioCart = class extends i4 {
     const sponsorCarts = [...this.carts.values()].filter((c4) => c4.items.length > 0);
     return b2`
       <div class="backdrop" @click=${this.close}></div>
-      <aside class="drawer" role="dialog" aria-label=${this.heading}>
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label=${this.heading} tabindex="-1">
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
         <div class="header">
           <h2 class="heading">${this.confirmedOrder ? "Takk!" : this.heading}</h2>
@@ -13621,6 +13769,37 @@ __decorateClass([
   r5()
 ], VioCart.prototype, "confirmedOrder", 2);
 
+// src/ui/checkout-errors.ts
+var EMPTY_CART_MESSAGE = "Handlekurven er tom. Legg til et produkt og pr\xF8v igjen.";
+var CART_CHANGED_MESSAGE = "Handlekurven ble endret i en annen fane. Last siden p\xE5 nytt og pr\xF8v igjen.";
+var CART_PAID_MESSAGE = "Denne handlekurven er allerede betalt. Start en ny handlekurv.";
+var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen, eller velg en annen betalingsm\xE5te.";
+var SHIPS_APART = "kan ikke sendes sammen";
+function friendlyPaymentError(raw, method) {
+  void method;
+  const text = String(raw ?? "");
+  const lower = text.toLowerCase();
+  if (lower.includes("got 0") || lower.includes("amount must be a positive")) {
+    return EMPTY_CART_MESSAGE;
+  }
+  if (lower.includes("replaced by a newer") || text.includes("CHECKOUT_SUPERSEDED")) {
+    return CART_CHANGED_MESSAGE;
+  }
+  if (lower.includes("already been paid") || text.includes("CART_ALREADY_PAID")) {
+    return CART_PAID_MESSAGE;
+  }
+  if (text.includes(SHIPS_APART)) return norwegianSentence(text);
+  return PAYMENT_START_FAILED_MESSAGE;
+}
+function norwegianSentence(text) {
+  const at = text.indexOf(SHIPS_APART);
+  const prefixEnd = text.lastIndexOf(": ", at);
+  return (prefixEnd === -1 ? text : text.slice(prefixEnd + 2)).trim();
+}
+function errorText(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // src/ui/components/vio-checkout.ts
 var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
@@ -13733,6 +13912,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
     };
     /** In-flight guard for loadAvailablePaymentMethods. */
     this.loadingPaymentMethods = false;
+    /**
+     * Keyboard and focus while open: Escape closes — not while a payment is
+     * in flight — Tab stays inside, focus returns to the opener.
+     */
+    this.dialogFocus = new DialogFocus({
+      host: this,
+      container: () => this.renderRoot.querySelector(".modal"),
+      close: () => this.close(),
+      canClose: () => !this.paymentInFlight
+    });
     this.paymentMethodsResolved = false;
     /** Guards `autoSelectSoleMethod` to ONE attempt per opening — see there. */
     this.autoSelectAttempted = false;
@@ -13811,9 +14000,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
     };
     this.boundOnPaymentError = (e7) => {
       const detail = e7.detail;
-      this.paymentError = detail.method === "klarna" ? `Klarna-betalingen kunne ikke fullf\xF8res: ${detail.error}` : detail.error;
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] payment-error:", detail.method, detail.error);
+      }
+      this.paymentError = detail.method === "klarna" ? `Klarna-betalingen kunne ikke fullf\xF8res: ${detail.error}` : friendlyPaymentError(detail.error, detail.method);
       this.open = true;
     };
+  }
+  /** A payment is being started or confirmed right now: the overlay must not close under it. */
+  get paymentInFlight() {
+    return this.stripePaying || this.stripeLoading || this.vippsLoading || this.klarnaAuthorizing || this.applePayInProgress;
   }
   static {
     this.styles = i`
@@ -13843,6 +14039,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       overflow-y: auto;
     }
     :host([open]) .modal { transform: translateY(0); }
+    /* Focus lands on the panel itself only as a fallback — no ring for it. */
+    .modal:focus { outline: none; }
 
     /* Confirmation drawer — compact bottom sheet, not the full-screen overlay. */
     .modal.as-drawer {
@@ -14838,6 +15036,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     super.disconnectedCallback();
   }
   updated(changed) {
+    if (changed.has("open")) this.dialogFocus.update(this.open);
     if (changed.has("open") && this.open && this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
@@ -15096,7 +15295,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Klarna Payments mount failed:", err);
       }
-      this.paymentError = `Kunne ikke laste Klarna: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "klarna");
     } finally {
       this.klarnaMounting = false;
     }
@@ -15279,7 +15478,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
       this.stripeLoading = true;
       void Vio.checkout.startStripePayment(this.checkoutState?.sponsorId, this.form).catch((err) => {
-        this.paymentError = `Kunne ikke starte Stripe-betaling: ${err instanceof Error ? err.message : String(err)}`;
+        if (typeof console !== "undefined") {
+          console.warn("[VioCheckout] Stripe payment could not start:", err);
+        }
+        this.paymentError = friendlyPaymentError(errorText(err), "stripe");
       }).finally(() => {
         this.stripeLoading = false;
       });
@@ -15287,7 +15489,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (method === "vipps") {
       this.vippsLoading = true;
       void this.startVippsFromCheckout().catch((err) => {
-        this.paymentError = `Kunne ikke starte Vipps-betaling: ${err instanceof Error ? err.message : String(err)}`;
+        if (typeof console !== "undefined") {
+          console.warn("[VioCheckout] Vipps payment could not start:", err);
+        }
+        this.paymentError = friendlyPaymentError(errorText(err), "vipps");
       }).finally(() => {
         this.vippsLoading = false;
       });
@@ -15455,7 +15660,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
       <div
         class="modal ${this.express ? "as-side" : this.orderConfirmed ? "as-confirm" : ""}"
         role="dialog"
+        aria-modal="true"
         aria-label=${this.heading}
+        tabindex="-1"
       >
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar">
@@ -15668,7 +15875,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Kustom mount failed:", err);
       }
-      this.paymentError = `Kunne ikke laste Kustom: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "kustom");
       Vio.checkout.selectPaymentMethod("");
     } finally {
       this.kustomMounting = false;
@@ -15788,7 +15995,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Qliro mount failed:", err);
       }
-      this.paymentError = `Kunne ikke laste Qliro: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "qliro");
       Vio.checkout.selectPaymentMethod("");
     } finally {
       this.qliroMounting = false;
@@ -15845,7 +16052,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Walley mount failed:", err);
       }
-      this.paymentError = `Kunne ikke laste Walley: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "walley");
       Vio.checkout.selectPaymentMethod("");
     } finally {
       this.walleyMounting = false;
@@ -15920,7 +16127,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Nexi mount failed:", err);
       }
-      this.paymentError = `Kunne ikke laste Nexi: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "nexi");
       Vio.checkout.selectPaymentMethod("");
     } finally {
       this.nexiMounting = false;
@@ -16107,7 +16314,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.adyenMountedKey = this.embedPurchaseKey();
     } catch (err) {
       this.unmountAdyen();
-      this.paymentError = err instanceof AdyenOriginError ? "Betaling er ikke aktivert for denne siden enn\xE5. Ta kontakt med butikken." : `Kunne ikke laste betaling: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = err instanceof AdyenOriginError ? "Betaling er ikke aktivert for denne siden enn\xE5. Ta kontakt med butikken." : friendlyPaymentError(errorText(err), "adyen");
       if (typeof console !== "undefined") console.warn("[VioCheckout] Adyen mount failed:", err);
     } finally {
       this.adyenMounting = false;
@@ -16217,7 +16424,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
         },
         onLoadError: (message) => {
           this.unmountStripe();
-          this.paymentError = `Kunne ikke laste betaling: ${message}`;
+          if (typeof console !== "undefined") {
+            console.warn("[VioCheckout] Stripe Payment Element failed to load:", message);
+          }
+          this.paymentError = friendlyPaymentError(message, "stripe");
         }
       });
       if (this.embedSession() !== mountedFor || this.checkoutState?.paymentMethod !== "stripe" || !this.open) {
@@ -16236,7 +16446,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.stripeMountedKey = this.embedPurchaseKey();
     } catch (err) {
       this.unmountStripe();
-      this.paymentError = `Kunne ikke laste betaling: ${err instanceof Error ? err.message : String(err)}`;
+      this.paymentError = friendlyPaymentError(errorText(err), "stripe");
       if (typeof console !== "undefined") console.warn("[VioCheckout] Stripe mount failed:", err);
     } finally {
       this.stripeMounting = false;
