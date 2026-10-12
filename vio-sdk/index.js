@@ -4204,6 +4204,7 @@ query GetVippsStatus($checkoutId: String!) {
   Payment {
     GetVippsStatus(checkout_id: $checkoutId) {
       state
+      duplicate_of
     }
   }
 }
@@ -5000,6 +5001,7 @@ query GetCheckout($checkoutId: String!) {
       status
       checkout_url
       origin_payment_id
+      duplicate_of
       billing_address {
         id
         first_name
@@ -7223,7 +7225,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.20.2";
+var SDK_VERSION = "0.20.3";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -14728,6 +14730,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         const vippsStatus = await Vio.checkout.getVippsStatus(checkoutId, sponsorId || void 0);
         const state = String(vippsStatus?.state ?? "").toUpperCase();
         sawStatus = true;
+        if (vippsStatus?.duplicate_of) return { outcome: "duplicate", sawStatus };
         if (state === "AUTHORIZED") return { outcome: "paid", sawStatus };
         if (state === "CREATED") continue;
         return { outcome: "failed", sawStatus };
@@ -14760,6 +14763,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
           detail: { method: vioMethod, sponsorId, orderId: checkoutId }
         })
       );
+    } else if (outcome === "duplicate") {
+      this.paymentError = CART_PAID_MESSAGE;
+      this.open = true;
     } else if (outcome === "failed") {
       this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
       this.open = true;
@@ -15030,6 +15036,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
               const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
               const status = String(checkout?.status ?? "").toLowerCase();
               sawStatus = true;
+              if (checkout?.duplicate_of) {
+                outcome = "duplicate";
+                break;
+              }
               if (_VioCheckout.FAILED_STATUSES.has(status)) {
                 outcome = "failed";
                 break;
@@ -16533,6 +16543,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const settled = checkoutId ? await this.waitForStripeOrder(checkoutId, spId) : "pending";
       if (settled === "paid") {
         this.confirmOrder("stripe", spId, { chargedTotal: charged });
+      } else if (settled === "duplicate") {
+        this.stripeSettled = false;
+        this.paymentError = CART_PAID_MESSAGE;
       } else if (settled === "failed") {
         this.stripeSettled = false;
         this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
@@ -16558,6 +16571,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       try {
         const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
         const status = String(checkout?.status ?? "").toLowerCase();
+        if (checkout?.duplicate_of) return "duplicate";
         if (_VioCheckout.FAILED_STATUSES.has(status)) return "failed";
         if (_VioCheckout.PAID_STATUSES.has(status)) return "paid";
       } catch (err) {
