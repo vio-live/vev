@@ -7223,7 +7223,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.20.0";
+var SDK_VERSION = "0.20.1";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -11485,17 +11485,10 @@ var DialogFocus = class {
       }
       const active = deepActiveElement();
       const index = active ? items.indexOf(active) : -1;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (e7.shiftKey) {
-        if (index <= 0) {
-          e7.preventDefault();
-          focusElement(last);
-        }
-      } else if (index === -1 || index === items.length - 1) {
-        e7.preventDefault();
-        focusElement(first);
-      }
+      e7.preventDefault();
+      const count = items.length;
+      const next = index === -1 ? e7.shiftKey ? count - 1 : 0 : (index + (e7.shiftKey ? -1 : 1) + count) % count;
+      focusElement(items[next]);
     };
   }
   /**
