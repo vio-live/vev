@@ -7223,7 +7223,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.20.1";
+var SDK_VERSION = "0.20.2";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -11465,6 +11465,8 @@ var DialogFocus = class {
     this.opts = opts;
     this.opener = null;
     this.active = false;
+    /** The element inside the dialog that had focus last — where a pull-back continues from. */
+    this.lastInside = null;
     this.onKeydown = (e7) => {
       if (e7.defaultPrevented) return;
       if (e7.key === "Escape" || e7.key === "Esc") {
@@ -11490,6 +11492,50 @@ var DialogFocus = class {
       const next = index === -1 ? e7.shiftKey ? count - 1 : 0 : (index + (e7.shiftKey ? -1 : 1) + count) % count;
       focusElement(items[next]);
     };
+    /**
+     * Focus moved somewhere. Inside the dialog: remember where. Into another
+     * open Vio dialog: theirs. Onto the page: the browser walked out of the
+     * dialog on its own (Safari leaving a widget iframe) — continue from the
+     * element that had focus, backwards when the page element sits before
+     * the host in document order.
+     */
+    this.onFocusIn = (e7) => {
+      if (!this.opts.host.isConnected) return;
+      const path = e7.composedPath();
+      if (path.includes(this.opts.host)) {
+        const active = deepActiveElement();
+        this.lastInside = active instanceof HTMLElement ? active : null;
+        return;
+      }
+      if (path.some((n6) => isOpenVioDialog(n6, this.opts.host))) return;
+      const container = this.opts.container();
+      if (!container) return;
+      const items = tabbableIn(container);
+      if (items.length === 0) {
+        focusElement(container);
+        return;
+      }
+      const target = e7.target instanceof Node ? e7.target : null;
+      const backwards = !!target && precedes(target, this.opts.host);
+      const index = this.lastInside ? items.indexOf(this.lastInside) : -1;
+      const count = items.length;
+      const next = backwards ? index <= 0 ? count - 1 : index - 1 : index === -1 || index === count - 1 ? 0 : index + 1;
+      focusElement(items[next]);
+    };
+    /** Tab pressed while focus is on the page (or the body): enter the dialog. */
+    this.onDocumentKeydown = (e7) => {
+      if (!this.opts.host.isConnected) return;
+      if (e7.defaultPrevented || e7.key !== "Tab" || e7.altKey || e7.ctrlKey || e7.metaKey) return;
+      const active = deepActiveElement();
+      if (active && isWithin(active, this.opts.host)) return;
+      if (active && hasOpenVioDialogAbove(active, this.opts.host)) return;
+      const container = this.opts.container();
+      if (!container) return;
+      e7.preventDefault();
+      e7.stopPropagation();
+      const items = tabbableIn(container);
+      focusElement(items.length === 0 ? container : e7.shiftKey ? items[items.length - 1] : items[0]);
+    };
   }
   /**
    * Call from `updated()` when `open` changed. Lit reports `open` as changed
@@ -11504,12 +11550,17 @@ var DialogFocus = class {
   }
   opened() {
     this.opener = deepActiveElement();
+    this.lastInside = null;
     this.opts.host.addEventListener("keydown", this.onKeydown);
+    document.addEventListener("focusin", this.onFocusIn, true);
+    document.addEventListener("keydown", this.onDocumentKeydown, true);
     const container = this.opts.container();
     if (container) focusInto(container);
   }
   closed() {
     this.opts.host.removeEventListener("keydown", this.onKeydown);
+    document.removeEventListener("focusin", this.onFocusIn, true);
+    document.removeEventListener("keydown", this.onDocumentKeydown, true);
     const opener = this.opener;
     this.opener = null;
     const active = deepActiveElement();
@@ -11521,6 +11572,20 @@ var DialogFocus = class {
     }
   }
 };
+function isOpenVioDialog(node, host) {
+  return node instanceof Element && node !== host && node.tagName.startsWith("VIO-") && node.hasAttribute("open");
+}
+function hasOpenVioDialogAbove(node, host) {
+  let n6 = node;
+  while (n6) {
+    if (isOpenVioDialog(n6, host)) return true;
+    n6 = n6.parentNode ?? (n6 instanceof ShadowRoot ? n6.host : null);
+  }
+  return false;
+}
+function precedes(a3, b3) {
+  return (a3.compareDocumentPosition(b3) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
 function deepActiveElement() {
   if (typeof document === "undefined") return null;
   let el = document.activeElement;
