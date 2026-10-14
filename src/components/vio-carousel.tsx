@@ -103,7 +103,7 @@ export default function VioProductCarousel(props: Props) {
     if (list.length === 0) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor, componentTemplateId: "vev-carousel", locationId: heading || kicker || "Vio Carousel" },
+      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-carousel", locationId: heading || kicker || "Vio Carousel" },
       `vev-carousel:${activeSponsor}:${heading || kicker || "Vio Carousel"}`,
     );
   }, [list.length, activeSponsor, heading, kicker]);
@@ -115,7 +115,9 @@ export default function VioProductCarousel(props: Props) {
   }, []);
 
   useEffect(() => {
-    if (ids.length === 0) {
+    // No products picked, or no sponsor yet (a key booting): nothing to show,
+    // and nothing is asked of Commerce until the Config announces a sponsor.
+    if (ids.length === 0 || activeSponsor == null) {
       setList([]);
       return;
     }

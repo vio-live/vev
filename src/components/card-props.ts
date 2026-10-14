@@ -3,7 +3,7 @@
  * carousel, grid) so they expose the same card-styling controls to the editor.
  */
 
-import { getActiveSponsorId, loadVippsOffer } from "./vio-helpers";
+import { loadVippsOffer, resolveActiveSponsorId } from "./vio-helpers";
 
 /**
  * The Vipps button is offered in the panel only when the channel has Vipps
@@ -13,8 +13,11 @@ import { getActiveSponsorId, loadVippsOffer } from "./vio-helpers";
  * rather than hiding something we could not check.
  */
 async function channelLacksVipps(ctx: any): Promise<boolean> {
-  const sponsorId = Number(ctx?.value?.product?.sponsorId) || getActiveSponsorId();
   try {
+    // The sponsor the block itself will use: the page's active one (else the
+    // one its product was picked under), only if the connected key has it.
+    const sponsorId = await resolveActiveSponsorId(ctx?.value?.product?.sponsorId);
+    if (sponsorId == null) return false; // no configuration yet: not checked
     return (await loadVippsOffer(sponsorId)) === "none";
   } catch {
     return false;

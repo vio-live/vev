@@ -205,9 +205,10 @@ function forwardToVio(name: string, params: EventParams): void {
       // core —que sí lo copian— están apagados: si no lo mandamos desde acá,
       // todo lo de Vev llega con sponsor_id = 0 y ese dashboard nace vacío.
       // Cascada: lo explícito del evento → el sponsor del carrito (si es
-      // uno solo) → el sponsor persistido de la página. NO usamos
-      // getActiveSponsorId(): ese inventa 4 cuando no sabe, y atribuir a un
-      // sponsor equivocado es peor que no atribuir.
+      // uno solo) → el sponsor persistido de la página (el que Vio Config
+      // resolvió contra la key conectada; se borra al cambiar de key). Nunca
+      // un id inventado: atribuir a un sponsor equivocado es peor que no
+      // atribuir.
       context: (() => {
         const sid = num(sponsorId) ?? soleCartSponsor() ?? getPersistedSponsorId() ?? undefined;
         return sid ? { sponsorId: sid } : undefined;
