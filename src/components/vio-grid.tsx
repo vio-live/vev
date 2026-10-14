@@ -59,7 +59,7 @@ export default function VioProductGrid(props: Props) {
     if (list.length === 0) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor, componentTemplateId: "vev-grid", locationId: heading || kicker || "Vio Grid" },
+      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-grid", locationId: heading || kicker || "Vio Grid" },
       `vev-grid:${activeSponsor}:${heading || kicker || "Vio Grid"}`,
     );
   }, [list.length, activeSponsor, heading, kicker]);
@@ -71,7 +71,9 @@ export default function VioProductGrid(props: Props) {
   }, []);
 
   useEffect(() => {
-    if (ids.length === 0) {
+    // No products picked, or no sponsor yet (a key booting): nothing to show,
+    // and nothing is asked of Commerce until the Config announces a sponsor.
+    if (ids.length === 0 || activeSponsor == null) {
       setList([]);
       return;
     }

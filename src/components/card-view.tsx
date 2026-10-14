@@ -6,6 +6,7 @@ import {
   getProductPriceAmount,
   loadVippsOffer,
   openCart,
+  sponsorForCommerce,
   useActiveSponsorId,
   type VippsOffer,
 } from "./vio-helpers";
@@ -244,14 +245,21 @@ function resolveDiscount(p: any, mode?: string, manual?: string): string | null 
   return null;
 }
 
-/** Fetch a single product DTO (with retry). Returns { product, loading }. */
-export function useVioProduct(productId?: number, sponsorId = 1) {
+/** Fetch a single product DTO (with retry). Returns { product, loading }.
+ * Without a sponsor yet (no bootstrap) it keeps loading: it waits for one
+ * rather than asking Commerce with a made-up id. */
+export function useVioProduct(productId?: number, sponsorId?: number | null) {
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (productId == null) {
       setProduct(null);
       setLoading(false);
+      return;
+    }
+    if (sponsorId == null) {
+      setProduct(null);
+      setLoading(true);
       return;
     }
     let cancelled = false;
@@ -269,7 +277,7 @@ export function useVioProduct(productId?: number, sponsorId = 1) {
 }
 
 /** Live quantity of a product in the cart (subscribes to Vio.cart). */
-export function useCartQty(productId?: number, sponsorId = 1): number {
+export function useCartQty(productId?: number, sponsorId?: number | null): number {
   const [qty, setQty] = useState(0);
   useEffect(() => {
     const update = () => {
@@ -291,10 +299,10 @@ export function useCartQty(productId?: number, sponsorId = 1): number {
   return qty;
 }
 
-function useVippsOffer(sponsorId: number, wanted: boolean): VippsOffer | "unknown" {
+function useVippsOffer(sponsorId: number | null, wanted: boolean): VippsOffer | "unknown" {
   const [offer, setOffer] = useState<VippsOffer | "unknown">("unknown");
   useEffect(() => {
-    if (!wanted) return;
+    if (!wanted || sponsorId == null) return;
     let cancelled = false;
     loadVippsOffer(sponsorId).then(
       (value) => {
@@ -314,7 +322,8 @@ function useVippsOffer(sponsorId: number, wanted: boolean): VippsOffer | "unknow
 
 type ProductCardViewProps = {
   productId?: number;
-  sponsorId?: number;
+  /** The sponsor the product was fetched under (the page's active one). */
+  sponsorId?: number | null;
   product: any | null;
   loading?: boolean;
   qty: number;
@@ -330,7 +339,7 @@ type ProductCardViewProps = {
 
 export function ProductCardView({
   productId,
-  sponsorId = 1,
+  sponsorId: sponsorIdProp,
   product,
   loading,
   qty,
@@ -341,6 +350,10 @@ export function ProductCardView({
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
   const [vippsBusy, setVippsBusy] = useState(false);
+  // What the cart, the detail and Vipps get: the card's sponsor when the
+  // connected key has it, else the page's active one (sponsorForCommerce).
+  // Null only without a configuration — and then there is no product either.
+  const sponsorId = sponsorForCommerce(sponsorIdProp);
   // The card's own root, also handed to whoever passed rootRef (impressions).
   const localRef = useRef<HTMLDivElement | null>(null);
   const setRoot = (el: HTMLDivElement | null) => {
@@ -367,7 +380,7 @@ export function ProductCardView({
   if (frameWidth != null && frameWidth > CARD_MAX_WIDTH) notices.push(TOO_WIDE_NOTICE);
   if (frameWidth != null && frameWidth < CARD_MIN_WIDTH) notices.push(TOO_NARROW_NOTICE);
   const wantVipps = (config.vippsButton ?? "hidden") !== "hidden";
-  const vippsOffer = useVippsOffer(Number(sponsorId), wantVipps);
+  const vippsOffer = useVippsOffer(sponsorId, wantVipps);
   // Vipps' own button (their web component, loaded from their CDN) when it
   // answers; the orange bar we always drew otherwise.
   const [vippsOfficial, setVippsOfficial] = useState(false);
@@ -426,7 +439,7 @@ export function ProductCardView({
   const accentStyle = accentColor ? ({ ["--vnc-accent" as any]: accentColor } as React.CSSProperties) : undefined;
 
   const openDetail = () => {
-    if (productId == null) return;
+    if (productId == null || sponsorId == null) return;
     // Funnel: a shoppable card was clicked (select_item), and the detail it opens
     // counts as a product view (view_item).
     const item = p ? productToItem(p) : { productId, name, brand };
@@ -448,7 +461,7 @@ export function ProductCardView({
   };
 
   const doAdd = () => {
-    if (!p) return;
+    if (!p || sponsorId == null) return;
     if (hasVariants) {
       openDetail();
       return;
@@ -472,7 +485,7 @@ export function ProductCardView({
   // from the vio:checkout-open event, so it is only sent by hand here).
   const doVipps = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!p || vippsBusy) return;
+    if (!p || vippsBusy || sponsorId == null) return;
     if (hasVariants) {
       openDetail();
       return;
@@ -649,11 +662,11 @@ export function ProductCardView({
 /** Render a card from an already-fetched product DTO (carousel / grid items). */
 export function ProductCardFromDTO({
   product,
-  sponsorId = 1,
+  sponsorId,
   config,
 }: {
   product: any;
-  sponsorId?: number;
+  sponsorId?: number | null;
   config?: CardConfig;
 }) {
   const id = product?.id != null ? Number(product.id) : undefined;
@@ -672,11 +685,12 @@ export function ProductCardFromDTO({
 /** Self-contained card: fetches its own product by id, then renders the view. */
 export function VioProductCardSelf({
   productId,
-  sponsorId = 1,
+  sponsorId,
   config,
   imageOverride,
 }: {
   productId?: number;
+  /** The sponsor the product was picked under. */
   sponsorId?: number;
   config?: CardConfig;
   imageOverride?: string;
@@ -685,7 +699,9 @@ export function VioProductCardSelf({
   // product was picked under: switching the sponsor must switch what every
   // card shows, and a product the new channel does not carry shows as
   // unavailable — as in the carousel and grid, which read the same source.
-  // The picked sponsor only serves while nothing has set one on the page.
+  // The picked sponsor only serves while nothing has set one on the page,
+  // and only if the connected key has it (a page built on vio-backend's
+  // sponsor ids falls to the key's primary).
   const activeSponsor = useActiveSponsorId(sponsorId);
   const { product, loading } = useVioProduct(productId, activeSponsor);
   const qty = useCartQty(productId, activeSponsor);
@@ -704,7 +720,7 @@ export function VioProductCardSelf({
     if (!product) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor, componentTemplateId: "vev-card" },
+      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-card" },
       `vev-card:${activeSponsor}:${productId}`,
     );
   }, [product, activeSponsor, productId]);

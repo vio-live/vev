@@ -80,11 +80,24 @@ export function clearPersistedApiKey(): void {
   }
 }
 
-/** Host API key precedence: panel save → runtime (Vio Config) → Vev prop.
+/** Host API key precedence for the blocks and the panel: runtime (what Vio
+ * Config connected with) → panel save → Vev prop.
  * No default — a page must have its own key pasted before it can connect. */
 export function resolveApiKey(propKey?: string): string {
   const runtime = (globalThis as { __VIO_API_KEY__?: string }).__VIO_API_KEY__;
   return runtime || getPersistedApiKey() || propKey || "";
+}
+
+/**
+ * The key Vio Config itself connects with: the page's own (its prop), else
+ * the one saved from the panel in this browser. Not the runtime key: Vio
+ * Config writes that one on connect, and reading it back meant a new key in
+ * the prop never reached `connect()` — the canvas kept the previous key (and
+ * Disconnect could not disconnect) until the page was reloaded, since the
+ * panel that writes the prop lives in another window than the canvas.
+ */
+export function resolveConfigApiKey(propKey?: string): string {
+  return (propKey ?? "").trim() || getPersistedApiKey() || "";
 }
 
 export function setRuntimeApiKey(key: string): void {
@@ -92,6 +105,11 @@ export function setRuntimeApiKey(key: string): void {
 }
 
 export const VIO_SPONSOR_ID_STORAGE = "vio.sponsorId";
+/** The connected key's sponsors, written by Vio Config for the "Active Sponsor" selector. */
+export const VIO_SPONSORS_STORAGE = "vio.sponsors";
+/** Fingerprint of the key + environment this browser last connected with: how
+ * Vio Config tells a new key from the same one, across visits too. */
+export const VIO_CONNECTION_STORAGE = "vio.connection";
 
 export function getPersistedSponsorId(): number | null {
   if (typeof localStorage === "undefined") return null;
@@ -112,13 +130,179 @@ export function persistSponsorId(id: number): void {
   }
 }
 
-/** The page's active sponsor: what Vio Config set (it persists and announces
- * every change), else `fallback` — the demo sponsor, unless the caller has a
- * better one, such as the sponsor a product was picked under. */
-export function getActiveSponsorId(fallback = 4): number {
-  const runtime = (globalThis as { __VIO_SPONSOR_ID__?: number }).__VIO_SPONSOR_ID__;
-  const persisted = getPersistedSponsorId();
-  return persisted || runtime || fallback;
+// ---- Sponsor resolution ----------------------------------------------------
+//
+// A sponsor id only means something inside the configuration of the key that
+// is connected (`/v2/mobile/config`: a primary sponsor and its secondaries),
+// and the SDK only resolves a sponsor that configuration names
+// (`Vio.commerceFor`, the cart, the payment methods). Pages built on
+// vio-backend keep its ids (4, 5) in the Config's prop, in localStorage and
+// in every product picked with the picker; asked with the Commerce key they
+// ended in "Sponsor 5 not found in bootstrap" and a 500 from
+// getAvailablePaymentMethods (QA, 2026-10-14). So every sponsor a block,
+// the picker, the cart or the checkout hands to Commerce goes through
+// `resolveSponsorId`, and none is ever made up.
+
+/** The sponsors a key's configuration knows: its primary and its secondaries. */
+export type SponsorConfig = { ids: number[]; primaryId: number };
+export type SponsorListItem = { id: number; name: string; isPrimary: boolean };
+
+function toSponsorId(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Pure. The sponsors of a `/v2/mobile/config` answer, primary first; empty
+ * when it names no primary sponsor. */
+export function sponsorListFromBootstrap(boot: unknown): SponsorListItem[] {
+  const b = (boot ?? {}) as { primarySponsor?: any; secondarySponsors?: any[] };
+  const primaryId = toSponsorId(b.primarySponsor?.id);
+  if (primaryId == null) return [];
+  const list: SponsorListItem[] = [
+    { id: primaryId, name: String(b.primarySponsor?.name ?? `Sponsor ${primaryId}`), isPrimary: true },
+  ];
+  for (const s of Array.isArray(b.secondarySponsors) ? b.secondarySponsors : []) {
+    const id = toSponsorId(s?.id);
+    if (id == null || list.some((x) => x.id === id)) continue;
+    list.push({ id, name: String(s?.name ?? `Sponsor ${id}`), isPrimary: false });
+  }
+  return list;
+}
+
+/** Pure. The configuration of a `/v2/mobile/config` answer, or null. */
+export function sponsorConfigFromBootstrap(boot: unknown): SponsorConfig | null {
+  const list = sponsorListFromBootstrap(boot);
+  return list.length ? { ids: list.map((s) => s.id), primaryId: list[0].id } : null;
+}
+
+/**
+ * THE sponsor rule (pure). `saved` is one candidate or several in order of
+ * preference — the Config's prop, the runtime or persisted active sponsor,
+ * the sponsor a product was picked under, a cart's sponsor. The first one the
+ * key's configuration knows wins; else its primary sponsor. Without a
+ * configuration (`primaryId` null: no bootstrap yet) there is no sponsor —
+ * the caller waits for the bootstrap rather than inventing one.
+ */
+export function resolveSponsorId(
+  saved: unknown,
+  sponsorIds: readonly number[],
+  primaryId: number | null | undefined
+): number | null {
+  const primary = toSponsorId(primaryId);
+  if (primary == null) return null;
+  const known = new Set(sponsorIds.map(Number));
+  known.add(primary);
+  for (const candidate of Array.isArray(saved) ? saved : [saved]) {
+    const id = toSponsorId(candidate);
+    if (id != null && known.has(id)) return id;
+  }
+  return primary;
+}
+
+function runtimeSponsorId(): number | null {
+  return toSponsorId((globalThis as { __VIO_SPONSOR_ID__?: unknown }).__VIO_SPONSOR_ID__);
+}
+
+/** This window's configuration: the bootstrap the SDK holds, which is what
+ * `Vio.commerceFor()` and the cart resolve a sponsor against — only while the
+ * SDK runs with the key this window resolves to now. After a Disconnect the
+ * SDK still holds the previous key's answer (it cannot be un-initialised), and
+ * that answer must not keep feeding sponsors. */
+export function currentSponsorConfig(): SponsorConfig | null {
+  try {
+    if (!Vio.isInitialized || Vio.config?.apiKey !== resolveApiKey()) return null;
+  } catch {
+    return null;
+  }
+  return sponsorConfigFromBootstrap(Vio.bootstrapCache);
+}
+
+/**
+ * The page's active sponsor: what Vio Config set (this window's runtime
+ * value, else what it persisted — that is how the properties panel, another
+ * window, learns it), else `preferred` (the sponsor a product was picked
+ * under), each one only if the connected key knows it; the key's primary
+ * otherwise. Null while this window has no configuration.
+ */
+export function getActiveSponsorId(preferred?: unknown): number | null {
+  const config = currentSponsorConfig();
+  if (!config) return null;
+  return resolveSponsorId(
+    [runtimeSponsorId(), getPersistedSponsorId(), preferred],
+    config.ids,
+    config.primaryId
+  );
+}
+
+/**
+ * The sponsor a Commerce call for `requested` uses: `requested` itself when
+ * the connected key knows it (a cart's sponsor, an addon's picked product),
+ * else the page's active sponsor, else the primary. Null while this window
+ * has no configuration.
+ */
+export function sponsorForCommerce(requested?: unknown): number | null {
+  const config = currentSponsorConfig();
+  if (!config) return null;
+  return resolveSponsorId(
+    [requested, runtimeSponsorId(), getPersistedSponsorId()],
+    config.ids,
+    config.primaryId
+  );
+}
+
+/**
+ * Init + bootstrap this window with the page's key. False when it cannot (no
+ * key, the key is wrong, the API is down).
+ *
+ * On the canvas Vio Config sets the runtime key as soon as it starts
+ * connecting, so a block mounted before it waits a moment for that key
+ * instead of booting the SDK with the one saved in this browser (which can be
+ * another page's): two inits with different keys race in the SDK, and the
+ * slower answer would end up as its configuration. The properties panel has
+ * no Config — after the wait it uses the saved key, as before.
+ */
+async function bootstrapWindow(): Promise<boolean> {
+  for (let attempt = 0; attempt < 7; attempt++) {
+    if (currentSponsorConfig()) return true;
+    const runtimeKey = (globalThis as { __VIO_API_KEY__?: string }).__VIO_API_KEY__;
+    if (runtimeKey || attempt >= 2) {
+      try {
+        ensureVioInit();
+        await Vio.bootstrap();
+        return true;
+      } catch (err) {
+        if (DEBUG) console.warn(`[Vio] bootstrap retry ${attempt}`, (err as any)?.message ?? err);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+/** `getActiveSponsorId`, after waiting for this window's bootstrap. */
+export async function resolveActiveSponsorId(preferred?: unknown): Promise<number | null> {
+  return (await bootstrapWindow()) ? getActiveSponsorId(preferred) : null;
+}
+
+/** `sponsorForCommerce`, after waiting for this window's bootstrap. */
+export async function resolveSponsorForCommerce(requested?: unknown): Promise<number | null> {
+  return (await bootstrapWindow()) ? sponsorForCommerce(requested) : null;
+}
+
+/**
+ * Vio Config announces the active sponsor: runtime, localStorage and
+ * `vio:sponsor-changed` for every block. `null` says "no sponsor yet" — while
+ * a new key boots, or when it failed — and the blocks wait (the event's
+ * detail is then 0).
+ */
+export function announceActiveSponsor(id: number | null): void {
+  (globalThis as { __VIO_SPONSOR_ID__?: number | null }).__VIO_SPONSOR_ID__ = id;
+  if (id != null) persistSponsorId(id);
+  resetCatalogCache();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("vio:sponsor-changed", { detail: id ?? 0 }));
+  }
 }
 
 /**
@@ -127,22 +311,155 @@ export function getActiveSponsorId(fallback = 4): number {
  * for the new one instead of keeping the one it mounted with — which is how
  * the single card went on showing a product the new sponsor's channel does
  * not carry (QA, 2026-10-08). Vev mounts blocks in no fixed order: a block
- * mounted before the Config starts from what the last visit persisted (or
- * `fallback`) and follows the Config's first announcement.
+ * mounted before the Config bootstraps on its own and resolves against that
+ * configuration, then follows the Config's announcements. Null means "no
+ * sponsor yet": the block waits instead of asking Commerce with a made-up id.
  */
-export function useActiveSponsorId(fallback?: number): number {
-  const [sponsorId, setSponsorId] = useState(() => getActiveSponsorId(fallback));
+export function useActiveSponsorId(preferred?: number | null): number | null {
+  const [sponsorId, setSponsorId] = useState<number | null>(() => getActiveSponsorId(preferred));
   useEffect(() => {
+    let alive = true;
     // The Config may have spoken between this block's render and its effects.
-    setSponsorId(getActiveSponsorId(fallback));
+    const now = getActiveSponsorId(preferred);
+    setSponsorId(now);
+    if (now == null) {
+      resolveActiveSponsorId(preferred).then((id) => {
+        // An announcement that arrived meanwhile wins over this resolution.
+        if (alive && id != null) setSponsorId((current) => current ?? id);
+      });
+    }
     const onChange = (e: Event) => {
-      const next = Number((e as CustomEvent).detail);
-      if (Number.isFinite(next) && next > 0) setSponsorId(next);
+      setSponsorId(toSponsorId((e as CustomEvent).detail));
     };
     window.addEventListener("vio:sponsor-changed", onChange);
-    return () => window.removeEventListener("vio:sponsor-changed", onChange);
-  }, [fallback]);
+    return () => {
+      alive = false;
+      window.removeEventListener("vio:sponsor-changed", onChange);
+    };
+  }, [preferred]);
   return sponsorId;
+}
+
+// ---- Changing the key --------------------------------------------------------
+
+/** FNV-1a of environment + key: enough to tell two keys apart, and the key
+ * itself is not copied into one more storage slot. */
+export function connectionFingerprint(key: string, environment: string): string {
+  const input = `${environment}|${key.trim()}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+export function getStoredConnection(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(VIO_CONNECTION_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+export function readPersistedSponsors(): SponsorListItem[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(VIO_SPONSORS_STORAGE);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStorage(key: string, value: string | null): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* noop */
+  }
+}
+
+/**
+ * Forget the sponsor this browser was using: the active one (runtime and
+ * localStorage), the sponsor list, the catalog and the Vipps answers — and,
+ * with `carts`, every cart: a cart lives on the commerce channel of the key it
+ * was filled under, and checking it out with another key fails.
+ */
+export function forgetSponsorState({ carts }: { carts: boolean }): void {
+  const g = globalThis as { __VIO_SPONSOR_ID__?: number | null; __VIO_PRIMARY_SPONSOR_ID__?: number | null };
+  g.__VIO_SPONSOR_ID__ = null;
+  g.__VIO_PRIMARY_SPONSOR_ID__ = null;
+  writeStorage(VIO_SPONSOR_ID_STORAGE, null);
+  writeStorage(VIO_SPONSORS_STORAGE, null);
+  resetCatalogCache();
+  resetVippsOfferCache();
+  if (carts) {
+    try {
+      Vio.cart?.clearAllCarts?.();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+/** Drop the carts (the SDK keeps them per sponsor in `vio.cart.v1`) of every
+ * sponsor the connected key does not have. Returns the dropped sponsor ids. */
+export function pruneCartsOutside(sponsorIds: readonly number[]): number[] {
+  const known = new Set(sponsorIds.map(Number));
+  const dropped: number[] = [];
+  try {
+    const carts: Map<number, unknown> = Vio.cart?.getAllCarts?.() ?? new Map();
+    for (const sponsorId of carts.keys()) {
+      if (known.has(Number(sponsorId))) continue;
+      Vio.cart.clearSponsorCart(sponsorId);
+      dropped.push(Number(sponsorId));
+    }
+  } catch {
+    /* noop */
+  }
+  return dropped;
+}
+
+export type AdoptedConnection = {
+  config: SponsorConfig;
+  sponsors: SponsorListItem[];
+  /** This browser was last connected with another key or environment. */
+  keyChanged: boolean;
+  /** Sponsors whose cart was dropped because this key does not have them. */
+  droppedCarts: number[];
+};
+
+/**
+ * What Vio Config does with a successful bootstrap of `key`:
+ *  - another key (or environment) than the one this browser last connected
+ *    with → forget the previous key's sponsor, sponsor list, carts, catalog
+ *    and Vipps answers;
+ *  - drop the cart of any sponsor this key does not have (a page built on
+ *    vio-backend's sponsor ids left "4" and "5" in `vio.cart.v1`);
+ *  - remember the sponsors (for the "Active Sponsor" selector) and the
+ *    connection.
+ * Null when the answer names no primary sponsor: nothing is remembered.
+ */
+export function adoptConnection(boot: unknown, key: string, environment: string): AdoptedConnection | null {
+  const sponsors = sponsorListFromBootstrap(boot);
+  const config = sponsorConfigFromBootstrap(boot);
+  if (!config) return null;
+  const fingerprint = connectionFingerprint(key, environment);
+  const previous = getStoredConnection();
+  // No fingerprint yet = a browser from before this rule: nothing says the key
+  // changed, and the carts of unknown sponsors go below anyway.
+  const keyChanged = previous != null && previous !== fingerprint;
+  if (keyChanged) forgetSponsorState({ carts: true });
+  const droppedCarts = pruneCartsOutside(config.ids);
+  (globalThis as { __VIO_PRIMARY_SPONSOR_ID__?: number }).__VIO_PRIMARY_SPONSOR_ID__ = config.primaryId;
+  writeStorage(VIO_CONNECTION_STORAGE, fingerprint);
+  writeStorage(VIO_SPONSORS_STORAGE, JSON.stringify(sponsors));
+  return { config, sponsors, keyChanged, droppedCarts };
 }
 
 export type CountryConfig = {
@@ -338,7 +655,10 @@ export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void 
     });
     lastInitKey = key;
     lastInitEnv = sdkEnv;
+    // Another key or environment: another configuration, so the catalog and
+    // the Vipps answers of the previous one no longer apply.
     resetCatalogCache();
+    resetVippsOfferCache();
   }
 }
 
@@ -363,13 +683,23 @@ export async function withRetry<T>(
   throw lastError;
 }
 
-/** Fetch a single full product DTO by id. Returns null on failure. */
-export async function fetchVioProduct(productId: number, sponsorId: number): Promise<VioProduct | null> {
+/** The sponsor a fetch may use once this window is bootstrapped (see
+ * `sponsorForCommerce`). Throws — and so retries — when there is none yet. */
+function commerceSponsorOrThrow(requested: unknown): number {
+  const sponsorId = sponsorForCommerce(requested);
+  if (sponsorId == null) throw new Error("[Vio] no sponsor in the connected key's configuration yet");
+  return sponsorId;
+}
+
+/** Fetch a single full product DTO by id. Returns null on failure — and when
+ * the sponsor's channel does not carry the product (the card then shows its
+ * "unavailable" placeholder). */
+export async function fetchVioProduct(productId: number, sponsorId?: number | null): Promise<VioProduct | null> {
   try {
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
+      const arr = await Vio.commerceFor(commerceSponsorOrThrow(sponsorId)).channel.product.getByIds({
         product_ids: [productId],
         currency: getActiveCurrency(),
         shipping_country_code: getActiveCountryCode(),
@@ -383,15 +713,16 @@ export async function fetchVioProduct(productId: number, sponsorId: number): Pro
   }
 }
 
-/** Fetch several products by id in one call (carousel / grid). Returns [] on failure. */
-export async function fetchVioProducts(productIds: number[], sponsorId: number): Promise<VioProduct[]> {
+/** Fetch several products by id in one call (carousel / grid). Returns [] on
+ * failure; a product the sponsor's channel does not carry is left out. */
+export async function fetchVioProducts(productIds: number[], sponsorId?: number | null): Promise<VioProduct[]> {
   const ids = productIds.filter((n) => Number.isFinite(n));
   if (ids.length === 0) return [];
   try {
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(sponsorId).channel.product.getByIds({
+      const arr = await Vio.commerceFor(commerceSponsorOrThrow(sponsorId)).channel.product.getByIds({
         product_ids: ids,
         currency: getActiveCurrency(),
         shipping_country_code: getActiveCountryCode(),
@@ -432,49 +763,90 @@ const PRODUCTS_QUERY = `
   }
 `;
 
-// Shared catalog request — lists every product tied to the sponsor's commerce
-// apiKey (same source the product card uses). One fetch, reused by all pickers,
-// deduped via a module-level promise, with retry. Rejects so the modal can show
-// an error; a fresh call after a rejection retries.
-let catalogPromise: Promise<CatalogProduct[]> | null = null;
+// Shared catalog request — lists every product tied to the active sponsor's
+// commerce apiKey (same source the product card uses). One fetch, reused by all
+// pickers, deduped via a module-level promise, with retry. Rejects so the modal
+// can show an error; a fresh call after a rejection retries. The answer carries
+// the sponsor it was listed under: that is the sponsor a picked product keeps.
+export type CatalogResult = { sponsorId: number; products: CatalogProduct[] };
+let catalogPromise: Promise<CatalogResult> | null = null;
+let catalogSponsorId: number | null = null;
+let catalogKey: string | null = null;
 
 export function resetCatalogCache(): void {
   catalogPromise = null;
+  catalogSponsorId = null;
+  catalogKey = null;
 }
 
-export function loadCatalog(): Promise<CatalogProduct[]> {
+export function loadCatalogResult(): Promise<CatalogResult> {
+  // A catalog listed under another key, or another sponsor than today's
+  // active one, is stale.
+  const active = getActiveSponsorId();
+  if (
+    catalogPromise &&
+    (catalogKey !== resolveApiKey() || (catalogSponsorId != null && active != null && active !== catalogSponsorId))
+  ) {
+    resetCatalogCache();
+  }
   if (catalogPromise) return catalogPromise;
-  catalogPromise = withRetry(async () => {
+  const key = resolveApiKey();
+  const pending: Promise<CatalogResult> = withRetry(async () => {
     ensureVioInit();
     await Vio.bootstrap();
-    const commerce = Vio.commerceFor(getActiveSponsorId());
-    const data = await commerce.raw.request(PRODUCTS_QUERY, {
+    const sponsorId = getActiveSponsorId();
+    if (sponsorId == null) throw new Error("Connect a Vio API key in Vio Config to list its products");
+    const data = await Vio.commerceFor(sponsorId).raw.request(PRODUCTS_QUERY, {
       currency: getActiveCurrency(),
       shippingCountryCode: getActiveCountryCode(),
       imageSize: "large",
       useCache: true,
     });
-    const list = (data?.Channel?.Products ?? []) as CatalogProduct[];
-    if (DEBUG) console.log("[Vio] loadCatalog →", list.length, "products");
-    return list;
-  }, { attempts: 5, delay: 400, label: "loadCatalog" }).catch((err: unknown) => {
-    catalogPromise = null; // allow a fresh retry on the next call
-    throw err;
-  });
-  return catalogPromise;
+    const products = (data?.Channel?.Products ?? []) as CatalogProduct[];
+    if (DEBUG) console.log("[Vio] loadCatalog →", products.length, "products of sponsor", sponsorId);
+    return { sponsorId, products };
+  }, { attempts: 5, delay: 400, label: "loadCatalog" }).then(
+    (result) => {
+      if (catalogPromise === pending) catalogSponsorId = result.sponsorId;
+      return result;
+    },
+    (err: unknown) => {
+      if (catalogPromise === pending) resetCatalogCache(); // allow a fresh retry on the next call
+      throw err;
+    }
+  );
+  // Set after starting the request: its first, synchronous ensureVioInit() may
+  // re-init the SDK, and that resets this cache.
+  catalogPromise = pending;
+  catalogKey = key;
+  return pending;
 }
 
-/** Dispatch the SDK product-detail open event (the Config's <VioProductDetail> listens). */
-export function openProductInfo(productId: number, sponsorId: number, currency?: string): void {
-  document.dispatchEvent(
-    new CustomEvent("vio:product-click", {
-      detail: {
-        productId: String(productId),
-        sponsorId: String(sponsorId),
-        currency: currency || getActiveCurrency()
-      },
-    })
-  );
+export function loadCatalog(): Promise<CatalogProduct[]> {
+  return loadCatalogResult().then((result) => result.products);
+}
+
+/** Dispatch the SDK product-detail open event (the Config's <VioProductDetail>
+ * listens), with the sponsor `requested` resolves to (see `sponsorForCommerce`).
+ * Before the bootstrap it waits for it; with no sponsor at all nothing opens. */
+export function openProductInfo(productId: number, requestedSponsorId?: unknown, currency?: string): void {
+  const dispatch = (sponsorId: number | null) => {
+    if (sponsorId == null) {
+      console.warn("[Vio] product info not opened: no sponsor in the connected key's configuration");
+      return;
+    }
+    document.dispatchEvent(
+      new CustomEvent("vio:product-click", {
+        detail: {
+          productId: String(productId),
+          sponsorId: String(sponsorId),
+          currency: currency || getActiveCurrency()
+        },
+      })
+    );
+  };
+  if (currentSponsorConfig()) dispatch(sponsorForCommerce(requestedSponsorId));
+  else void resolveSponsorForCommerce(requestedSponsorId).then(dispatch);
 }
 
 /** Ask the Config to open the cart drawer. */
@@ -493,12 +865,23 @@ export function openCart(): void {
 export type VippsOffer = "express" | "checkout" | "none";
 const vippsOfferCache = new Map<number, Promise<VippsOffer>>();
 
-export function loadVippsOffer(sponsorId: number): Promise<VippsOffer> {
+export function resetVippsOfferCache(): void {
+  vippsOfferCache.clear();
+}
+
+/** Rejects when the connected key has no sponsor yet (nothing is asked of
+ * Commerce then); `requested` goes through `sponsorForCommerce`. */
+export async function loadVippsOffer(requested?: number | null): Promise<VippsOffer> {
+  const sponsorId = await resolveSponsorForCommerce(requested);
+  if (sponsorId == null) throw new Error("[Vio] no sponsor in the connected key's configuration yet");
   let pending = vippsOfferCache.get(sponsorId);
   if (!pending) {
     pending = withRetry(async (): Promise<VippsOffer> => {
       ensureVioInit();
       await Vio.bootstrap();
+      // The key may have changed while this was queued: never ask with a
+      // sponsor the configuration no longer has.
+      if (sponsorForCommerce(sponsorId) !== sponsorId) throw new Error(`[Vio] sponsor ${sponsorId} left the configuration`);
       const methods: any[] = (await Vio.checkout.getAvailablePaymentMethods(sponsorId)) ?? [];
       const vipps = methods.find((m) => String(m?.name ?? "").toLowerCase() === "vipps");
       if (!vipps) return "none";

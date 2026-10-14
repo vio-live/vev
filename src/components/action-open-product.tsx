@@ -18,12 +18,13 @@ type Props = {
 
 export default function VioOpenProduct({ product, className, children }: Props) {
   const productId = product?.productId;
-  const sponsorId = product?.sponsorId ?? 1;
 
   const onClick = () => {
     if (productId == null) return;
     trackViewItem({ productId }); // detail opens → product view (id only here)
-    openProductInfo(Number(productId), Number(sponsorId));
+    // The sponsor it was picked under when the connected key has it, else the
+    // page's active one (openProductInfo → sponsorForCommerce).
+    openProductInfo(Number(productId), product?.sponsorId);
   };
 
   return (

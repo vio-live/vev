@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { SilkeModal, SilkeButton, SilkeBox, SilkeText, SilkeLoader } from "@vev/silke";
 import {
   loadCatalog,
-  getActiveSponsorId,
+  loadCatalogResult,
   getProductPriceAmount,
   type CatalogProduct,
   type Item,
@@ -209,9 +209,19 @@ export default function ProductSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
+  // The sponsor the catalog was listed under — the active one of the
+  // connected key — is the one a picked product keeps.
+  const [catalogSponsorId, setCatalogSponsorId] = useState<number | null>(null);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   useEffect(() => {
-    loadCatalog().then(setCatalog).catch(() => {});
-  }, []);
+    loadCatalogResult()
+      .then((result) => {
+        setCatalog(result.products);
+        setCatalogSponsorId(result.sponsorId);
+        setCatalogLoaded(true);
+      })
+      .catch(() => {});
+  }, [open]);
 
   const current =
     value?.productId != null ? catalog.find((c) => Number(c.id) === Number(value!.productId)) : undefined;
@@ -221,6 +231,10 @@ export default function ProductSelect({
     <SilkeBox column gap="s">
       {current ? (
         <SilkeText overflow>{current.title}</SilkeText>
+      ) : value?.productId != null && catalogLoaded ? (
+        // Picked under another key or sponsor: the block shows it as
+        // unavailable until a product of this catalog is picked.
+        <SilkeText style={{ opacity: 0.6 }}>{`Product #${value.productId} is not in this sponsor's catalog`}</SilkeText>
       ) : (
         <SilkeText style={{ opacity: 0.6 }}>No product selected</SilkeText>
       )}
@@ -238,7 +252,8 @@ export default function ProductSelect({
           multi={false}
           selectedIds={selectedIds}
           onToggle={(id) => {
-            onChange({ productId: id, sponsorId: getActiveSponsorId() });
+            if (catalogSponsorId == null) return; // the catalog has not answered: nothing to pick from
+            onChange({ productId: id, sponsorId: catalogSponsorId });
             setOpen(false);
           }}
           onClose={() => setOpen(false)}
@@ -252,7 +267,8 @@ export default function ProductSelect({
 
 // Value is an OBJECT with a comma-separated id string `{ ids: "1,2,3" }`. A plain
 // string field always serialises cleanly (Vev array props crash with a custom
-// component; nested arrays are flaky). Sponsor is the demo sponsor.
+// component; nested arrays are flaky). No sponsor is stored: the carousel and
+// the grid use the page's active sponsor.
 export function ProductMultiSelect({
   value,
   onChange,

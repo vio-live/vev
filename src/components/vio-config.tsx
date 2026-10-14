@@ -9,19 +9,26 @@ import {
   ensureVioInit,
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
-  getPersistedApiKey,
   persistApiKey,
-  resolveApiKey,
+  resolveConfigApiKey,
   setRuntimeApiKey,
-  persistEnvironment,
-  setRuntimeEnvironment,
   resetCatalogCache,
-  persistSponsorId,
   persistCountry,
   SUPPORTED_COUNTRIES,
   getCountryConfig,
   openProductInfo,
-  getActiveSponsorId,
+  adoptConnection,
+  announceActiveSponsor,
+  connectionFingerprint,
+  forgetSponsorState,
+  getStoredConnection,
+  readPersistedSponsors,
+  resolveSponsorId,
+  sponsorForCommerce,
+  VIO_CONNECTION_STORAGE,
+  VIO_SPONSORS_STORAGE,
+  type SponsorConfig,
+  type SponsorListItem,
   type VioEnvironment,
 } from "./vio-helpers";
 import ProductSelect from "./product-picker";
@@ -226,28 +233,48 @@ export default function VioConfig({
 
   // Active environment selected via Vev inspector prop (or runtime/persisted fallback).
   const activeEnvironment = environment || DEFAULT_ENVIRONMENT;
-  const sdkEnvironment = activeEnvironment === "staging" ? "testing" : activeEnvironment;
-  const resolvedKey = resolveApiKey(apiKey);
+  // The page's key (its prop), else the one saved from the panel — see
+  // resolveConfigApiKey for why not the runtime key.
+  const resolvedKey = resolveConfigApiKey(apiKey);
 
   // Connection panel state.
   const [status, setStatus] = useState<Status>("connecting");
   const [statusMsg, setStatusMsg] = useState("");
-  const [primarySponsorId, setPrimarySponsorId] = useState<number | null>(() => {
-    return (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ || null;
-  });
+  // The connected key's sponsors. Null until its bootstrap answers: until
+  // then there is no active sponsor and nothing is asked of Commerce.
+  const [sponsorConfig, setSponsorConfig] = useState<SponsorConfig | null>(null);
+  const [sponsorList, setSponsorList] = useState<SponsorListItem[]>([]);
+  // Which key + environment this Config is connected with, and a counter so a
+  // slower, older connect never overwrites a newer one.
+  const connectedRef = useRef<string | null>(null);
+  const connectSeqRef = useRef(0);
 
   const connect = useCallback(
     async (key: string) => {
+      const seq = ++connectSeqRef.current;
+      const dropConnection = () => {
+        forgetSponsorState({ carts: false });
+        connectedRef.current = null;
+        setSponsorConfig(null);
+        setSponsorList([]);
+        announceActiveSponsor(null);
+      };
       if (!key) {
         setStatus("disconnected");
         setStatusMsg("");
-        if (typeof localStorage !== "undefined") {
-          localStorage.removeItem("vio.sponsors");
-          localStorage.removeItem("vio.sponsorId");
-        }
-        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
-        setPrimarySponsorId(null);
+        // The SDK keeps the last key's configuration; with no runtime key the
+        // blocks stop resolving sponsors against it (currentSponsorConfig).
+        setRuntimeApiKey("");
+        dropConnection();
         return;
+      }
+      const fingerprint = connectionFingerprint(key, activeEnvironment);
+      if (connectedRef.current != null && connectedRef.current !== fingerprint) {
+        // Switching keys: nothing of the previous key's sponsor may be used
+        // while the new one boots — the blocks wait (null) and the selector
+        // empties. Its carts go once the new key answers (adoptConnection),
+        // so a mistyped key does not cost the cart.
+        dropConnection();
       }
       setStatus("connecting");
       setStatusMsg("");
@@ -255,34 +282,22 @@ export default function VioConfig({
         setRuntimeApiKey(key);
         ensureVioInit(key, activeEnvironment);
         const boot = await Vio.bootstrap();
-        
-        const b = boot as any;
-        const primary = b.primarySponsor;
-        const secondaries = b.secondarySponsors || [];
-        const sponsorList = [
-          { id: primary.id, name: primary.name, isPrimary: true },
-          ...secondaries.map((s: any) => ({ id: s.id, name: s.name, isPrimary: false }))
-        ];
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("vio.sponsors", JSON.stringify(sponsorList));
-        }
-        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = primary.id;
-        setPrimarySponsorId(primary.id);
-
+        if (seq !== connectSeqRef.current) return; // a newer connect owns the state
+        const adopted = adoptConnection(boot, key, activeEnvironment);
+        if (!adopted) throw new Error("This key has no sponsor");
+        connectedRef.current = fingerprint;
+        setSponsorList(adopted.sponsors);
+        setSponsorConfig(adopted.config);
         setStatus("connected");
-        setStatusMsg(primary?.name ?? "");
+        setStatusMsg(adopted.sponsors[0]?.name ?? "");
       } catch (e: any) {
+        if (seq !== connectSeqRef.current) return;
         setStatus("error");
         setStatusMsg(e?.message ?? "Connection failed");
-        if (typeof localStorage !== "undefined") {
-          localStorage.removeItem("vio.sponsors");
-          localStorage.removeItem("vio.sponsorId");
-        }
-        (globalThis as any).__VIO_PRIMARY_SPONSOR_ID__ = null;
-        setPrimarySponsorId(null);
+        dropConnection();
       }
     },
-    [sdkEnvironment, activeEnvironment]
+    [activeEnvironment]
   );
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
@@ -303,14 +318,18 @@ export default function VioConfig({
     void connect(resolvedKey);
   }, [isOwner, resolvedKey, connect]);
 
-  // Set the dynamic runtime sponsor ID and notify listeners
-  const resolvedSponsorId = sponsorId || primarySponsorId || 4;
+  // The active sponsor: the "Active Sponsor" prop when the connected key has
+  // it, else the key's primary — never a fixed id. Announced to every block on
+  // each connect (a new key re-renders them even when the id is the same).
+  const resolvedSponsorId = sponsorConfig
+    ? resolveSponsorId(sponsorId, sponsorConfig.ids, sponsorConfig.primaryId)
+    : null;
+  const savedSponsorUnknown =
+    sponsorConfig != null && Number(sponsorId) > 0 && resolvedSponsorId !== Number(sponsorId);
   useEffect(() => {
-    (globalThis as any).__VIO_SPONSOR_ID__ = resolvedSponsorId;
-    persistSponsorId(resolvedSponsorId);
-    resetCatalogCache();
-    window.dispatchEvent(new CustomEvent("vio:sponsor-changed", { detail: resolvedSponsorId }));
-  }, [resolvedSponsorId]);
+    if (!isOwner || resolvedSponsorId == null) return;
+    announceActiveSponsor(resolvedSponsorId);
+  }, [isOwner, resolvedSponsorId, sponsorConfig]);
 
   // Set the dynamic runtime country/currency/locale/symbol and notify listeners
   const resolvedCountryInput = country || (currency ? getCountryConfig(currency).code : "NO");
@@ -363,10 +382,10 @@ export default function VioConfig({
     (payload) => {
       const productId = payload?.product?.productId;
       if (productId == null) return;
-      // Fall back to the panel's own sponsor rather than a hardcoded id.
-      const sponsor = payload?.product?.sponsorId ?? sponsorId ?? getActiveSponsorId();
+      // The sponsor it was picked under when the connected key has it, else
+      // the page's active sponsor (openProductInfo → sponsorForCommerce).
       trackViewItem({ productId: Number(productId) });
-      openProductInfo(Number(productId), Number(sponsor));
+      openProductInfo(Number(productId), payload?.product?.sponsorId);
     },
   );
 
@@ -410,7 +429,10 @@ export default function VioConfig({
   // from the cart footer (address from Wallet).
   const onCheckoutOpen = (e: any) => {
     const detail = e?.detail ?? {};
-    const sponsorId = detail.sponsorId;
+    // The cart's sponsor when the connected key has it (carts of other
+    // sponsors are dropped on connect), else the active one — the same rule
+    // as everywhere else.
+    const sponsorId = sponsorForCommerce(detail.sponsorId) ?? detail.sponsorId;
     const paymentMethod = detail.paymentMethod;
     const express = !!detail.express;
     cartRef.current?.close?.();
@@ -491,6 +513,12 @@ export default function VioConfig({
           </span>
         ) : null}
       </div>
+      {savedSponsorUnknown ? (
+        <div style={{ fontSize: 11, color: "#b45309", lineHeight: 1.4, marginBottom: 4 }}>
+          The saved sponsor (#{String(sponsorId)}) is not one of this key's sponsors — using the primary,{" "}
+          {sponsorList.find((s) => s.isPrimary)?.name ?? `#${resolvedSponsorId}`}.
+        </div>
+      ) : null}
       <div style={{ fontSize: 11, color: "#666", lineHeight: 1.4 }}>
         Configure the Vio API Key and options in the Properties panel on the right.
       </div>
@@ -592,15 +620,15 @@ type ApiKeyEditorProps = {
 };
 
 export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
-  // The block's canvas side (VioConfig) resolves its key as
-  // localStorage → runtime → this prop (see resolveApiKey). Showing only the
-  // raw prop here — and only offering Disconnect when the PROP is set — hid
-  // a real gap: a key left over in localStorage from an earlier test kept
-  // the block connected while this panel showed an empty field with no way
-  // to clear it. Mirror that same precedence here so the field always shows
-  // what's actually in effect, and Disconnect is offered whenever there's
-  // anything (prop OR persisted) to clear.
-  const effectiveKey = value || getPersistedApiKey() || "";
+  // The block's canvas side (VioConfig) resolves its key as this prop →
+  // localStorage (see resolveConfigApiKey). Showing only the raw prop here —
+  // and only offering Disconnect when the PROP is set — hid a real gap: a key
+  // left over in localStorage from an earlier test kept the block connected
+  // while this panel showed an empty field with no way to clear it. Mirror
+  // that same precedence here so the field always shows what's actually in
+  // effect, and Disconnect is offered whenever there's anything (prop OR
+  // persisted) to clear.
+  const effectiveKey = resolveConfigApiKey(value);
   const [localKey, setLocalKey] = useState(effectiveKey);
 
   useEffect(() => {
@@ -686,26 +714,13 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
 type SponsorSelectorProps = {
   value?: number;
   onChange: (value: number) => void;
+  /** Vev's form context: `value` holds this block's other props (apiKey, environment). */
+  context?: { value?: { apiKey?: string; environment?: VioEnvironment } };
 };
 
-type SponsorItem = {
-  id: number;
-  name: string;
-  isPrimary: boolean;
-};
-
-function readPersistedSponsors(): SponsorItem[] {
-  if (typeof localStorage === "undefined") return [];
-  try {
-    const listStr = localStorage.getItem("vio.sponsors");
-    return listStr ? JSON.parse(listStr) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
-  const [sponsors, setSponsors] = useState<SponsorItem[]>(() => readPersistedSponsors());
+export function VioSponsorSelector({ value, onChange, context }: SponsorSelectorProps) {
+  const [sponsors, setSponsors] = useState<SponsorListItem[]>(() => readPersistedSponsors());
+  const [connection, setConnection] = useState<string | null>(() => getStoredConnection());
 
   // This field editor renders in the properties panel, while VioConfig (the
   // one that writes "vio.sponsors" after a successful connect) renders in the
@@ -716,42 +731,60 @@ export function VioSponsorSelector({ value, onChange }: SponsorSelectorProps) {
   // made the change, which is fine: that's VioConfig's own canvas state).
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key !== null && e.key !== "vio.sponsors") return;
+      if (e.key !== null && e.key !== VIO_SPONSORS_STORAGE && e.key !== VIO_CONNECTION_STORAGE) return;
       setSponsors(readPersistedSponsors());
+      setConnection(getStoredConnection());
     };
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
+  // The list in storage is whatever key connected last in this browser: the
+  // previous key while a new one boots, or another project's. When Vev hands
+  // us this block's key, the list only counts once it belongs to that key.
+  const formValue = context?.value;
+  const pageKey = formValue ? resolveConfigApiKey(formValue.apiKey) : "";
+  const expected = pageKey ? connectionFingerprint(pageKey, formValue?.environment || DEFAULT_ENVIRONMENT) : null;
+  const listIsCurrent = sponsors.length > 0 && (expected == null || connection == null || connection === expected);
+  const primary = sponsors.find((s) => s.isPrimary) ?? sponsors[0];
+  const saved = value != null && String(value) !== "" ? Number(value) : null;
+  const savedKnown = saved != null && sponsors.some((s) => s.id === saved);
+
   // Auto-select primary sponsor by default if no value is set
   useEffect(() => {
-    if (!value && sponsors.length > 0) {
-      const primary = sponsors.find((s: any) => s.isPrimary);
-      if (primary) {
-        onChange(primary.id);
-      }
-    }
-  }, [value, sponsors, onChange]);
+    if (!value && listIsCurrent && primary) onChange(primary.id);
+  }, [value, listIsCurrent, primary, onChange]);
 
-  if (sponsors.length === 0) {
+  if (!listIsCurrent) {
     return (
       <SilkeBox style={{ fontSize: 12, opacity: 0.55, fontStyle: "italic", padding: "4px 0" }}>
-        Connect API Key to select sponsor
+        {sponsors.length > 0 || pageKey
+          ? "This key's sponsors show here once it connects"
+          : "Connect API Key to select sponsor"}
       </SilkeBox>
     );
   }
 
   return (
-    <SilkeSelectFieldNative
-      size="s"
-      value={value ?? undefined}
-      onChange={(v: number) => onChange(v)}
-      placeholder="Select a sponsor…"
-      items={sponsors.map((s: SponsorItem) => ({
-        value: s.id,
-        label: s.isPrimary ? `${s.name} (Primary)` : s.name,
-      }))}
-    />
+    <SilkeBox column gap="xs" style={{ width: "100%" }}>
+      <SilkeSelectFieldNative
+        size="s"
+        // A saved sponsor this key does not have is not shown as chosen: the
+        // page uses the primary (the note says so) until one is picked.
+        value={savedKnown ? saved : undefined}
+        onChange={(v: number) => onChange(Number(v))}
+        placeholder="Select a sponsor…"
+        items={sponsors.map((s: SponsorListItem) => ({
+          value: s.id,
+          label: s.isPrimary ? `${s.name} (Primary)` : s.name,
+        }))}
+      />
+      {saved != null && !savedKnown && primary ? (
+        <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
+          {`The saved sponsor (#${saved}) is not one of this key's sponsors. The page uses the primary, ${primary.name}.`}
+        </SilkeBox>
+      ) : null}
+    </SilkeBox>
   );
 }
 

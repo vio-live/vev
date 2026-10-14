@@ -21,7 +21,8 @@ export default function VioProductCard({ product, image, ...config }: Props) {
   return (
     <VioProductCardSelf
       productId={product?.productId}
-      sponsorId={product?.sponsorId ?? 1}
+      // Only a preference: the card resolves it against the connected key.
+      sponsorId={product?.sponsorId}
       config={config}
       imageOverride={imageOverride || undefined}
     />
