@@ -11,6 +11,18 @@ export const Configuration: any;
 export function registerVioElements(): void;
 export function primaryImageUrl(product: any): string | undefined;
 
+/** Mirrors `purchaseFromPaymentSuccess` in vio-web-sdk/src/core/analytics/
+ *  analytics-manager.ts: the Vio order id of a `vio:payment-success` detail
+ *  (redirect `orderId` → Apple Pay `result.confirmation.orderId` →
+ *  `checkoutId`), never a provider's reference. `{}` when there is none. */
+export function purchaseFromPaymentSuccess(detail: {
+  method?: string;
+  sponsorId?: number | string;
+  orderId?: string | number;
+  checkoutId?: string | number;
+  result?: { confirmation?: { orderId?: string | number | null; status?: string } | null; [key: string]: unknown } | null;
+}): { orderId?: string };
+
 export const CREATE_CART_MUTATION: string;
 export const ADD_ITEM_MUTATION: string;
 export const DELETE_ITEM_MUTATION: string;

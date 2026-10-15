@@ -1,11 +1,14 @@
 import { currentSponsorConfig, getPersistedSponsorId } from "./vio-helpers";
-import { Vio } from "../../vio-sdk";
+import { Vio, purchaseFromPaymentSuccess } from "../../vio-sdk";
 
 /**
  * Vio Vev — commerce analytics. Turns the shoppable funnel into GA4 e-commerce
  * events, so the publisher (VG) can measure ROI from a shoppable article. This is
  * the argument for the publisher: view_item_list → select_item → view_item →
- * add_to_cart → begin_checkout → purchase, all in their own GTM/GA4.
+ * add_to_cart → remove_from_cart → begin_checkout → purchase, all in their own
+ * GTM/GA4. `remove_from_cart` goes to the dataLayer ON PURPOSE: it is a standard
+ * GA4 e-commerce event, exactly like `add_to_cart`. Only the diagnostics
+ * (`sdk_error`, `checkout_error`) stay out of it — see DIAGNOSTIC_EVENT_NAMES.
  *
  * Three sinks, all fed by trackEvent():
  *  1. window.dataLayer — GA4/GTM standard (the one a publisher already consumes).
@@ -435,17 +438,20 @@ export function initVioAnalytics(): () => void {
     });
   };
 
-  // purchase — payment succeeded. Use the pre-clear snapshot for items/value and
-  // the event result for the order id / charged total when present.
+  // purchase — payment succeeded. Items/value/currency come from the pre-clear
+  // cart snapshot on every path (sum of the items, no shipping — the charged
+  // total will arrive through the server-side order_paid event). The order id
+  // is the SDK's normalization: always a Vio id (the redirect's checkout id,
+  // Apple Pay's backend confirmation, or the checkout id the drawer attaches),
+  // never Qliro's/Walley's own reference.
   const onPaymentSuccess = (e: Event) => {
     const d = (e as CustomEvent).detail ?? {};
-    const result = d.result ?? {};
     const items = lastCartSnapshot;
-    const value = num(result.total) ?? sumValue(items);
+    const { orderId } = purchaseFromPaymentSuccess(d);
     trackEvent("purchase", {
       currency: currencyOf(items),
-      value,
-      transaction_id: result.orderId ?? result.order?.orderId,
+      value: sumValue(items),
+      transaction_id: orderId,
       payment_type: d.method,
       sponsorId: num(d.sponsorId) ?? lastCartSponsor,
       items,
