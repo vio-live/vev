@@ -7300,7 +7300,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.21.1";
+var SDK_VERSION = "0.22.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
