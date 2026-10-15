@@ -5178,23 +5178,40 @@ function getCustomerSessionId() {
   }
   return id;
 }
+var CART_GRAPHQL_TIMEOUT_MS = 15e3;
 async function executeCartGraphQL(query, variables, options = {}) {
   const resolvedOptions = typeof options === "number" ? await getCartGraphQLOptions(options) : !options.apiKey && !options.commerceKey ? { ...await getCartGraphQLOptions(), ...options } : options;
   const { endpoint = "https://graph-ql-dev.vio.live", apiKey, commerceKey } = resolvedOptions;
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["X-API-Key"] = apiKey;
   if (commerceKey || apiKey) headers["Authorization"] = commerceKey || apiKey;
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ query, variables })
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : void 0;
+  let timer;
+  const timedOut = new Promise((_2, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error(`GraphQL request timed out after ${CART_GRAPHQL_TIMEOUT_MS}ms`));
+    }, CART_GRAPHQL_TIMEOUT_MS);
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.errors) {
-    const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
-    throw new Error(errMsg);
+  try {
+    const res = await Promise.race([
+      fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ query, variables }),
+        signal: controller?.signal
+      }),
+      timedOut
+    ]);
+    const json = await Promise.race([res.json().catch(() => ({})), timedOut]);
+    if (!res.ok || json.errors) {
+      const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
+      throw new Error(errMsg);
+    }
+    return json;
+  } finally {
+    clearTimeout(timer);
   }
-  return json;
 }
 async function createCart(customerSessionId, currency, shippingCountry, options) {
   const json = await executeCartGraphQL(
@@ -5397,11 +5414,37 @@ var CartManager = class extends EventTarget {
     const sync = this.qtySyncs.get(this.qtySyncKey(sponsorId, cartItemId));
     return sync ? sync.pending ?? sync.sent : void 0;
   }
-  /** Apply a backend response only if no newer response was applied already. */
+  /** Apply a backend response only if no newer response was applied already.
+   * Returns false when it was discarded as stale. */
   applyBackendCart(sponsorId, backendCart, seq) {
-    if (seq < (this.appliedSeq.get(sponsorId) ?? 0)) return;
+    if (seq < (this.appliedSeq.get(sponsorId) ?? 0)) return false;
     this.appliedSeq.set(sponsorId, seq);
     this.updateFromBackendCart(sponsorId, backendCart);
+    return true;
+  }
+  /** The final answer of a line's sync lost the per-sponsor seq race (another
+   * line answered later): the cart as a whole is stale, but for THIS line it
+   * is the latest word. Copy its quantity (and price) so a server-side clamp
+   * — stock — doesn't leave the optimistic value behind for good, with the
+   * checkout / Apple Pay total built on it. */
+  reconcileLineFromResponse(sponsorId, cartItemId, resCart) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const line = cart?.items.find((i5) => i5.cartItemId === cartItemId || i5.id === cartItemId);
+    const server = resCart.line_items?.find((li) => li.id === cartItemId);
+    if (!cart || !line || !server) return;
+    const price = server.price?.amount_incl_taxes ?? server.price?.amount;
+    let changed = false;
+    if (server.quantity !== line.quantity) {
+      line.quantity = server.quantity;
+      changed = true;
+    }
+    if (price != null && price !== line.unitPrice) {
+      line.unitPrice = price;
+      changed = true;
+    }
+    if (!changed) return;
+    this.persist();
+    this.emit();
   }
   /** Surface a cart sync problem to hosts/UI (and the console). */
   emitError(message, err) {
@@ -5480,6 +5523,7 @@ var CartManager = class extends EventTarget {
     if (backendCart.available_shipping_countries) {
       cart.availableShippingCountries = backendCart.available_shipping_countries;
     }
+    const removedBeforeSync = [];
     if (Array.isArray(backendCart.line_items)) {
       const existingItems = cart.items || [];
       if (backendCart.line_items.length === 0 && existingItems.length > 0) {
@@ -5490,6 +5534,13 @@ var CartManager = class extends EventTarget {
       cart.items = backendCart.line_items.flatMap((li) => {
         const intended = this.intendedQuantity(sponsorId, li.id);
         if (intended !== void 0 && intended <= 0) return [];
+        const earlyKey = this.intentKey(li.product_id, li.variant_id);
+        const earlyIntent = this.pendingQtyIntents.get(earlyKey);
+        if (earlyIntent !== void 0 && earlyIntent <= 0) {
+          this.pendingQtyIntents.delete(earlyKey);
+          removedBeforeSync.push(li.id);
+          return [];
+        }
         const urlFromBackend = (typeof li.image === "string" ? li.image : li.image?.url) || li.imageUrl || li.image_url || "";
         const matchedLocal = existingItems.find((existing) => {
           const p1 = normId(existing.productId);
@@ -5525,6 +5576,10 @@ var CartManager = class extends EventTarget {
     }
     this.persist();
     this.emit();
+    const syncedCartId = cart.cartId;
+    if (syncedCartId) {
+      for (const id of removedBeforeSync) this.syncQuantity(sponsorId, syncedCartId, id, 0);
+    }
     if (this.pendingQtyIntents.size > 0) {
       const currentCart = this.cartsBySponsor.get(sponsorId);
       for (const [key, qty] of [...this.pendingQtyIntents]) {
@@ -5722,6 +5777,7 @@ var CartManager = class extends EventTarget {
     this.qtySyncs.set(key, sync);
     const run = (async () => {
       let next = target;
+      let removalRetried = false;
       while (next !== void 0) {
         sync.sent = next;
         sync.pending = void 0;
@@ -5730,13 +5786,25 @@ var CartManager = class extends EventTarget {
           const gqlOpts = await getCartGraphQLOptions(sponsorId);
           const resCart = next <= 0 ? await deleteItem(backendCartId, cartItemId, gqlOpts) : await updateItem(backendCartId, cartItemId, null, next, gqlOpts);
           next = sync.pending;
+          if (next === sync.sent) next = void 0;
           if (next === void 0) this.qtySyncs.delete(key);
           if (resCart && Array.isArray(resCart.line_items)) {
-            this.applyBackendCart(sponsorId, resCart, seq);
+            const applied = this.applyBackendCart(sponsorId, resCart, seq);
+            if (!applied && next === void 0) {
+              this.reconcileLineFromResponse(sponsorId, cartItemId, resCart);
+            }
           }
         } catch (err) {
-          this.qtySyncs.delete(key);
+          const retryRemoval = !removalRetried && sync.pending !== void 0 && sync.pending <= 0;
           next = void 0;
+          if (retryRemoval) {
+            removalRetried = true;
+            sync.sent = 0;
+            sync.pending = void 0;
+            next = 0;
+          } else {
+            this.qtySyncs.delete(key);
+          }
           this.emitError("Update/DeleteItem failed \u2014 cart re-synced from backend", err);
           try {
             await this.fetchCartFromBackend(sponsorId);
@@ -7621,6 +7689,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   /** Create the backend checkout for the sponsor's cart (auto-accepts terms). */
   async createCheckout(sponsorId) {
+    await this.cartManager.waitForCartMutations(sponsorId);
     const cart = this.cartManager.getCart(sponsorId);
     let cartId = cart?.cartId;
     if (!cartId) {
@@ -7813,6 +7882,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async prepareRedirectPayment(sponsorId, formData, extraUpdateVars = {}) {
     const spId = sponsorId ?? this.state?.sponsorId;
     if (!spId) throw new Error("[CheckoutManager] no sponsor for payment");
+    await this.cartManager.waitForCartMutations(spId);
     const cart = this.cartManager.getCart(spId);
     let cartId = cart?.cartId;
     if (!cartId) {
@@ -7927,6 +7997,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * plain payment once the shopper chose one in our form.
    */
   async startVippsPayment(sponsorId, formData, options = {}) {
+    const waitFor = sponsorId ?? this.state?.sponsorId;
+    if (waitFor) await this.cartManager.waitForCartMutations(waitFor);
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
       sponsorId,
       formData,
@@ -13720,6 +13792,7 @@ var VioCart = class extends i4 {
   async startVippsExpressOrCheckout(sponsorId) {
     let fallback = true;
     try {
+      await Vio.cart.waitForCartMutations(sponsorId);
       if (!await Vio.checkout.getVippsExpressEnabled(sponsorId)) throw new Error("express off");
       const res = await Vio.checkout.startVippsExpress(sponsorId);
       fallback = !res?.payment_url;
