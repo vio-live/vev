@@ -5342,6 +5342,14 @@ var CartManager = class extends EventTarget {
      * landed (Alan, 2026-08-18: shippings queried before AddItem settled,
      * came back empty). */
     this.inFlightMutations = /* @__PURE__ */ new Map();
+    /** Per-line quantity sync with the backend: at most ONE UpdateItem /
+     * DeleteItem in flight per line. Targets that arrive while one is in flight
+     * are coalesced into `pending` (only the latest survives) and sent when the
+     * current request settles. Keyed by `${sponsorId}:${cartItemId}`.
+     * (Alan, 2026-10-15: a burst of +/− clicks fired one UpdateItem per click
+     * in parallel; each response re-applied the whole backend cart, so an
+     * older one landing after a newer optimistic change rolled the line back.) */
+    this.qtySyncs = /* @__PURE__ */ new Map();
     /** Quantity intents for lines whose backend id hasn't arrived yet — replayed
      * when the AddItem response reconciles (keyed by product::variant). */
     this.pendingQtyIntents = /* @__PURE__ */ new Map();
@@ -5352,15 +5360,42 @@ var CartManager = class extends EventTarget {
     this.mutationSeq.set(sponsorId, n6);
     return n6;
   }
-  /** Resolves once any in-flight AddItem/UpdateItem/DeleteItem for this
-   * sponsor has settled (success or failure). No-op if nothing is pending. */
+  /** Resolves once every in-flight AddItem/UpdateItem/DeleteItem for this
+   * sponsor has settled (success or failure), including ones started while
+   * waiting (a quantity intent replayed by an AddItem reconcile). No-op if
+   * nothing is pending. */
   async waitForCartMutations(sponsorId) {
-    const p3 = this.inFlightMutations.get(sponsorId);
-    if (!p3) return;
-    try {
-      await p3;
-    } catch {
+    for (; ; ) {
+      const set = this.inFlightMutations.get(sponsorId);
+      if (!set || set.size === 0) return;
+      await Promise.allSettled([...set]);
     }
+  }
+  /** Register a backend mutation so `waitForCartMutations` can await it. */
+  trackMutation(sponsorId, mutation) {
+    let set = this.inFlightMutations.get(sponsorId);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      this.inFlightMutations.set(sponsorId, set);
+    }
+    const tracked = set;
+    tracked.add(mutation);
+    const untrack = () => {
+      tracked.delete(mutation);
+      if (tracked.size === 0 && this.inFlightMutations.get(sponsorId) === tracked) {
+        this.inFlightMutations.delete(sponsorId);
+      }
+    };
+    mutation.then(untrack, untrack);
+  }
+  qtySyncKey(sponsorId, cartItemId) {
+    return `${sponsorId}:${cartItemId}`;
+  }
+  /** The quantity a line is heading to (pending beats in flight), or
+   * undefined when no quantity sync is active for it. */
+  intendedQuantity(sponsorId, cartItemId) {
+    const sync = this.qtySyncs.get(this.qtySyncKey(sponsorId, cartItemId));
+    return sync ? sync.pending ?? sync.sent : void 0;
   }
   /** Apply a backend response only if no newer response was applied already. */
   applyBackendCart(sponsorId, backendCart, seq) {
@@ -5452,7 +5487,9 @@ var CartManager = class extends EventTarget {
         this.emit();
         return;
       }
-      cart.items = backendCart.line_items.map((li) => {
+      cart.items = backendCart.line_items.flatMap((li) => {
+        const intended = this.intendedQuantity(sponsorId, li.id);
+        if (intended !== void 0 && intended <= 0) return [];
         const urlFromBackend = (typeof li.image === "string" ? li.image : li.image?.url) || li.imageUrl || li.image_url || "";
         const matchedLocal = existingItems.find((existing) => {
           const p1 = normId(existing.productId);
@@ -5468,7 +5505,7 @@ var CartManager = class extends EventTarget {
           return false;
         });
         const imageUrl = urlFromBackend || matchedLocal?.imageUrl || "";
-        return {
+        const line = {
           id: li.id,
           cartItemId: li.id,
           productId: li.product_id,
@@ -5479,10 +5516,11 @@ var CartManager = class extends EventTarget {
           unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? matchedLocal?.unitPrice ?? 0,
           currency: li.price?.currency_code || backendCart.currency || matchedLocal?.currency || "NOK",
           imageUrl,
-          quantity: li.quantity,
+          quantity: intended ?? li.quantity,
           shipping: li.shipping,
           availableShippings: li.available_shippings
         };
+        return [line];
       });
     }
     this.persist();
@@ -5605,24 +5643,36 @@ var CartManager = class extends EventTarget {
         this.emitError("AddItem rejected by the backend \u2014 item removed from the cart", err);
       }
     })();
-    this.inFlightMutations.set(opts.sponsorId, mutation);
-    void mutation.finally(() => {
-      if (this.inFlightMutations.get(opts.sponsorId) === mutation) {
-        this.inFlightMutations.delete(opts.sponsorId);
-      }
-    });
+    this.trackMutation(opts.sponsorId, mutation);
     return addedItem;
   }
   intentKey(productId, variantId) {
     return `${normId(productId)}::${normId(variantId)}`;
   }
+  findLine(sponsorId, lineItemId) {
+    return this.cartsBySponsor.get(sponsorId)?.items.find((i5) => i5.id === lineItemId || i5.cartItemId === lineItemId);
+  }
+  /** Change a line's quantity by `delta`, computed on the manager's CURRENT
+   * quantity — not on whatever a UI rendered a moment ago. A burst of +/−
+   * clicks before a re-render therefore asks for 2, 3, 4… and not for the
+   * same target several times. Reaching 0 removes the line. */
+  adjustQuantity(lineItemId, sponsorId, delta) {
+    const item = this.findLine(sponsorId, lineItemId);
+    if (!item) return;
+    this.updateQuantity(lineItemId, sponsorId, item.quantity + delta);
+  }
+  /** Set a line's quantity (0 or less removes it). Optimistic: the local
+   * state and `change` update at once; the backend is synced through
+   * `syncQuantity`, one request in flight per line, latest target wins. */
   updateQuantity(lineItemId, sponsorId, quantity) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
     const item = cart.items.find((i5) => i5.id === lineItemId || i5.cartItemId === lineItemId);
     if (!item) return;
+    const target = quantity > 0 ? quantity : 0;
+    if (target === item.quantity) return;
     const targetItemId = item.cartItemId;
-    if (quantity <= 0) {
+    if (target <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
       if (typeof document !== "undefined") {
         document.dispatchEvent(
@@ -5642,36 +5692,61 @@ var CartManager = class extends EventTarget {
         );
       }
     } else {
-      item.quantity = quantity;
+      item.quantity = target;
     }
     if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
     this.persist();
     this.emit();
     if (!cart.cartId) return;
     if (!targetItemId) {
-      this.pendingQtyIntents.set(this.intentKey(item.productId, item.variantId), quantity);
+      this.pendingQtyIntents.set(this.intentKey(item.productId, item.variantId), target);
       return;
     }
-    const backendCartId = cart.cartId;
-    const seq = this.nextSeq(sponsorId);
-    const mutation = (async () => {
-      try {
-        const gqlOpts = await getCartGraphQLOptions(sponsorId);
-        const resCart = quantity <= 0 ? await deleteItem(backendCartId, targetItemId, gqlOpts) : await updateItem(backendCartId, targetItemId, null, quantity, gqlOpts);
-        if (resCart && Array.isArray(resCart.line_items)) {
-          this.applyBackendCart(sponsorId, resCart, seq);
+    this.syncQuantity(sponsorId, cart.cartId, targetItemId, target);
+  }
+  /** Send a line's target quantity to the backend — ONE request in flight per
+   * line. A target that arrives while one is in flight replaces any earlier
+   * waiting one and goes out when the current request settles, so the server
+   * ends on the last intent and never sees two updates racing each other.
+   * While the sync is active the line keeps its optimistic quantity through
+   * any backend response (see `updateFromBackendCart`); a rejection drops
+   * what was queued and reconciles the cart from the server. */
+  syncQuantity(sponsorId, backendCartId, cartItemId, target) {
+    const key = this.qtySyncKey(sponsorId, cartItemId);
+    const active = this.qtySyncs.get(key);
+    if (active) {
+      active.pending = target;
+      return;
+    }
+    const sync = { sent: target };
+    this.qtySyncs.set(key, sync);
+    const run = (async () => {
+      let next = target;
+      while (next !== void 0) {
+        sync.sent = next;
+        sync.pending = void 0;
+        const seq = this.nextSeq(sponsorId);
+        try {
+          const gqlOpts = await getCartGraphQLOptions(sponsorId);
+          const resCart = next <= 0 ? await deleteItem(backendCartId, cartItemId, gqlOpts) : await updateItem(backendCartId, cartItemId, null, next, gqlOpts);
+          next = sync.pending;
+          if (next === void 0) this.qtySyncs.delete(key);
+          if (resCart && Array.isArray(resCart.line_items)) {
+            this.applyBackendCart(sponsorId, resCart, seq);
+          }
+        } catch (err) {
+          this.qtySyncs.delete(key);
+          next = void 0;
+          this.emitError("Update/DeleteItem failed \u2014 cart re-synced from backend", err);
+          try {
+            await this.fetchCartFromBackend(sponsorId);
+          } catch (fetchErr) {
+            this.emitError("cart re-sync after a rejected Update/DeleteItem failed", fetchErr);
+          }
         }
-      } catch (err) {
-        this.emitError("Update/DeleteItem failed \u2014 cart re-synced from backend", err);
-        void this.fetchCartFromBackend(sponsorId);
       }
     })();
-    this.inFlightMutations.set(sponsorId, mutation);
-    void mutation.finally(() => {
-      if (this.inFlightMutations.get(sponsorId) === mutation) {
-        this.inFlightMutations.delete(sponsorId);
-      }
-    });
+    this.trackMutation(sponsorId, run);
   }
   removeItem(lineItemId, sponsorId) {
     this.updateQuantity(lineItemId, sponsorId, 0);
@@ -7225,7 +7300,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.21.0";
+var SDK_VERSION = "0.21.1";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -13686,11 +13761,14 @@ var VioCart = class extends i4 {
     for (const cart of this.carts.values()) return cart.currency;
     return "NOK";
   }
+  // A delta on the manager's live quantity, not a target computed from this
+  // render's snapshot: two clicks before Lit re-renders used to ask for the
+  // same quantity twice (Alan, 2026-10-15).
   onIncrement(item) {
-    Vio.cart.updateQuantity(item.id, item.sponsorId, item.quantity + 1);
+    Vio.cart.adjustQuantity(item.id, item.sponsorId, 1);
   }
   onDecrement(item) {
-    Vio.cart.updateQuantity(item.id, item.sponsorId, item.quantity - 1);
+    Vio.cart.adjustQuantity(item.id, item.sponsorId, -1);
   }
   onRemove(item) {
     Vio.cart.removeItem(item.id, item.sponsorId);
