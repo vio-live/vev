@@ -1,11 +1,14 @@
-import { getPersistedSponsorId } from "./vio-helpers";
-import { Vio } from "../../vio-sdk";
+import { currentSponsorConfig, getPersistedSponsorId } from "./vio-helpers";
+import { Vio, purchaseFromPaymentSuccess } from "../../vio-sdk";
 
 /**
  * Vio Vev — commerce analytics. Turns the shoppable funnel into GA4 e-commerce
  * events, so the publisher (VG) can measure ROI from a shoppable article. This is
  * the argument for the publisher: view_item_list → select_item → view_item →
- * add_to_cart → begin_checkout → purchase, all in their own GTM/GA4.
+ * add_to_cart → remove_from_cart → begin_checkout → purchase, all in their own
+ * GTM/GA4. `remove_from_cart` goes to the dataLayer ON PURPOSE: it is a standard
+ * GA4 e-commerce event, exactly like `add_to_cart`. Only the diagnostics
+ * (`sdk_error`, `checkout_error`) stay out of it — see DIAGNOSTIC_EVENT_NAMES.
  *
  * Three sinks, all fed by trackEvent():
  *  1. window.dataLayer — GA4/GTM standard (the one a publisher already consumes).
@@ -128,6 +131,10 @@ function ringLog(entry: unknown): void {
   if (log.length > 50) log.shift();
 }
 
+/** Diagnostics (contract v1) go to the Vio pipeline and the inspector, not
+ * to the publisher's GA4: they are not e-commerce events. */
+const DIAGNOSTIC_EVENT_NAMES = new Set(["sdk_error", "checkout_error"]);
+
 /** The single choke point every tracked event goes through. */
 export function trackEvent(name: string, params: EventParams = {}): void {
   if (!state.enabled) return;
@@ -142,7 +149,7 @@ export function trackEvent(name: string, params: EventParams = {}): void {
   if (item_list_name) ecommerce.item_list_name = item_list_name;
   if (items && items.length) ecommerce.items = items.map(toGa4Item);
 
-  pushDataLayer(name, ecommerce);
+  if (!DIAGNOSTIC_EVENT_NAMES.has(name)) pushDataLayer(name, ecommerce);
 
   // Vio pipeline (collector -> ClickHouse + vendor fan-out). Same choke
   // point as every other sink, so nothing can be double-counted: the core
@@ -167,20 +174,38 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 
 /** Client-side taxonomy of the analytics contract v1 — only these forward. */
 const VIO_EVENT_NAMES = new Set([
-  "view_item_list", "select_item", "view_item", "add_to_cart",
+  "view_item_list", "select_item", "view_item", "add_to_cart", "remove_from_cart",
   "view_cart", "begin_checkout", "purchase",
   "component_impression", "component_click", "ad_impression", "ad_click",
   "poll_impression", "contest_impression", "session_start", "session_end",
+  "sdk_error",
 ]);
+
+/**
+ * El sponsor persistido de la página, solo si la configuración de la key
+ * conectada lo conoce. A diferencia de `getActiveSponsorId`, acá NO se cae al
+ * primario: un evento atribuido al sponsor equivocado es peor que uno sin
+ * sponsor (el dashboard de commerce filtra por sponsor_id). Un id de otra
+ * key (páginas hechas sobre vio-backend, otra org) queda fuera.
+ */
+function persistedSponsorIfKnown(): number | undefined {
+  const config = currentSponsorConfig();
+  const id = num(getPersistedSponsorId());
+  if (!config || !id) return undefined;
+  return config.ids.includes(id) ? id : undefined;
+}
 
 function forwardToVio(name: string, params: EventParams): void {
   if (!VIO_EVENT_NAMES.has(name)) return;
   const analytics = (Vio as any).analytics;
   if (!analytics?.track) return; // vendored SDK predates Vio.analytics
-  const { currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, ...rest } =
-    params;
+  const {
+    currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, error_code,
+    ...rest
+  } = params;
   const props: Record<string, unknown> = { ...rest };
   if (item_list_name) props.list_name = item_list_name;
+  const errorCode = typeof error_code === "string" && error_code ? error_code : undefined;
   try {
     analytics.track(name, {
       commerce:
@@ -205,13 +230,13 @@ function forwardToVio(name: string, params: EventParams): void {
       // core —que sí lo copian— están apagados: si no lo mandamos desde acá,
       // todo lo de Vev llega con sponsor_id = 0 y ese dashboard nace vacío.
       // Cascada: lo explícito del evento → el sponsor del carrito (si es
-      // uno solo) → el sponsor persistido de la página (el que Vio Config
-      // resolvió contra la key conectada; se borra al cambiar de key). Nunca
-      // un id inventado: atribuir a un sponsor equivocado es peor que no
-      // atribuir.
+      // uno solo) → el sponsor persistido de la página, solo si la key
+      // conectada lo conoce. Nunca un id inventado: atribuir a un sponsor
+      // equivocado es peor que no atribuir. El SDK deriva campaign_id del
+      // sponsor (la campaña activa en la que participa).
       context: (() => {
-        const sid = num(sponsorId) ?? soleCartSponsor() ?? getPersistedSponsorId() ?? undefined;
-        return sid ? { sponsorId: sid } : undefined;
+        const sid = num(sponsorId) ?? soleCartSponsor() ?? persistedSponsorIfKnown();
+        return sid || errorCode ? { sponsorId: sid || undefined, errorCode } : undefined;
       })(),
       props: Object.keys(props).length ? props : undefined,
     });
@@ -413,17 +438,20 @@ export function initVioAnalytics(): () => void {
     });
   };
 
-  // purchase — payment succeeded. Use the pre-clear snapshot for items/value and
-  // the event result for the order id / charged total when present.
+  // purchase — payment succeeded. Items/value/currency come from the pre-clear
+  // cart snapshot on every path (sum of the items, no shipping — the charged
+  // total will arrive through the server-side order_paid event). The order id
+  // is the SDK's normalization: always a Vio id (the redirect's checkout id,
+  // Apple Pay's backend confirmation, or the checkout id the drawer attaches),
+  // never Qliro's/Walley's own reference.
   const onPaymentSuccess = (e: Event) => {
     const d = (e as CustomEvent).detail ?? {};
-    const result = d.result ?? {};
     const items = lastCartSnapshot;
-    const value = num(result.total) ?? sumValue(items);
+    const { orderId } = purchaseFromPaymentSuccess(d);
     trackEvent("purchase", {
       currency: currencyOf(items),
-      value,
-      transaction_id: result.orderId ?? result.order?.orderId,
+      value: sumValue(items),
+      transaction_id: orderId,
       payment_type: d.method,
       sponsorId: num(d.sponsorId) ?? lastCartSponsor,
       items,
@@ -431,7 +459,45 @@ export function initVioAnalytics(): () => void {
     lastCartSnapshot = [];
   };
 
+  // remove_from_cart — the CartManager is the choke point for removals (the
+  // drawer and the host's removeItem() alike) and dispatches it on document.
+  // The SDK's own listener is off here (autoTrack:false), so we forward it.
+  const onRemoved = (e: Event) => {
+    const d = (e as CustomEvent).detail ?? {};
+    if (d.productId == null) return;
+    const qty = num(d.quantity) ?? 1;
+    const price = num(d.price);
+    trackEvent("remove_from_cart", {
+      currency: d.currency,
+      value: (price ?? 0) * qty,
+      sponsorId: num(d.sponsorId),
+      items: [
+        {
+          productId: d.productId,
+          name: d.name,
+          brand: d.brand,
+          price,
+          currency: d.currency,
+          quantity: qty,
+          variantId: d.variantId,
+        },
+      ],
+    });
+  };
+
+  // sdk_error — a cart sync failure (vio:cart-error). Without it "the cart
+  // broke" and "the reader left" look the same in the funnel.
+  const onCartError = (e: Event) => {
+    const d = (e as CustomEvent).detail ?? {};
+    trackEvent("sdk_error", {
+      error_code: "cart_error",
+      ...(d.message ? { message: String(d.message).slice(0, 500) } : {}),
+    });
+  };
+
   document.addEventListener("vio:added-to-cart", onAdded);
+  document.addEventListener("vio:removed-from-cart", onRemoved);
+  document.addEventListener("vio:cart-error", onCartError);
   document.addEventListener("vio:checkout-open", onCheckoutOpen);
   document.addEventListener("vio:open-cart", onOpenCart);
   document.addEventListener("vio:payment-success", onPaymentSuccess);
@@ -439,6 +505,8 @@ export function initVioAnalytics(): () => void {
   const cleanup = () => {
     Vio.cart?.removeEventListener?.("change", onCartChange);
     document.removeEventListener("vio:added-to-cart", onAdded);
+    document.removeEventListener("vio:removed-from-cart", onRemoved);
+    document.removeEventListener("vio:cart-error", onCartError);
     document.removeEventListener("vio:checkout-open", onCheckoutOpen);
     document.removeEventListener("vio:open-cart", onOpenCart);
     document.removeEventListener("vio:payment-success", onPaymentSuccess);

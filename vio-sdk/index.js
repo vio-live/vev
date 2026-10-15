@@ -7225,7 +7225,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.20.4";
+var SDK_VERSION = "0.21.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -9510,15 +9510,16 @@ var AnalyticsManager = class extends EventTarget {
     if (!Configuration.isInitialized) return;
     if (Date.now() < this.retryNotBefore) return;
     const batch = this.queue.splice(0, MAX_QUEUE);
+    const apiKey = Configuration.get().apiKey;
     const body = JSON.stringify({
-      apiKey: Configuration.get().apiKey,
+      apiKey,
       sent_at: (/* @__PURE__ */ new Date()).toISOString(),
       events: batch
     });
     try {
       const res = await fetch(`${eventsBase()}/v1/events`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
         body,
         keepalive: batch.length <= 20
         // keepalive caps payload at ~64KB
@@ -9546,7 +9547,7 @@ var AnalyticsManager = class extends EventTarget {
     const boot = vioBootstrapCache();
     const ctx = opts.context ?? {};
     const context = compact({
-      campaign_id: ctx.campaignId ?? boot?.campaignId,
+      campaign_id: resolveCampaignId(ctx, boot),
       broadcast_id: ctx.broadcastId,
       campaign_component_id: ctx.campaignComponentId,
       app_placement_id: ctx.appPlacementId,
@@ -9790,8 +9791,10 @@ var AnalyticsManager = class extends EventTarget {
       this.track("purchase", {
         context: { sponsorId },
         commerce: {
+          // value / currency / items: the cart snapshot, on every path.
           ...snap ?? {},
-          orderId: d3.orderId,
+          // order_id: Vio's id for the purchase (never the provider's).
+          ...purchaseFromPaymentSuccess(d3),
           paymentMethod: d3.method
         }
       });
@@ -9888,6 +9891,52 @@ function vioCart() {
   } catch {
     return null;
   }
+}
+function resolveCampaignId(ctx, boot) {
+  if (ctx.campaignId !== void 0) return ctx.campaignId;
+  const defaultId = boot?.campaign?.id;
+  const sponsorId = toNumber(ctx.sponsorId);
+  if (sponsorId === void 0) return defaultId;
+  try {
+    const campaigns = Array.isArray(boot?.campaigns) ? boot.campaigns : [];
+    const matches = campaigns.filter(
+      (c4) => !!c4 && typeof c4 === "object" && c4.status === "active" && campaignSponsorIds(c4).includes(sponsorId)
+    );
+    const chosen = matches.find((c4) => c4.id === defaultId) ?? matches[0];
+    const chosenId = toNumber(chosen?.id);
+    if (chosenId !== void 0) return chosenId;
+  } catch {
+  }
+  return defaultId;
+}
+function campaignSponsorIds(campaign) {
+  const ids = [];
+  const primary = toNumber(campaign.primarySponsor?.id);
+  if (primary !== void 0) ids.push(primary);
+  const secondaries = Array.isArray(campaign.secondarySponsors) ? campaign.secondarySponsors : [];
+  for (const s4 of secondaries) {
+    const id = toNumber(s4?.id);
+    if (id !== void 0) ids.push(id);
+  }
+  return ids;
+}
+function purchaseFromPaymentSuccess(d3) {
+  const r6 = d3.result ?? {};
+  const orderId = firstId(d3.orderId, r6.confirmation?.orderId, d3.checkoutId);
+  return orderId !== void 0 ? { orderId } : {};
+}
+function firstId(...candidates) {
+  for (const c4 of candidates) {
+    if (c4 === void 0 || c4 === null) continue;
+    const s4 = String(c4);
+    if (s4 !== "") return s4;
+  }
+  return void 0;
+}
+function toNumber(value) {
+  if (value === void 0 || value === null || value === "") return void 0;
+  const n6 = Number(value);
+  return Number.isFinite(n6) ? n6 : void 0;
 }
 function pushGa4(event) {
   const commerceNames = /* @__PURE__ */ new Set([
@@ -14853,7 +14902,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           this.verifyingReturn = null;
           if (order?.status === "checkout_complete" && order.html_snippet) {
             const spId = this.checkoutState?.sponsorId ?? 0;
-            this.showProviderReceipt("kustom", spId, order);
+            this.showProviderReceipt("kustom", spId, order, kustomReturn.checkoutId);
             await this.updateComplete;
             const container = this.lightContainer("vio-kustom-checkout-container", "vio-kustom");
             Vio.checkout.renderKustomSnippet(container, order.html_snippet);
@@ -14899,12 +14948,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
             const result = { order: { orderId: order.order_id }, chargedTotal: order.total_price };
             this.qliroMountedOrderId = order.order_id;
             if (order.html_snippet) {
-              this.showProviderReceipt("qliro", spId, result);
+              this.showProviderReceipt("qliro", spId, result, checkoutId);
               await this.updateComplete;
               const container = this.lightContainer("vio-qliro-checkout-container", "vio-qliro");
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
             } else {
-              this.confirmOrder("qliro", spId, result);
+              this.confirmOrder("qliro", spId, result, checkoutId);
             }
           } else if (order?.html_snippet) {
             this.qliroMountedOrderId = order.order_id;
@@ -14955,9 +15004,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
               Vio.checkout.renderKustomSnippet(container, order.html_snippet);
             }
             if (order.status === "PurchaseCompleted") {
-              this.showProviderReceipt("walley", this.checkoutState?.sponsorId ?? 0, {
-                orderId: order.order_id
-              });
+              this.showProviderReceipt(
+                "walley",
+                this.checkoutState?.sponsorId ?? 0,
+                { orderId: order.order_id },
+                checkoutId
+              );
             }
           }
         } catch (err) {
@@ -15612,11 +15664,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * the confirmation screen, emits `vio:payment-success`, and clears the
    * paid sponsor's cart so the badge + drawer reflect the purchase.
    */
-  confirmOrder(method, sponsorId, result) {
+  confirmOrder(method, sponsorId, result, returnCheckoutId) {
     const r6 = result ?? {};
     const shippingPrice = this.shippingMajor();
     const email = String(this.form.email ?? "").trim();
-    const checkoutId = this.checkoutState?.checkoutId;
+    const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
     const providerOrderId = r6.order?.orderId != null ? String(r6.order.orderId) : "";
     this.confirmedOrder = {
       items: [...this.items],
@@ -15633,7 +15685,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       new CustomEvent("vio:payment-success", {
         bubbles: true,
         composed: true,
-        detail: { method, sponsorId, result }
+        // `checkoutId` is Vio's own reference for the purchase — what the
+        // redirect path already sends as `orderId`; analytics falls back to it
+        // when the provider's result carries no order id.
+        detail: { method, sponsorId, result, checkoutId }
       })
     );
     Vio.cart.clearSponsorCart(sponsorId);
@@ -15783,15 +15838,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * sponsor's cart cleared — but the screen is the provider's receipt, not our
    * "Takk!": two receipts for one purchase is one too many.
    */
-  showProviderReceipt(method, sponsorId, result) {
+  showProviderReceipt(method, sponsorId, result, returnCheckoutId) {
     this.providerReceipt = method;
     this.confirmedMethod = method;
     this.open = true;
+    const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
     this.dispatchEvent(
       new CustomEvent("vio:payment-success", {
         bubbles: true,
         composed: true,
-        detail: { method, sponsorId, result }
+        detail: { method, sponsorId, result, checkoutId }
       })
     );
     if (sponsorId) {
@@ -17515,6 +17571,8 @@ export {
   getLineItemsBySupplier,
   getVippsStatus,
   primaryImageUrl,
+  purchaseFromPaymentSuccess,
+  resolveCampaignId,
   showApplePaySheet,
   updateCheckout,
   updateItem,
