@@ -19,6 +19,11 @@ import {
   openProductInfo,
   adoptConnection,
   announceActiveSponsor,
+  announcePageCampaign,
+  readPersistedCampaigns,
+  setRuntimeCampaignId,
+  VIO_CAMPAIGNS_STORAGE,
+  type CampaignListItem,
   connectionFingerprint,
   forgetSponsorState,
   getStoredConnection,
@@ -101,6 +106,8 @@ type Props = {
   apiKey?: string;
   environment?: VioEnvironment;
   sponsorId?: number;
+  /** The page's campaign (ADR-0034, amendment 3); 0 / empty = the default campaign. */
+  campaignId?: number;
   country?: string;
   currency?: string;
   // Cart button (floating action button).
@@ -198,6 +205,7 @@ export default function VioConfig({
   apiKey,
   environment = DEFAULT_ENVIRONMENT,
   sponsorId,
+  campaignId,
   country = "NO",
   currency,
   cartButton,
@@ -246,20 +254,29 @@ export default function VioConfig({
   // then there is no active sponsor and nothing is asked of Commerce.
   const [sponsorConfig, setSponsorConfig] = useState<SponsorConfig | null>(null);
   const [sponsorList, setSponsorList] = useState<SponsorListItem[]>([]);
+  // The connected key's campaigns and the page's campaign in effect (0 = the
+  // default): the saved one when this key has it, else the default.
+  const [campaignList, setCampaignList] = useState<CampaignListItem[]>([]);
+  const [pageCampaignId, setPageCampaignId] = useState(0);
+  // The saved campaign, as a number the connect flow can validate.
+  const wantedCampaignId = Number.isInteger(Number(campaignId)) && Number(campaignId) > 0 ? Number(campaignId) : 0;
   // Which key + environment this Config is connected with, and a counter so a
   // slower, older connect never overwrites a newer one.
   const connectedRef = useRef<string | null>(null);
   const connectSeqRef = useRef(0);
 
   const connect = useCallback(
-    async (key: string) => {
+    async (key: string, wantedCampaign: number) => {
       const seq = ++connectSeqRef.current;
       const dropConnection = () => {
         forgetSponsorState({ carts: false });
         connectedRef.current = null;
         setSponsorConfig(null);
         setSponsorList([]);
+        setCampaignList([]);
+        setPageCampaignId(0);
         announceActiveSponsor(null);
+        setRuntimeCampaignId(null);
       };
       if (!key) {
         setStatus("disconnected");
@@ -282,14 +299,31 @@ export default function VioConfig({
       setStatusMsg("");
       try {
         setRuntimeApiKey(key);
-        ensureVioInit(key, activeEnvironment);
+        // The page's campaign goes into the init (the SDK's fallback for every
+        // slot without an assignment, and what the declaration carries); a
+        // change of campaign re-inits like a change of key.
+        setRuntimeCampaignId(wantedCampaign);
+        ensureVioInit(key, activeEnvironment, wantedCampaign);
         const boot = await Vio.bootstrap();
         if (seq !== connectSeqRef.current) return; // a newer connect owns the state
         const adopted = adoptConnection(boot, key, activeEnvironment);
         if (!adopted) throw new Error("This key has no sponsor");
+        // The saved campaign must be one of this key's: otherwise the default
+        // campaign, and the panel says so (like a saved sponsor the key lacks).
+        const effectiveCampaign =
+          wantedCampaign > 0 && adopted.campaigns.some((c) => c.id === wantedCampaign) ? wantedCampaign : 0;
+        if (effectiveCampaign !== wantedCampaign) {
+          setRuntimeCampaignId(effectiveCampaign);
+          ensureVioInit(key, activeEnvironment, effectiveCampaign); // re-init: the SDK bootstraps again
+          await Vio.bootstrap();
+          if (seq !== connectSeqRef.current) return;
+        }
         connectedRef.current = fingerprint;
         setSponsorList(adopted.sponsors);
         setSponsorConfig(adopted.config);
+        setCampaignList(adopted.campaigns);
+        setPageCampaignId(effectiveCampaign);
+        announcePageCampaign(effectiveCampaign);
         setStatus("connected");
         setStatusMsg(adopted.sponsors[0]?.name ?? "");
       } catch (e: any) {
@@ -314,11 +348,12 @@ export default function VioConfig({
     };
   }, []);
 
-  // Connect on mount and whenever the prop key changes (owner only).
+  // Connect on mount and whenever the prop key — or the page's campaign —
+  // changes (owner only): another campaign re-inits the SDK like another key.
   useEffect(() => {
     if (!isOwner) return;
-    void connect(resolvedKey);
-  }, [isOwner, resolvedKey, connect]);
+    void connect(resolvedKey, wantedCampaignId);
+  }, [isOwner, resolvedKey, wantedCampaignId, connect]);
 
   // The active sponsor: the "Active Sponsor" prop when the connected key has
   // it, else the key's primary — never a fixed id. Announced to every block on
@@ -328,6 +363,8 @@ export default function VioConfig({
     : null;
   const savedSponsorUnknown =
     sponsorConfig != null && Number(sponsorId) > 0 && resolvedSponsorId !== Number(sponsorId);
+  const savedCampaignUnknown = sponsorConfig != null && wantedCampaignId > 0 && pageCampaignId !== wantedCampaignId;
+  const pageCampaignName = campaignList.find((c) => c.id === pageCampaignId)?.name;
   useEffect(() => {
     if (!isOwner || resolvedSponsorId == null) return;
     announceActiveSponsor(resolvedSponsorId);
@@ -524,6 +561,15 @@ export default function VioConfig({
         <div style={{ fontSize: 11, color: "#b45309", lineHeight: 1.4, marginBottom: 4 }}>
           The saved sponsor (#{String(sponsorId)}) is not one of this key's sponsors — using the primary,{" "}
           {sponsorList.find((s) => s.isPrimary)?.name ?? `#${resolvedSponsorId}`}.
+        </div>
+      ) : null}
+      {savedCampaignUnknown ? (
+        <div style={{ fontSize: 11, color: "#b45309", lineHeight: 1.4, marginBottom: 4 }}>
+          The saved campaign (#{String(wantedCampaignId)}) is not one of this key's campaigns — using the default campaign.
+        </div>
+      ) : pageCampaignId > 0 ? (
+        <div style={{ fontSize: 11, color: "#444", lineHeight: 1.4, marginBottom: 4 }}>
+          Campaign: {pageCampaignName ?? `#${pageCampaignId}`}
         </div>
       ) : null}
       <div style={{ fontSize: 11, color: "#666", lineHeight: 1.4 }}>
@@ -795,6 +841,84 @@ export function VioSponsorSelector({ value, onChange, context }: SponsorSelector
   );
 }
 
+type CampaignSelectorProps = {
+  value?: number;
+  onChange: (value: number) => void;
+  /** Vev's form context: `value` holds this block's other props (apiKey, environment). */
+  context?: { value?: { apiKey?: string; environment?: VioEnvironment } };
+};
+
+/**
+ * The page's campaign (ADR-0034, amendment 3): one of the surface's campaigns,
+ * read from the connected key's bootstrap the way the sponsor selector reads
+ * its sponsors — Vio Config writes `vio.campaigns` after a successful connect,
+ * this field (in the properties panel, another window) follows it through the
+ * `storage` event. Persisted as the block's `campaignId` prop; 0 = the default
+ * campaign. The blocks of the page then register and attribute under it,
+ * unless the dashboard assigned another campaign to their slot.
+ */
+export function VioCampaignSelector({ value, onChange, context }: CampaignSelectorProps) {
+  const [campaigns, setCampaigns] = useState<CampaignListItem[]>(() => readPersistedCampaigns());
+  const [connection, setConnection] = useState<string | null>(() => getStoredConnection());
+
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== VIO_CAMPAIGNS_STORAGE && e.key !== VIO_CONNECTION_STORAGE) return;
+      setCampaigns(readPersistedCampaigns());
+      setConnection(getStoredConnection());
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const formValue = context?.value;
+  const pageKey = formValue ? resolveConfigApiKey(formValue.apiKey) : "";
+  const expected = pageKey ? connectionFingerprint(pageKey, formValue?.environment || DEFAULT_ENVIRONMENT) : null;
+  const listIsCurrent = campaigns.length > 0 && (expected == null || connection == null || connection === expected);
+  const defaultCampaign = campaigns.find((c) => c.isDefault);
+  const saved = value != null && String(value) !== "" && Number(value) > 0 ? Number(value) : 0;
+  const savedKnown = saved === 0 || campaigns.some((c) => c.id === saved);
+
+  if (!listIsCurrent) {
+    return (
+      <SilkeBox style={{ fontSize: 12, opacity: 0.55, fontStyle: "italic", padding: "4px 0" }}>
+        {campaigns.length > 0 || pageKey
+          ? "This key's campaigns show here once it connects"
+          : "Connect API Key to choose a campaign"}
+      </SilkeBox>
+    );
+  }
+
+  return (
+    <SilkeBox column gap="xs" style={{ width: "100%" }}>
+      <SilkeSelectFieldNative
+        size="s"
+        // A saved campaign this key does not have is not shown as chosen: the
+        // page uses the default (the note says so) until one is picked.
+        value={savedKnown ? saved : 0}
+        onChange={(v: number) => onChange(Number(v) || 0)}
+        items={[
+          { value: 0, label: defaultCampaign ? `Default campaign — ${defaultCampaign.name}` : "Default campaign" },
+          ...campaigns
+            .filter((c) => !c.isDefault)
+            .map((c) => ({
+              value: c.id,
+              label: c.status && c.status !== "active" ? `${c.name} · ${c.status}` : c.name,
+            })),
+        ]}
+      />
+      <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
+        Blocks on this page register under this campaign; the dashboard can reassign any of them.
+      </SilkeBox>
+      {!savedKnown ? (
+        <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
+          {`The saved campaign (#${saved}) is not one of this key's campaigns. The page uses the default campaign.`}
+        </SilkeBox>
+      ) : null}
+    </SilkeBox>
+  );
+}
+
 // Launch scope (decisión 2026-08-10): UN mercado, NO/NOK. Volver a true expone
 // el selector de país — ANTES de activarlo, resolver la tarea #4 / handbook
 // §8.3 (la currency del carrito backend no se realinea al cambiar de mercado).
@@ -846,6 +970,12 @@ registerVevComponent(VioConfig, {
       title: "Active Sponsor",
       type: "number",
       component: VioSponsorSelector as any,
+    },
+    {
+      name: "campaignId",
+      title: "Campaign",
+      type: "number",
+      component: VioCampaignSelector as any,
     },
     ...(MULTI_MARKET_ENABLED
       ? [

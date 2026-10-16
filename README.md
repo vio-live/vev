@@ -80,7 +80,7 @@ add (the buyer must pick a variant); sold-out combinations are disabled there.
 
 Per block:
 
-- **Vio Config (SDK)** — `Vio API Key`, `API Base`, `GraphQL Base`, `Stripe PK`
+- **Vio Config (SDK)** — `Vio API Key`, `Active Sponsor`, `Campaign` (see below), `API Base`, `GraphQL Base`, `Stripe PK`
   (publishable, enables card + Apple Pay), cart button (`show`, `position` 4 corners,
   `icon` bag/cart/basket, `color`, `hover effect`, `size`). Ships with working
   staging defaults, so dropping the block needs zero config.
@@ -119,6 +119,22 @@ SDK declares the page's slots once per load after the bootstrap (`mode: merge`,
 `platform: vev`) and skips a set it declared from that browser in the last 24 h. The
 editor's canvas counts as a page: a block shows up in the dashboard as soon as it exists
 on the canvas, with Vio Config connected.
+
+**Campaign of the page** (ADR-0034, amendment 3). Vio Config has a `Campaign` field: one
+of the surface's campaigns, listed by name from the connected key's bootstrap
+(`campaigns[]`, active ones first) the way `Active Sponsor` lists its sponsors — the field
+reads what the Config wrote after connecting, so it says so until the key is connected.
+The choice is saved as the block's `campaignId` (empty = the default campaign) and goes
+into `Vio.init({ campaignId })`: the SDK (≥ 0.24.0) applies it wherever a slot has no
+assignment from the dashboard — **assignment > page campaign > default** — for the
+products a block fetches (that campaign's primary sponsor, when the key knows it), for
+every event's `campaign_id`, and for the declaration of the page's slots, which carries
+the campaign. Changing it re-initialises the SDK like changing the key (bootstrap again,
+slots declared again under the new campaign, blocks re-resolved). A saved campaign that is
+not one of the connected key's falls back to the default and the panel says so, like a
+saved sponsor the key lacks. The picker and the Vipps check follow the same sponsor.
+Blocks have no field of their own for this: "Blocks on this page register under this
+campaign; the dashboard can reassign any of them."
 
 **Campaign per block.** A block whose slot has a campaign assigned (and open now) fetches
 its products with that campaign's primary sponsor — instead of the page's Active Sponsor
