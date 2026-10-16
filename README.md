@@ -80,7 +80,7 @@ add (the buyer must pick a variant); sold-out combinations are disabled there.
 
 Per block:
 
-- **Vio Config (SDK)** — `Vio API Key`, `API Base`, `GraphQL Base`, `Stripe PK`
+- **Vio Config (SDK)** — `Vio API Key`, `Active Sponsor`, `Campaign` (see below), `API Base`, `GraphQL Base`, `Stripe PK`
   (publishable, enables card + Apple Pay), cart button (`show`, `position` 4 corners,
   `icon` bag/cart/basket, `color`, `hover effect`, `size`). Ships with working
   staging defaults, so dropping the block needs zero config.
@@ -120,12 +120,34 @@ SDK declares the page's slots once per load after the bootstrap (`mode: merge`,
 editor's canvas counts as a page: a block shows up in the dashboard as soon as it exists
 on the canvas, with Vio Config connected.
 
+**Campaign of the page** (ADR-0034, amendment 3). Vio Config has a `Campaign` field: one
+of the surface's campaigns, listed by name from the connected key's bootstrap
+(`campaigns[]`, active ones first) the way `Active Sponsor` lists its sponsors — the field
+reads what the Config wrote after connecting, so it says so until the key is connected.
+The choice is saved as the block's `campaignId` (empty = the default campaign) and goes
+into `Vio.init({ campaignId })`: the SDK (0.24.0, vendored) applies it wherever a slot has no
+assignment from the dashboard — **assignment > page campaign > default** — for the
+products a block fetches (that campaign's primary sponsor, when the key knows it), for
+every event's `campaign_id`, and for the declaration of the page's slots, which carries
+the campaign. Changing it re-initialises the SDK like changing the key (bootstrap again,
+slots declared again under the new campaign, blocks re-resolved) — in the editor's
+properties panel too, which learns the new value through `localStorage` (`vio.campaignId`,
+written only in the editor) and re-inits its own SDK, so the picker lists that campaign's
+catalog and the Vipps check queries that sponsor. Only an **active** campaign can be
+chosen; a saved one that is not one of the connected key's, or is paused / ended /
+scheduled, falls back to the default and the panel says so, like a saved sponsor the key
+lacks. Blocks have no field of their own for this; the panel says it plainly: "Blocks sell
+through this campaign's primary sponsor, overriding Active Sponsor; products picked under
+another sponsor show as unavailable. The dashboard can still reassign any slot."
+
 **Campaign per block.** A block whose slot has a campaign assigned (and open now) fetches
 its products with that campaign's primary sponsor — instead of the page's Active Sponsor
 — when the connected key knows that sponsor in **any** of its campaigns (`campaigns[]`
-of the bootstrap, not only the default one); otherwise it keeps the page's sponsor,
-says so once in the console, and attributes **without** that campaign. With nothing
-assigned, nothing changes: the page's Active Sponsor rules, as before.
+of the bootstrap, not only the default one); otherwise it falls back to the page
+campaign's primary sponsor (so sponsor and campaign agree), else the page's sponsor, says
+so once in the console, and attributes without that slot's campaign. With nothing
+assigned: the page campaign's primary sponsor when a campaign is chosen in Vio Config,
+else the page's Active Sponsor, as before.
 
 **Attribution.** Every event a block emits (`view_item_list`, `select_item`, `view_item`,
 `add_to_cart`, impressions, `begin_checkout` from the Vipps button) carries
@@ -153,10 +175,10 @@ forward. A cart line keeps the `origin` of every unit (campaign, slot, article).
 - `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
   tagged `vev`), so the dashboard's assignments for Vev apply here.
 
-The vendored SDK is **0.23.1** (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
-`content` / `cartSlices`, `origins` on the cart lines). The blocks still check for that
-API before calling it — a block must never throw into the editor — so with an older
-bundle they behave as before, unregistered.
+The vendored SDK is **0.24.0** (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
+`content` / `cartSlices` / `pageCampaign`, `campaignId` in `Vio.init`, `origins` on the cart
+lines). The blocks still check for that API before calling it — a block must never throw
+into the editor — so with an older bundle they behave as before, unregistered.
 
 ## Development
 

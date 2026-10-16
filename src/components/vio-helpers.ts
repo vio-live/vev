@@ -25,6 +25,7 @@ export const VIO_API_KEY_STORAGE = "vio.apiKey";
 
 let lastInitKey: string | null = null;
 let lastInitEnv: string | null = null;
+let lastInitCampaign: number | null = null;
 
 export const VIO_ENVIRONMENT_STORAGE = "vio.environment";
 
@@ -111,6 +112,191 @@ export const VIO_SPONSORS_STORAGE = "vio.sponsors";
 /** Fingerprint of the key + environment this browser last connected with: how
  * Vio Config tells a new key from the same one, across visits too. */
 export const VIO_CONNECTION_STORAGE = "vio.connection";
+
+// ---- The page's campaign (ADR-0034, amendment 3) ------------------------------
+//
+// The editor chooses, in Vio Config, which of the surface's campaigns the page
+// belongs to. It goes to `Vio.init({ campaignId })`: the SDK (0.24.0) applies it
+// wherever a slot has no assignment from the dashboard — assignment > page
+// campaign > default — in `campaignForSlot`, `attribution` and the manifest the
+// page declares. Vev persists it like the sponsor: the Config sets it at runtime
+// for this window and in localStorage for the properties panel (another
+// window), and writes the key's campaign list for the "Campaign" selector.
+
+/** The page's campaign, persisted by Vio Config (per browser, like the sponsor). */
+export const VIO_CAMPAIGN_ID_STORAGE = "vio.campaignId";
+/** The connected key's campaigns, written by Vio Config for the "Campaign" selector. */
+export const VIO_CAMPAIGNS_STORAGE = "vio.campaigns";
+
+export type CampaignListItem = { id: number; name: string; status: string; isDefault: boolean };
+
+function toCampaignId(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Pure. The campaigns of a `/v2/mobile/config` answer for the selector: every
+ * `campaigns[]` entry (the default one marked), active ones first, the
+ * backend's order otherwise. The default campaign is listed even when
+ * `campaigns[]` does not carry it. */
+export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
+  const b = (boot ?? {}) as { campaign?: any; campaigns?: any[] };
+  const defaultId = toCampaignId(b.campaign?.id);
+  const list: CampaignListItem[] = [];
+  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) {
+    const id = toCampaignId(c?.id);
+    if (id == null || list.some((x) => x.id === id)) continue;
+    list.push({
+      id,
+      name: String(c?.name ?? `Campaign ${id}`),
+      status: String(c?.status ?? ""),
+      isDefault: c?.isDefault === true || id === defaultId,
+    });
+  }
+  if (defaultId != null && !list.some((x) => x.id === defaultId)) {
+    list.unshift({ id: defaultId, name: String(b.campaign?.name ?? `Campaign ${defaultId}`), status: "active", isDefault: true });
+  }
+  return [...list.filter((c) => c.status === "active"), ...list.filter((c) => c.status !== "active")];
+}
+
+export function readPersistedCampaigns(): CampaignListItem[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(VIO_CAMPAIGNS_STORAGE);
+    const list = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((c: any) => c && typeof c === "object" && toCampaignId(c.id) != null)
+      .map((c: any) => ({
+        id: Number(c.id),
+        name: typeof c.name === "string" && c.name ? c.name : `Campaign ${Number(c.id)}`,
+        status: typeof c.status === "string" ? c.status : "",
+        isDefault: c.isDefault === true,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** The SDK's own rule for a usable campaign (`activeCampaignEntry`): listed and active. */
+export function isActiveCampaign(c: CampaignListItem | undefined | null): boolean {
+  return !!c && c.status === "active";
+}
+
+export type PageCampaignVerdict = {
+  /** The campaign the page runs under: 0 = the default. */
+  effective: number;
+  entry?: CampaignListItem;
+  /** `default`: nothing chosen (or the default itself); `unknown`: not one of
+   *  this key's; `inactive`: listed but paused / ended / scheduled; `ok`. */
+  reason: "default" | "unknown" | "inactive" | "ok";
+};
+
+/** Pure. What a saved `campaignId` means against a key's campaign list: only
+ * an ACTIVE campaign counts (the SDK's `activeCampaignEntry`); the default
+ * campaign's own id is the same as choosing none. */
+export function validatePageCampaign(list: readonly CampaignListItem[], wanted: unknown): PageCampaignVerdict {
+  const id = toCampaignId(wanted);
+  if (id == null) return { effective: 0, reason: "default" };
+  const entry = list.find((c) => c.id === id);
+  if (entry?.isDefault) return { effective: 0, entry, reason: "default" };
+  if (!entry) return { effective: 0, reason: "unknown" };
+  if (!isActiveCampaign(entry)) return { effective: 0, entry, reason: "inactive" };
+  return { effective: id, entry, reason: "ok" };
+}
+
+/**
+ * Before the first init of a connect: does the list this browser kept from a
+ * previous connect of THIS key say the saved campaign is usable? `true` /
+ * `false` when that list is current (same connection fingerprint), `undefined`
+ * when there is none — then the connect bootstraps once without the campaign
+ * and validates against the fresh list.
+ */
+export function persistedCampaignValidity(key: string, environment: string, wanted: number): boolean | undefined {
+  if (!(wanted > 0)) return false;
+  if (getStoredConnection() !== connectionFingerprint(key, environment)) return undefined;
+  if (typeof localStorage === "undefined" || localStorage.getItem(VIO_CAMPAIGNS_STORAGE) == null) return undefined;
+  return validatePageCampaign(readPersistedCampaigns(), wanted).effective === wanted;
+}
+
+/** True when the vendored SDK knows about the page's campaign (0.24.0). */
+export function sdkSupportsPageCampaign(): boolean {
+  return sdkHas("pageCampaign");
+}
+
+export function getPersistedCampaignId(): number | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return toCampaignId(localStorage.getItem(VIO_CAMPAIGN_ID_STORAGE));
+  } catch {
+    return null;
+  }
+}
+
+/** What Vio Config set for this window: `null` = nothing said yet, `0` = the
+ * default campaign (explicitly none), else a campaign id. */
+function runtimeCampaignId(): number | null {
+  const v = (globalThis as { __VIO_CAMPAIGN_ID__?: unknown }).__VIO_CAMPAIGN_ID__;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+export function setRuntimeCampaignId(id: number | null): void {
+  (globalThis as { __VIO_CAMPAIGN_ID__?: number | null }).__VIO_CAMPAIGN_ID__ = id;
+}
+
+/** The page's campaign for `Vio.init`: what Vio Config set in this window
+ * (0 = none) → what it persisted, for the properties panel (another window,
+ * no Config). Null for the default campaign. The Config sets the runtime value
+ * before it inits, so its prop never has to come through here. */
+export function resolvePageCampaignId(): number | null {
+  const runtime = runtimeCampaignId();
+  if (runtime != null) return runtime > 0 ? runtime : null;
+  return getPersistedCampaignId();
+}
+
+/**
+ * Vio Config announces the page's campaign (0 / null = the default): runtime,
+ * localStorage and `vio:campaign-changed`, so every block re-resolves its
+ * sponsor against it and the picker lists that campaign's catalog.
+ */
+export function announcePageCampaign(id: number | null, { persist }: { persist: boolean }): void {
+  const value = toCampaignId(id) ?? 0;
+  const changed = runtimeCampaignId() !== value;
+  setRuntimeCampaignId(value);
+  // localStorage only from the editor: it is how the properties panel (another
+  // window) learns the page's campaign; a visitor's browser keeps nothing.
+  if (persist) writeStorage(VIO_CAMPAIGN_ID_STORAGE, value > 0 ? String(value) : null);
+  if (!changed) return;
+  resetCatalogCache();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("vio:campaign-changed", { detail: value }));
+  }
+}
+
+/**
+ * B1: the properties panel is another window with no Config. It learns a new
+ * page campaign through the `storage` event on `vio.campaignId` and re-inits
+ * its own SDK right away (`ensureVioInit` re-inits only when the campaign
+ * really changed), so the picker and the Vipps check follow the choice.
+ * Installed once per window, from the first `ensureVioInit`.
+ */
+let campaignStorageSyncInstalled = false;
+function installCampaignStorageSync(): void {
+  if (campaignStorageSyncInstalled || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  campaignStorageSyncInstalled = true;
+  window.addEventListener("storage", (e: StorageEvent) => {
+    if (e.key !== null && e.key !== VIO_CAMPAIGN_ID_STORAGE) return;
+    if (!Vio.isInitialized || !resolveApiKey()) return;
+    try {
+      ensureVioInit();
+    } catch {
+      /* no key yet in this window */
+    }
+    resetCatalogCache();
+    resetVippsOfferCache();
+  });
+}
 
 export function getPersistedSponsorId(): number | null {
   if (typeof localStorage === "undefined") return null;
@@ -288,6 +474,16 @@ export function sponsorForCommerce(requested?: unknown): number | null {
  */
 async function bootstrapWindow(): Promise<boolean> {
   for (let attempt = 0; attempt < 7; attempt++) {
+    // Even with a configuration: the page's campaign may have changed (the
+    // panel window learns it from storage) — `ensureVioInit` then re-inits
+    // and the bootstrap below answers for the new one.
+    if (resolveApiKey()) {
+      try {
+        ensureVioInit();
+      } catch {
+        /* no usable key: the retries below handle it */
+      }
+    }
     if (currentSponsorConfig()) return true;
     const runtimeKey = (globalThis as { __VIO_API_KEY__?: string }).__VIO_API_KEY__;
     if (runtimeKey || attempt >= 2) {
@@ -341,6 +537,7 @@ export function announceActiveSponsor(id: number | null): void {
  */
 export function useActiveSponsorId(preferred?: number | null, slot?: string | null): number | null {
   const [sponsorId, setSponsorId] = useState<number | null>(() => getActiveSponsorId(preferred));
+  const [, setCampaignTick] = useState(0);
   useEffect(() => {
     let alive = true;
     // The Config may have spoken between this block's render and its effects.
@@ -355,10 +552,15 @@ export function useActiveSponsorId(preferred?: number | null, slot?: string | nu
     const onChange = (e: Event) => {
       setSponsorId(toSponsorId((e as CustomEvent).detail));
     };
+    // The page's campaign changed (Vio Config): the sponsor id may be the
+    // same, but what the slot resolves to below is not — re-render.
+    const onCampaign = () => setCampaignTick((n) => n + 1);
     window.addEventListener("vio:sponsor-changed", onChange);
+    window.addEventListener("vio:campaign-changed", onCampaign);
     return () => {
       alive = false;
       window.removeEventListener("vio:sponsor-changed", onChange);
+      window.removeEventListener("vio:campaign-changed", onCampaign);
     };
   }, [preferred]);
   // A block with a slot follows the slot's campaign (ADR-0034). Read against
@@ -501,24 +703,47 @@ export function cartOrigin(attribution: VioAttribution): { campaignId?: number; 
 }
 
 /**
- * The campaign ASSIGNED to `slot` and open now, or null when the slot shows
- * the surface's default campaign (nothing assigned). `Vio.campaignForSlot`
- * answers the default in that case; the page's "Active Sponsor" is how a Vev
- * page chooses a sponsor within the default campaign, so only an assignment
- * overrides it.
+ * The non-default campaign `slot` shows now: its assignment from the
+ * dashboard (open window), else the page's campaign chosen in Vio Config
+ * (SDK 0.24.0 applies it as the fallback), else null — the slot shows the
+ * surface's default campaign. `Vio.campaignForSlot` answers the default in
+ * that case; the page's "Active Sponsor" is how a Vev page chooses a sponsor
+ * within the default campaign, so only those two override it.
  */
 export function slotAssignedCampaign(slot?: string | null): any | null {
   const name = normalizeSlotId(slot);
-  if (!name || !sdkHas("campaignForSlot")) return null;
+  // No slot (the picker's catalog, an open without a place): the page's
+  // campaign is all there can be.
+  if (!name) return pageCampaign();
+  if (!sdkHas("campaignForSlot")) return null;
   try {
-    const campaign = (Vio as any).campaignForSlot(name);
-    if (!campaign || campaign.isDefault === true) return null;
-    const defaultId = Number((Vio as any).bootstrapCache?.campaign?.id);
-    if (Number.isFinite(defaultId) && Number(campaign.id) === defaultId) return null;
-    return campaign;
+    // 0.24.0: the slot's assignment, else the page's campaign, else the default.
+    return nonDefaultCampaign((Vio as any).campaignForSlot(name));
   } catch {
     return null;
   }
+}
+
+/**
+ * The campaign the page belongs to, as the SDK resolves it (`Vio.pageCampaign()`,
+ * 0.24.0: the one `Vio.init({ campaignId })` named, when the key has it), or
+ * null — none chosen, the default one, or a bundle that predates it.
+ */
+export function pageCampaign(): any | null {
+  if (!sdkHas("pageCampaign")) return null;
+  try {
+    return nonDefaultCampaign((Vio as any).pageCampaign());
+  } catch {
+    return null;
+  }
+}
+
+/** `campaign` unless it is the surface's default one (or nothing). */
+function nonDefaultCampaign(campaign: any): any | null {
+  if (!campaign || campaign.isDefault === true) return null;
+  const defaultId = Number((Vio as any).bootstrapCache?.campaign?.id);
+  if (Number.isFinite(defaultId) && Number(campaign.id) === defaultId) return null;
+  return campaign;
 }
 
 export type SlotSponsor = {
@@ -544,8 +769,15 @@ export function resolveSlotSponsor(slot: string | null | undefined, pageSponsor:
   if (!config) return { sponsorId: pageSponsor };
   const sid = toSponsorId(campaign.primarySponsor?.id);
   if (sid != null && config.knownIds.includes(sid)) return { sponsorId: sid };
+  // The slot's campaign cannot be followed. With a page campaign chosen, the
+  // block falls back to ITS primary sponsor (when the key knows it), so the
+  // sponsor and the campaign the events get agree — the SDK applies the page
+  // campaign only to a sponsor that takes part in it; else the page's sponsor.
+  const page = pageCampaign();
+  const pagePrimary = page ? toSponsorId(page.primarySponsor?.id) : null;
+  const base = pagePrimary != null && config.knownIds.includes(pagePrimary) ? pagePrimary : pageSponsor;
   return {
-    sponsorId: pageSponsor,
+    sponsorId: base,
     fallback: { campaignName: String(campaign.name ?? campaign.id ?? "?"), campaignSponsorId: sid },
   };
 }
@@ -781,12 +1013,14 @@ function writeStorage(key: string, value: string | null): void {
  * with `carts`, every cart: a cart lives on the commerce channel of the key it
  * was filled under, and checking it out with another key fails.
  */
-export function forgetSponsorState({ carts }: { carts: boolean }): void {
+export function forgetConnectionState({ carts }: { carts: boolean }): void {
   const g = globalThis as { __VIO_SPONSOR_ID__?: number | null; __VIO_PRIMARY_SPONSOR_ID__?: number | null };
   g.__VIO_SPONSOR_ID__ = null;
   g.__VIO_PRIMARY_SPONSOR_ID__ = null;
   writeStorage(VIO_SPONSOR_ID_STORAGE, null);
   writeStorage(VIO_SPONSORS_STORAGE, null);
+  writeStorage(VIO_CAMPAIGNS_STORAGE, null);
+  writeStorage(VIO_CAMPAIGN_ID_STORAGE, null);
   resetCatalogCache();
   resetVippsOfferCache();
   if (carts) {
@@ -819,6 +1053,8 @@ export function pruneCartsOutside(sponsorIds: readonly number[]): number[] {
 export type AdoptedConnection = {
   config: SponsorConfig;
   sponsors: SponsorListItem[];
+  /** The key's campaigns, for the "Campaign" selector (active first). */
+  campaigns: CampaignListItem[];
   /** This browser was last connected with another key or environment. */
   keyChanged: boolean;
   /** Sponsors whose cart was dropped because this key does not have them. */
@@ -836,8 +1072,14 @@ export type AdoptedConnection = {
  *    connection.
  * Null when the answer names no primary sponsor: nothing is remembered.
  */
-export function adoptConnection(boot: unknown, key: string, environment: string): AdoptedConnection | null {
+export function adoptConnection(
+  boot: unknown,
+  key: string,
+  environment: string,
+  { persistCampaigns = false }: { persistCampaigns?: boolean } = {}
+): AdoptedConnection | null {
   const sponsors = sponsorListFromBootstrap(boot);
+  const campaigns = campaignListFromBootstrap(boot);
   const config = sponsorConfigFromBootstrap(boot);
   if (!config) return null;
   const fingerprint = connectionFingerprint(key, environment);
@@ -845,14 +1087,16 @@ export function adoptConnection(boot: unknown, key: string, environment: string)
   // No fingerprint yet = a browser from before this rule: nothing says the key
   // changed, and the carts of unknown sponsors go below anyway.
   const keyChanged = previous != null && previous !== fingerprint;
-  if (keyChanged) forgetSponsorState({ carts: true });
+  if (keyChanged) forgetConnectionState({ carts: true });
   // Any sponsor of any campaign of the key keeps its cart: a slot's campaign
   // may sell with a sponsor the default campaign does not have.
   const droppedCarts = pruneCartsOutside(config.knownIds);
   (globalThis as { __VIO_PRIMARY_SPONSOR_ID__?: number }).__VIO_PRIMARY_SPONSOR_ID__ = config.primaryId;
   writeStorage(VIO_CONNECTION_STORAGE, fingerprint);
   writeStorage(VIO_SPONSORS_STORAGE, JSON.stringify(sponsors));
-  return { config, sponsors, keyChanged, droppedCarts };
+  // The campaign list is for the editor's properties panel only (W6).
+  if (persistCampaigns) writeStorage(VIO_CAMPAIGNS_STORAGE, JSON.stringify(campaigns));
+  return { config, sponsors, campaigns, keyChanged, droppedCarts };
 }
 
 export type CountryConfig = {
@@ -1036,10 +1280,16 @@ export function checkHasVariants(p: any): boolean {
 }
 
 export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void {
+  installCampaignStorageSync();
   const key = resolveApiKey(propKey);
   const env = resolveEnvironment(propEnv);
   const sdkEnv = env === "staging" ? "testing" : env;
-  if (!Vio.isInitialized || lastInitKey !== key || lastInitEnv !== sdkEnv) {
+  // The page's campaign (null = default; Vio Config sets it at runtime before
+  // it inits). Another campaign re-inits exactly as another key does: the SDK
+  // bootstraps again and declares the page's slots again, under the new
+  // campaign, and the blocks re-resolve.
+  const campaignId = resolvePageCampaignId();
+  if (!Vio.isInitialized || lastInitKey !== key || lastInitEnv !== sdkEnv || lastInitCampaign !== campaignId) {
     setRuntimeEnvironment(env);
     persistEnvironment(env);
     Vio.init({
@@ -1049,9 +1299,13 @@ export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void 
       // and on every slot declaration, so the campaigns service answers with
       // the slot assignments made for Vev.
       platform: "vev",
+      // The page's campaign (ADR-0034, amendment 3): the SDK's fallback for
+      // every slot without an assignment, and what the declaration carries.
+      campaignId: campaignId ?? undefined,
     });
     lastInitKey = key;
     lastInitEnv = sdkEnv;
+    lastInitCampaign = campaignId;
     // Another key or environment: another configuration, so the catalog and
     // the Vipps answers of the previous one no longer apply.
     resetCatalogCache();
@@ -1177,9 +1431,19 @@ export function resetCatalogCache(): void {
 }
 
 export function loadCatalogResult(): Promise<CatalogResult> {
+  // First the init: a changed page campaign re-inits (and drops this cache)
+  // before anything below reads the configuration.
+  if (resolveApiKey()) {
+    try {
+      ensureVioInit();
+    } catch {
+      /* no usable key: the request below fails and says so */
+    }
+  }
   // A catalog listed under another key, or another sponsor than today's
-  // active one, is stale.
-  const active = getActiveSponsorId();
+  // effective one — the page's campaign sponsor when a campaign is chosen
+  // (what the blocks fetch with), else the page's active sponsor — is stale.
+  const active = sponsorForSlot(null, getActiveSponsorId());
   if (
     catalogPromise &&
     (catalogKey !== resolveApiKey() || (catalogSponsorId != null && active != null && active !== catalogSponsorId))
@@ -1191,7 +1455,7 @@ export function loadCatalogResult(): Promise<CatalogResult> {
   const pending: Promise<CatalogResult> = withRetry(async () => {
     ensureVioInit();
     await Vio.bootstrap();
-    const sponsorId = getActiveSponsorId();
+    const sponsorId = sponsorForSlot(null, getActiveSponsorId());
     if (sponsorId == null) throw new Error("Connect a Vio API key in Vio Config to list its products");
     const data = await Vio.commerceFor(sponsorId).raw.request(PRODUCTS_QUERY, {
       currency: getActiveCurrency(),
