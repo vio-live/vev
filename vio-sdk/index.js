@@ -44,6 +44,9 @@ var ConfigurationSingleton = class {
     this.resolved = {
       apiKey: input.apiKey,
       environment: env,
+      platform: input.platform ?? "web",
+      contentId: input.contentId,
+      contentTitle: input.contentTitle,
       apiBase: input.apiBase ?? defaults.apiBase,
       graphQLBase: input.graphQLBase ?? defaults.graphQLBase,
       eventsBase: input.eventsBase ?? defaults.eventsBase,
@@ -56,6 +59,7 @@ var ConfigurationSingleton = class {
       const masked = input.apiKey.length > 4 ? "*".repeat(Math.max(0, input.apiKey.length - 4)) + input.apiKey.slice(-4) : "****";
       console.info("[Vio] Initialized", {
         environment: env,
+        platform: this.resolved.platform,
         apiBase: this.resolved.apiBase,
         apiKey: masked,
         stripeConfigured: !!input.stripePublishableKey,
@@ -116,9 +120,21 @@ var VioApi = class {
   /**
    * Bootstrap — fetches client app config (sponsors with commerce keys,
    * default market, campaign id). Called once at SDK init.
+   *
+   * With `platform`, `campaigns[].slots[]` only lists the assignments of that
+   * platform (plus the ones with no platform) — see ADR-0027.
    */
-  async bootstrap() {
-    return this.get("/v2/mobile/config");
+  async bootstrap(platform) {
+    const query = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+    return this.get(`/v2/mobile/config${query}`);
+  }
+  /**
+   * Declare the slots of this page to the campaigns service
+   * (`POST /v2/mobile/components/manifest`, ADR-0034). The web SDK always
+   * sends `mode: 'merge'`; see `Vio.declareSlots()` for the dedupe on top.
+   */
+  async declareManifest(body) {
+    return this.post("/v2/mobile/components/manifest", body);
   }
   /**
    * Get placement components for a campaign. Used by the carousel auto-fetch
@@ -141,6 +157,22 @@ var VioApi = class {
     });
     if (!res.ok) {
       throw new VioApiError(res.status, await safeText(res), `GET ${path}`);
+    }
+    return await res.json();
+  }
+  async post(path, body) {
+    const url = `${this.apiBase}${path}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "X-API-Key": this.apiKey,
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      throw new VioApiError(res.status, await safeText(res), `POST ${path}`);
     }
     return await res.json();
   }
@@ -3675,11 +3707,11 @@ var executionResultClientResponseFields = ($params) => (executionResult) => {
     errors: $params.fetchOptions.errorPolicy === `all` ? executionResult.errors : void 0
   };
 };
-var parseResultFromText = (text, contentType, jsonSerializer) => {
+var parseResultFromText = (text2, contentType, jsonSerializer) => {
   if (contentType && isGraphQLContentType(contentType)) {
-    return parseGraphQLExecutionResult(jsonSerializer.parse(text));
+    return parseGraphQLExecutionResult(jsonSerializer.parse(text2));
   } else {
-    return parseGraphQLExecutionResult(text);
+    return parseGraphQLExecutionResult(text2);
   }
 };
 var createFetcher = (method) => async (params) => {
@@ -5388,6 +5420,18 @@ var CartManager = class extends EventTarget {
       await Promise.allSettled([...set]);
     }
   }
+  /**
+   * True while an AddItem/UpdateItem/DeleteItem of this sponsor OTHER than
+   * `except` has not settled. A mutation applying its own answer passes
+   * itself: its response is current for what IT sent — only the others make
+   * it stale.
+   */
+  hasMutationsInFlight(sponsorId, except) {
+    const set = this.inFlightMutations.get(sponsorId);
+    if (!set || set.size === 0) return false;
+    for (const m2 of set) if (m2 !== except) return true;
+    return false;
+  }
   /** Register a backend mutation so `waitForCartMutations` can await it. */
   trackMutation(sponsorId, mutation) {
     let set = this.inFlightMutations.get(sponsorId);
@@ -5416,10 +5460,10 @@ var CartManager = class extends EventTarget {
   }
   /** Apply a backend response only if no newer response was applied already.
    * Returns false when it was discarded as stale. */
-  applyBackendCart(sponsorId, backendCart, seq) {
+  applyBackendCart(sponsorId, backendCart, seq, settling) {
     if (seq < (this.appliedSeq.get(sponsorId) ?? 0)) return false;
     this.appliedSeq.set(sponsorId, seq);
-    this.updateFromBackendCart(sponsorId, backendCart);
+    this.updateFromBackendCart(sponsorId, backendCart, { settling });
     return true;
   }
   /** The final answer of a line's sync lost the per-sponsor seq race (another
@@ -5427,7 +5471,7 @@ var CartManager = class extends EventTarget {
    * is the latest word. Copy its quantity (and price) so a server-side clamp
    * — stock — doesn't leave the optimistic value behind for good, with the
    * checkout / Apple Pay total built on it. */
-  reconcileLineFromResponse(sponsorId, cartItemId, resCart) {
+  reconcileLineFromResponse(sponsorId, cartItemId, resCart, settling) {
     const cart = this.cartsBySponsor.get(sponsorId);
     const line = cart?.items.find((i5) => i5.cartItemId === cartItemId || i5.id === cartItemId);
     const server = resCart.line_items?.find((li) => li.id === cartItemId);
@@ -5436,6 +5480,9 @@ var CartManager = class extends EventTarget {
     let changed = false;
     if (server.quantity !== line.quantity) {
       line.quantity = server.quantity;
+      if (!this.hasMutationsInFlight(sponsorId, settling)) {
+        line.origins = reconciledOrigins(line.origins, server.quantity);
+      }
       changed = true;
     }
     if (price != null && price !== line.unitPrice) {
@@ -5511,8 +5558,12 @@ var CartManager = class extends EventTarget {
     this.cartIdPromises.set(sponsorId, creation);
     return creation;
   }
-  /** Overwrite local cart state with the backend cart response (source of truth). */
-  updateFromBackendCart(sponsorId, backendCart) {
+  /**
+   * Overwrite local cart state with the backend cart response (source of
+   * truth). `opts.settling` is the mutation whose answer this is: it does not
+   * count as "in flight" for the origins (see `hasMutationsInFlight`).
+   */
+  updateFromBackendCart(sponsorId, backendCart, opts = {}) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
     if (backendCart.cart_id) cart.cartId = backendCart.cart_id;
@@ -5568,6 +5619,12 @@ var CartManager = class extends EventTarget {
           currency: li.price?.currency_code || backendCart.currency || matchedLocal?.currency || "NOK",
           imageUrl,
           quantity: intended ?? li.quantity,
+          // The server knows nothing about origins: keep the local ones. They
+          // are squared with its quantity (a stock clamp) only when no OTHER
+          // mutation is in flight for this sponsor — an AddItem answering
+          // while another is pending reports a quantity that is already old
+          // (see `lineOrigins`).
+          origins: matchedLocal ? this.hasMutationsInFlight(sponsorId, opts.settling) ? matchedLocal.origins : reconciledOrigins(matchedLocal.origins, intended ?? li.quantity) : void 0,
           shipping: li.shipping,
           availableShippings: li.available_shippings
         };
@@ -5615,7 +5672,8 @@ var CartManager = class extends EventTarget {
       currency: price.currency_code,
       imageUrl,
       quantity: opts.quantity,
-      variantId: opts.variantId
+      variantId: opts.variantId,
+      origin: opts.origin
     });
   }
   /** Add a manually-specified line item (no Product DTO). */
@@ -5648,6 +5706,7 @@ var CartManager = class extends EventTarget {
     });
     if (existing) {
       existing.quantity += qty;
+      addOriginQuantity(existing, opts.origin, qty);
     } else {
       const item = {
         id: lineId(),
@@ -5659,7 +5718,8 @@ var CartManager = class extends EventTarget {
         unitPrice: opts.unitPrice,
         currency: opts.currency,
         imageUrl: opts.imageUrl,
-        quantity: qty
+        quantity: qty,
+        origins: [{ ...normalizeOrigin(opts.origin), quantity: qty }]
       };
       cart.items.push(item);
     }
@@ -5668,6 +5728,7 @@ var CartManager = class extends EventTarget {
     const addedItem = existing ?? cart.items[cart.items.length - 1];
     const addedLineId = addedItem.id;
     const seq = this.nextSeq(opts.sponsorId);
+    let settling;
     const mutation = (async () => {
       try {
         const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0);
@@ -5682,7 +5743,7 @@ var CartManager = class extends EventTarget {
           ];
           const resCart = await addItem(cartId, lineItemsInput, gqlOpts);
           if (resCart && Array.isArray(resCart.line_items)) {
-            this.applyBackendCart(opts.sponsorId, resCart, seq);
+            this.applyBackendCart(opts.sponsorId, resCart, seq, settling);
           }
         }
       } catch (err) {
@@ -5690,6 +5751,7 @@ var CartManager = class extends EventTarget {
         const line = c4?.items.find((i5) => i5.id === addedLineId);
         if (c4 && line) {
           line.quantity -= qty;
+          removeFromOrigin(line, opts.origin, qty);
           if (line.quantity <= 0) c4.items = c4.items.filter((i5) => i5 !== line);
           if (c4.items.length === 0) this.cartsBySponsor.delete(opts.sponsorId);
           this.persist();
@@ -5698,6 +5760,7 @@ var CartManager = class extends EventTarget {
         this.emitError("AddItem rejected by the backend \u2014 item removed from the cart", err);
       }
     })();
+    settling = mutation;
     this.trackMutation(opts.sponsorId, mutation);
     return addedItem;
   }
@@ -5711,15 +5774,15 @@ var CartManager = class extends EventTarget {
    * quantity — not on whatever a UI rendered a moment ago. A burst of +/−
    * clicks before a re-render therefore asks for 2, 3, 4… and not for the
    * same target several times. Reaching 0 removes the line. */
-  adjustQuantity(lineItemId, sponsorId, delta) {
+  adjustQuantity(lineItemId, sponsorId, delta, opts = {}) {
     const item = this.findLine(sponsorId, lineItemId);
     if (!item) return;
-    this.updateQuantity(lineItemId, sponsorId, item.quantity + delta);
+    this.updateQuantity(lineItemId, sponsorId, item.quantity + delta, opts);
   }
   /** Set a line's quantity (0 or less removes it). Optimistic: the local
    * state and `change` update at once; the backend is synced through
    * `syncQuantity`, one request in flight per line, latest target wins. */
-  updateQuantity(lineItemId, sponsorId, quantity) {
+  updateQuantity(lineItemId, sponsorId, quantity, opts = {}) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return;
     const item = cart.items.find((i5) => i5.id === lineItemId || i5.cartItemId === lineItemId);
@@ -5727,6 +5790,9 @@ var CartManager = class extends EventTarget {
     const target = quantity > 0 ? quantity : 0;
     if (target === item.quantity) return;
     const targetItemId = item.cartItemId;
+    const removedOrigin = latestOrigin(item);
+    if (target > item.quantity) addOriginQuantity(item, opts.origin, target - item.quantity);
+    else removeOriginQuantity(item, item.quantity - target);
     if (target <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
       if (typeof document !== "undefined") {
@@ -5741,7 +5807,11 @@ var CartManager = class extends EventTarget {
               price: item.unitPrice,
               quantity: item.quantity,
               currency: item.currency,
-              sponsorId
+              sponsorId,
+              // Attribution of the removed units: their most recent origin.
+              slot: removedOrigin?.slot,
+              campaignId: removedOrigin?.campaignId,
+              contentId: removedOrigin?.contentId
             }
           })
         );
@@ -5775,6 +5845,7 @@ var CartManager = class extends EventTarget {
     }
     const sync = { sent: target };
     this.qtySyncs.set(key, sync);
+    let settling;
     const run = (async () => {
       let next = target;
       let removalRetried = false;
@@ -5789,9 +5860,9 @@ var CartManager = class extends EventTarget {
           if (next === sync.sent) next = void 0;
           if (next === void 0) this.qtySyncs.delete(key);
           if (resCart && Array.isArray(resCart.line_items)) {
-            const applied = this.applyBackendCart(sponsorId, resCart, seq);
+            const applied = this.applyBackendCart(sponsorId, resCart, seq, settling);
             if (!applied && next === void 0) {
-              this.reconcileLineFromResponse(sponsorId, cartItemId, resCart);
+              this.reconcileLineFromResponse(sponsorId, cartItemId, resCart, settling);
             }
           }
         } catch (err) {
@@ -5814,6 +5885,7 @@ var CartManager = class extends EventTarget {
         }
       }
     })();
+    settling = run;
     this.trackMutation(sponsorId, run);
   }
   removeItem(lineItemId, sponsorId) {
@@ -5925,6 +5997,87 @@ var CartManager = class extends EventTarget {
     this.dispatchEvent(new CustomEvent("change", { detail }));
   }
 };
+function normalizeOrigin(origin) {
+  const out = {};
+  if (!origin || typeof origin !== "object") return out;
+  const campaignId = Number(origin.campaignId);
+  if (origin.campaignId !== void 0 && origin.campaignId !== null && Number.isFinite(campaignId)) {
+    out.campaignId = campaignId;
+  }
+  if (typeof origin.slot === "string" && origin.slot.trim()) out.slot = origin.slot.trim();
+  if (origin.contentId !== void 0 && origin.contentId !== null && String(origin.contentId).trim()) {
+    out.contentId = String(origin.contentId).trim();
+  }
+  return out;
+}
+function sameOrigin(a3, b3) {
+  return a3.campaignId === b3.campaignId && a3.slot === b3.slot && a3.contentId === b3.contentId;
+}
+function latestOrigin(line) {
+  const origins = Array.isArray(line.origins) ? line.origins : [];
+  return origins[origins.length - 1];
+}
+function addOriginQuantity(line, origin, qty) {
+  if (!(qty > 0)) return;
+  const origins = Array.isArray(line.origins) ? line.origins : [];
+  const target = origin ? normalizeOrigin(origin) : latestOrigin({ origins });
+  const index = target ? origins.findIndex((o7) => sameOrigin(o7, target)) : -1;
+  if (index >= 0) {
+    const [found] = origins.splice(index, 1);
+    found.quantity += qty;
+    origins.push(found);
+  } else {
+    origins.push({ ...target ?? {}, quantity: qty });
+  }
+  line.origins = origins;
+}
+function removeFromOrigin(line, origin, qty) {
+  if (!(qty > 0) || !Array.isArray(line.origins)) return;
+  let left = qty;
+  if (origin) {
+    const target = normalizeOrigin(origin);
+    const index = line.origins.findIndex((o7) => sameOrigin(o7, target));
+    if (index >= 0) {
+      const found = line.origins[index];
+      const take = Math.min(found.quantity, left);
+      found.quantity -= take;
+      left -= take;
+      if (found.quantity <= 0) line.origins.splice(index, 1);
+    }
+  }
+  if (left > 0) removeOriginQuantity(line, left);
+}
+function removeOriginQuantity(line, qty) {
+  if (!(qty > 0) || !Array.isArray(line.origins)) return;
+  let left = qty;
+  const origins = line.origins;
+  while (left > 0 && origins.length > 0) {
+    const last = origins[origins.length - 1];
+    const take = Math.min(last.quantity, left);
+    last.quantity -= take;
+    left -= take;
+    if (last.quantity <= 0) origins.pop();
+  }
+}
+function reconciledOrigins(origins, quantity) {
+  if (!Array.isArray(origins)) return void 0;
+  const copy = origins.map((o7) => ({ ...o7 }));
+  const total = copy.reduce((sum, o7) => sum + (o7.quantity > 0 ? o7.quantity : 0), 0);
+  const line = { origins: copy };
+  if (quantity > total) addOriginQuantity(line, void 0, quantity - total);
+  else if (quantity < total) removeOriginQuantity(line, total - quantity);
+  return line.origins;
+}
+function lineOrigins(line) {
+  const known = (Array.isArray(line.origins) ? line.origins : []).filter((o7) => o7 && o7.quantity > 0);
+  const total = known.reduce((sum, o7) => sum + o7.quantity, 0);
+  const quantity = line.quantity > 0 ? line.quantity : 0;
+  if (total === quantity) return known.map((o7) => ({ ...o7 }));
+  if (total < quantity) return [...known.map((o7) => ({ ...o7 })), { quantity: quantity - total }];
+  const copy = { origins: known.map((o7) => ({ ...o7 })) };
+  removeOriginQuantity(copy, total - quantity);
+  return copy.origins;
+}
 
 // src/core/checkout/payments/apple-pay.ts
 var STRIPE_JS_URL = "https://js.stripe.com/v3";
@@ -6627,8 +6780,8 @@ function renderKustomSnippet(container, htmlSnippet) {
   const scripts = Array.from(container.querySelectorAll("script"));
   for (const oldScript of scripts) {
     const newScript = document.createElement("script");
-    for (const attr of Array.from(oldScript.attributes)) {
-      newScript.setAttribute(attr.name, attr.value);
+    for (const attr2 of Array.from(oldScript.attributes)) {
+      newScript.setAttribute(attr2.name, attr2.value);
     }
     newScript.text = oldScript.text;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
@@ -7368,7 +7521,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.22.0";
+var SDK_VERSION = "0.23.1";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -9496,6 +9649,285 @@ function toSmallestUnit(amount, currency) {
   return Math.round(amount * 100);
 }
 
+// src/core/content.ts
+var CONTENT_ID_QUERY = "vio_content";
+var CONTENT_TITLE_QUERY = "vio_content_title";
+var CONTENT_ID_MAX_LENGTH = 128;
+var CONTENT_TITLE_MAX_LENGTH = 255;
+function resolveContent(init, doc = typeof document !== "undefined" ? document : null, loc = typeof location !== "undefined" ? location : null) {
+  try {
+    const query = parseQuery(loc?.search);
+    const id = fits(text(init?.contentId)) ?? fits(text(query.get(CONTENT_ID_QUERY))) ?? fits(text(meta(doc, "name", "vio:content-id"))) ?? fits(stripQueryAndHash(text(attr(doc, 'link[rel="canonical"]', "href")))) ?? fits(stripQueryAndHash(text(meta(doc, "property", "og:url")))) ?? fits(text(loc?.pathname));
+    const title = text(init?.contentTitle) ?? text(query.get(CONTENT_TITLE_QUERY)) ?? text(meta(doc, "name", "vio:content-title")) ?? text(meta(doc, "property", "og:title")) ?? text(doc?.title);
+    const out = {};
+    if (id !== void 0) out.id = id;
+    if (title !== void 0) out.title = title.slice(0, CONTENT_TITLE_MAX_LENGTH);
+    return out;
+  } catch {
+    return {};
+  }
+}
+function fits(value) {
+  return value !== void 0 && value.length <= CONTENT_ID_MAX_LENGTH ? value : void 0;
+}
+function text(value) {
+  if (value === void 0 || value === null) return void 0;
+  const s4 = String(value).trim();
+  return s4 ? s4 : void 0;
+}
+function parseQuery(search) {
+  try {
+    return new URLSearchParams(typeof search === "string" ? search : "");
+  } catch {
+    return new URLSearchParams();
+  }
+}
+function meta(doc, key, value) {
+  return attr(doc, `meta[${key}="${value}"]`, "content");
+}
+function attr(doc, selector, name) {
+  try {
+    if (!doc || typeof doc.querySelector !== "function") return void 0;
+    const el = doc.querySelector(selector);
+    const v2 = el?.getAttribute?.(name);
+    return typeof v2 === "string" ? v2 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function stripQueryAndHash(url) {
+  if (!url) return void 0;
+  const cut = url.search(/[?#]/);
+  const clean = cut >= 0 ? url.slice(0, cut) : url;
+  return clean.trim() || void 0;
+}
+
+// src/core/slots.ts
+var SLOT_ID_MAX_LENGTH = 100;
+var SLOT_DECLARATION_TTL_MS = 24 * 60 * 60 * 1e3;
+var SLOT_DECLARATION_FAILURE_TTL_MS = 60 * 60 * 1e3;
+var MAX_LOCATIONS_PER_DECLARATION = 100;
+var MAX_DECLARATIONS_PER_LOAD = 3;
+function resolveSlotCampaign(boot, slot, now = Date.now(), platform) {
+  if (!boot) return null;
+  return findSlotAssignment(boot, slot, now, platform) ?? defaultCampaignEntry(boot);
+}
+function findSlotAssignment(boot, slot, now = Date.now(), platform) {
+  const name = typeof slot === "string" ? slot.trim() : "";
+  if (!boot || !name) return null;
+  try {
+    const matches = activeCampaigns(boot).filter(
+      (c4) => slotsOf(c4).some((s4) => assignmentMatches(s4, name, now, platform))
+    );
+    if (matches.length === 0) return null;
+    const defaultId = toNumber(boot.campaign?.id);
+    return matches.find((c4) => toNumber(c4.id) === defaultId) ?? matches[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function defaultCampaignEntry(boot) {
+  if (!boot?.campaign || typeof boot.campaign !== "object") return null;
+  const defaultId = toNumber(boot.campaign.id);
+  if (defaultId === void 0) return null;
+  try {
+    const listed = wellFormedCampaigns(boot).find((c4) => toNumber(c4.id) === defaultId);
+    if (listed) return listed;
+  } catch {
+  }
+  return {
+    ...boot.campaign,
+    isDefault: true,
+    primarySponsor: boot.primarySponsor ?? null,
+    secondarySponsors: Array.isArray(boot.secondarySponsors) ? boot.secondarySponsors : [],
+    slots: []
+  };
+}
+function wellFormedCampaigns(boot) {
+  const list = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+  return list.filter((c4) => !!c4 && typeof c4 === "object");
+}
+function activeCampaigns(boot) {
+  return wellFormedCampaigns(boot).filter((c4) => c4.status === "active");
+}
+function slotsOf(campaign) {
+  const slots = Array.isArray(campaign.slots) ? campaign.slots : [];
+  return slots.filter((s4) => !!s4 && typeof s4 === "object");
+}
+function assignmentMatches(s4, name, now, platform) {
+  if (typeof s4.name !== "string" || s4.name.trim() !== name) return false;
+  if (platform && s4.platform != null && s4.platform !== platform) return false;
+  const start = parseTime(s4.startDate);
+  if (start !== void 0 && start > now) return false;
+  const end = parseTime(s4.endDate);
+  if (end !== void 0 && now >= end) return false;
+  return true;
+}
+function parseTime(value) {
+  if (value == null || value === "") return void 0;
+  const t4 = Date.parse(String(value));
+  return Number.isFinite(t4) ? t4 : void 0;
+}
+function toNumber(value) {
+  if (value === void 0 || value === null || value === "") return void 0;
+  const n6 = Number(value);
+  return Number.isFinite(n6) ? n6 : void 0;
+}
+function normalizeSlotId(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, SLOT_ID_MAX_LENGTH).trim();
+}
+function normalizeSlotLocations(slots) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  if (!Array.isArray(slots)) return out;
+  for (const raw of slots) {
+    const id = normalizeSlotId(typeof raw === "string" ? raw : raw?.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const displayName = raw && typeof raw === "object" && typeof raw.displayName === "string" ? raw.displayName.trim() : "";
+    out.push(displayName ? { id, displayName } : { id });
+  }
+  return out;
+}
+function autoSlotId(kind, ordinal, scope) {
+  const tail = `${kind}-${ordinal + 1}`;
+  let prefix = normalizeScope(scope);
+  const room = SLOT_ID_MAX_LENGTH - tail.length - 1;
+  if (prefix.length > room) prefix = prefix.slice(0, Math.max(0, room)).replace(/-+$/, "");
+  return `${prefix ? `${prefix}-` : ""}${tail}`;
+}
+function autoSlotDisplayName(kind, ordinal, scopeName) {
+  const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${ordinal + 1}`;
+  const name = typeof scopeName === "string" ? scopeName.trim() : "";
+  return name ? `${label} \xB7 ${name}` : label;
+}
+function normalizeScope(scope) {
+  if (typeof scope !== "string") return "";
+  return scope.trim().replace(/\s+/g, "-");
+}
+var SLOT_DECLARATION_MEMORY_CAP = 500;
+function slotDeclarationKey(location2) {
+  return location2.displayName ? `${location2.id}${location2.displayName}` : location2.id;
+}
+function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
+  return keys.filter((key) => {
+    const at = memory?.[key];
+    if (typeof at !== "number" || !Number.isFinite(at)) return true;
+    return now - at >= ttl || now < at;
+  });
+}
+function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
+  const next = { ...memory ?? {} };
+  for (const key of keys) next[key] = at;
+  const entries = Object.entries(next);
+  if (entries.length <= cap) return next;
+  entries.sort((a3, b3) => b3[1] - a3[1]);
+  return Object.fromEntries(entries.slice(0, cap));
+}
+function slotDeclarationStorageKey(platform, apiKey) {
+  return `vio.slots.${platform}.${fnv1a(apiKey)}`;
+}
+function fnv1a(input) {
+  let hash = 2166136261;
+  for (let i5 = 0; i5 < input.length; i5++) {
+    hash ^= input.charCodeAt(i5);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+function readSlotDeclaration(storageKey) {
+  try {
+    if (typeof localStorage === "undefined") return {};
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    if (Array.isArray(parsed.keys)) return {};
+    const out = {};
+    for (const [key, at] of Object.entries(parsed)) {
+      if (typeof at === "number" && Number.isFinite(at)) out[key] = at;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeSlotDeclaration(storageKey, memory) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(storageKey, JSON.stringify(memory));
+  } catch {
+  }
+}
+
+// src/core/cart/slices.ts
+function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
+  if (!Array.isArray(lines) || lines.length === 0) return [];
+  const slices = /* @__PURE__ */ new Map();
+  for (const line of lines) {
+    if (!line || typeof line !== "object") continue;
+    const sponsorId = Number(line.sponsorId);
+    const unitPrice = Number(line.unitPrice) || 0;
+    for (const origin of lineOrigins(line)) {
+      let campaignId = origin.campaignId;
+      if (campaignId === void 0) {
+        try {
+          campaignId = resolveCampaign(origin.slot, sponsorId);
+        } catch {
+          campaignId = void 0;
+        }
+      }
+      const key = campaignId === void 0 ? "default" : String(campaignId);
+      let slice = slices.get(key);
+      if (!slice) {
+        slice = {
+          campaignId,
+          sponsors: /* @__PURE__ */ new Set(),
+          slots: /* @__PURE__ */ new Set(),
+          contents: /* @__PURE__ */ new Set(),
+          items: /* @__PURE__ */ new Map(),
+          value: 0,
+          currency: line.currency || fallbackCurrency
+        };
+        slices.set(key, slice);
+      }
+      if (Number.isFinite(sponsorId)) slice.sponsors.add(sponsorId);
+      if (origin.slot) slice.slots.add(origin.slot);
+      if (origin.contentId) slice.contents.add(origin.contentId);
+      const itemKey = `${line.productId}::${line.variantId ?? ""}`;
+      const item = slice.items.get(itemKey);
+      if (item) item.quantity = (item.quantity ?? 0) + origin.quantity;
+      else {
+        slice.items.set(itemKey, {
+          productId: line.productId,
+          name: line.name,
+          brand: line.brand,
+          variantId: line.variantId,
+          price: unitPrice,
+          quantity: origin.quantity
+        });
+      }
+      slice.value += unitPrice * origin.quantity;
+    }
+  }
+  const list = [...slices.values()];
+  return list.map((s4, i5) => ({
+    campaignId: s4.campaignId,
+    sponsorId: s4.sponsors.size === 1 ? [...s4.sponsors][0] : void 0,
+    slot: s4.slots.size === 1 ? [...s4.slots][0] : void 0,
+    contentId: s4.contents.size === 1 ? [...s4.contents][0] : void 0,
+    items: [...s4.items.values()],
+    value: Math.round(s4.value * 100) / 100,
+    currency: s4.currency,
+    slice: i5 + 1,
+    slices: list.length
+  }));
+}
+function hasExplicitCampaign(lines) {
+  return lines.some((line) => lineOrigins(line).some((o7) => o7.campaignId !== void 0));
+}
+
 // src/core/analytics/analytics-manager.ts
 var SESSION_TTL_MS = 30 * 60 * 1e3;
 var FLUSH_INTERVAL_MS = 5e3;
@@ -9693,22 +10125,34 @@ var AnalyticsManager = class extends EventTarget {
     if (!anonId) return null;
     const boot = vioBootstrapCache();
     const ctx = opts.context ?? {};
+    const explicitContentId = fitsId(ctx.contentId);
+    const content = explicitContentId === void 0 || ctx.contentTitle === void 0 ? vioContent() : {};
     const context = compact({
       campaign_id: resolveCampaignId(ctx, boot),
       broadcast_id: ctx.broadcastId,
       campaign_component_id: ctx.campaignComponentId,
       app_placement_id: ctx.appPlacementId,
-      location_id: ctx.locationId,
+      // A slot is a location id to the campaigns service (ADR-0027). An
+      // explicit location id that does not fit gives way to the slot.
+      location_id: fitsId(ctx.locationId) ?? fitsId(ctx.slot),
       component_template_id: ctx.componentTemplateId,
       sponsor_id: ctx.sponsorId,
       activation_id: ctx.activationId,
-      content_url: ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0),
+      // Cut to the collector's 2 048 — the query string first, since a long
+      // one is usually the tracking tail, not the page. The other host-given
+      // fields (broadcastId, componentTemplateId, errorCode, variant, …) are
+      // the host's responsibility: the SDK does not touch them.
+      content_url: capUrl(ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0)),
       // The host's own content id — its join key back onto its reporting.
-      content_id: ctx.contentId,
+      // Explicit on the event when it fits, else what the SDK resolved for
+      // the page (already capped per source), else nothing.
+      content_id: explicitContentId ?? fitsId(content.id),
       // Deletion-proof reporting: sources have no trash bin — the title
       // snapshotted at event time keeps reports legible if content dies.
       error_code: ctx.errorCode,
-      content_title: ctx.contentTitle ?? (typeof document !== "undefined" && document.title ? document.title.slice(0, 255) : void 0),
+      content_title: capTitle(
+        ctx.contentTitle ?? content.title ?? (typeof document !== "undefined" && document.title ? document.title : void 0)
+      ),
       variant: ctx.variant
     });
     const com = opts.commerce;
@@ -9856,7 +10300,7 @@ var AnalyticsManager = class extends EventTarget {
       const d3 = ev.detail ?? {};
       const line = this.findLine(d3.productId, d3.variantId);
       this.track("add_to_cart", {
-        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0 },
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
         commerce: {
           items: [
             {
@@ -9877,7 +10321,7 @@ var AnalyticsManager = class extends EventTarget {
       const d3 = ev.detail ?? {};
       if (d3.productId === void 0) return;
       this.track("remove_from_cart", {
-        context: { sponsorId: d3.sponsorId },
+        context: { sponsorId: d3.sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
         commerce: {
           items: [
             {
@@ -9906,7 +10350,7 @@ var AnalyticsManager = class extends EventTarget {
       if (d3.productId === void 0) return;
       const price = Number(d3.price);
       this.track("select_item", {
-        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0 },
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
         commerce: {
           items: [
             {
@@ -9925,18 +10369,42 @@ var AnalyticsManager = class extends EventTarget {
     });
     on("vio:checkout-open", (ev) => {
       const d3 = ev.detail ?? {};
+      const base = { sponsorId: d3.sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
+      const { slices, explicit } = this.cartSlices(d3.sponsorId);
+      if (slices.length > 1) {
+        for (const slice of slices) {
+          this.track("begin_checkout", {
+            context: this.sliceContext(slice, base),
+            commerce: sliceCommerce(slice),
+            props: { slice: slice.slice, slices: slice.slices }
+          });
+        }
+        return;
+      }
       const snap = this.cartCommerce(d3.sponsorId);
       this.track("begin_checkout", {
-        context: { sponsorId: d3.sponsorId },
+        context: this.singleSliceContext(slices[0], explicit, base),
         ...snap ? { commerce: snap } : {}
       });
     });
     on("vio:payment-success", (ev) => {
       const d3 = ev.detail ?? {};
       const sponsorId = d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0;
+      const base = { sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
+      const { slices, explicit } = this.cartSlices(sponsorId);
+      if (slices.length > 1) {
+        for (const slice of slices) {
+          this.track("purchase", {
+            context: this.sliceContext(slice, base),
+            commerce: { ...sliceCommerce(slice), ...purchaseFromPaymentSuccess(d3), paymentMethod: d3.method },
+            props: { slice: slice.slice, slices: slice.slices }
+          });
+        }
+        return;
+      }
       const snap = this.cartCommerce(sponsorId);
       this.track("purchase", {
-        context: { sponsorId },
+        context: this.singleSliceContext(slices[0], explicit, base),
         commerce: {
           // value / currency / items: the cart snapshot, on every path.
           ...snap ?? {},
@@ -9945,6 +10413,69 @@ var AnalyticsManager = class extends EventTarget {
           paymentMethod: d3.method
         }
       });
+    });
+  }
+  /** The lines of the cart (current, else the pre-clear snapshot), optionally one sponsor's. */
+  cartLines(sponsorId) {
+    let items = [];
+    const cart = vioCart();
+    if (cart) {
+      cart.getAllCarts().forEach((state, id) => {
+        if (sponsorId === void 0 || id === sponsorId) items.push(...state.items);
+      });
+    }
+    if (items.length === 0 && this.lastCartSnapshot) {
+      items = this.lastCartSnapshot.items.filter(
+        (i5) => sponsorId === void 0 || i5.sponsorId === sponsorId
+      );
+    }
+    return items;
+  }
+  /**
+   * The cart split per campaign — the shared rule of cart/slices.ts over the
+   * current cart (else the pre-clear snapshot), plus whether any unit named
+   * its campaign itself (a cart without origins is reported as before).
+   */
+  cartSlices(sponsorId) {
+    const lines = this.cartLines(sponsorId);
+    if (lines.length === 0) return { slices: [], explicit: false };
+    const boot = vioBootstrapCache();
+    const slices = cartSlicesFrom(
+      lines,
+      (slot, lineSponsorId) => resolveCampaignId({ slot, sponsorId: lineSponsorId }, boot),
+      this.lastCartSnapshot?.currency
+    );
+    return { slices, explicit: hasExplicitCampaign(lines) };
+  }
+  /**
+   * The context of one of several per-campaign events: the slice's campaign,
+   * slot and content — only its own; when the slice spans several slots or
+   * articles the event names none rather than the one the click came from.
+   */
+  sliceContext(slice, base) {
+    return compact({
+      ...base,
+      sponsorId: slice.sponsorId ?? base.sponsorId,
+      campaignId: slice.campaignId,
+      slot: slice.slot,
+      contentId: slice.contentId,
+      // The click's title only describes the click's content: when the slice
+      // is another article (or several), the page's own title applies instead.
+      contentTitle: slice.contentId !== void 0 && slice.contentId === base.contentId ? base.contentTitle : void 0
+    });
+  }
+  /**
+   * The context of a single-campaign checkout/purchase: when the cart's origins
+   * say which campaign they came from, the event says it too (plus the slot /
+   * content when unique) — a cart without origins is exactly as before.
+   */
+  singleSliceContext(slice, explicit, base) {
+    if (!slice || !explicit) return base;
+    return compact({
+      ...base,
+      campaignId: base.campaignId ?? slice.campaignId,
+      slot: base.slot ?? slice.slot,
+      contentId: base.contentId ?? slice.contentId
     });
   }
   /** Current cart → commerce payload; falls back to the pre-clear snapshot. */
@@ -10032,6 +10563,14 @@ function vioFacade() {
 function vioBootstrapCache() {
   return vioFacade()?.bootstrapCache ?? null;
 }
+function vioContent() {
+  try {
+    const facade = vioFacade();
+    return typeof facade?.content === "function" ? facade.content() : resolveContent();
+  } catch {
+    return {};
+  }
+}
 function vioCart() {
   try {
     return vioFacade()?.cart ?? null;
@@ -10042,6 +10581,11 @@ function vioCart() {
 function resolveCampaignId(ctx, boot) {
   if (ctx.campaignId !== void 0) return ctx.campaignId;
   const defaultId = boot?.campaign?.id;
+  if (ctx.slot) {
+    const platform = Configuration.isInitialized ? Configuration.get().platform : void 0;
+    const assigned = toNumber(findSlotAssignment(boot, ctx.slot, Date.now(), platform)?.id);
+    if (assigned !== void 0) return assigned;
+  }
   const sponsorId = toNumber(ctx.sponsorId);
   if (sponsorId === void 0) return defaultId;
   try {
@@ -10055,6 +10599,39 @@ function resolveCampaignId(ctx, boot) {
   } catch {
   }
   return defaultId;
+}
+function campaignOf(detail) {
+  return toNumber(detail.campaignId);
+}
+function fitsId(value) {
+  if (value === void 0 || value === null) return void 0;
+  const s4 = String(value);
+  return s4 && s4.length <= CONTENT_ID_MAX_LENGTH ? value : void 0;
+}
+function capTitle(value) {
+  if (!value) return void 0;
+  return value.length > CONTENT_TITLE_MAX_LENGTH ? value.slice(0, CONTENT_TITLE_MAX_LENGTH) : value;
+}
+var CONTENT_URL_MAX_LENGTH = 2048;
+function capUrl(value) {
+  if (!value) return void 0;
+  if (value.length <= CONTENT_URL_MAX_LENGTH) return value;
+  const cut = value.search(/[?#]/);
+  const withoutQuery = cut >= 0 ? value.slice(0, cut) : value;
+  return withoutQuery.length <= CONTENT_URL_MAX_LENGTH ? withoutQuery : withoutQuery.slice(0, CONTENT_URL_MAX_LENGTH);
+}
+function sliceCommerce(slice) {
+  return { items: slice.items, value: slice.value, currency: slice.currency };
+}
+function slotOf(detail) {
+  return typeof detail.slot === "string" && detail.slot.trim() ? detail.slot.trim() : void 0;
+}
+function contentOf(detail) {
+  const out = {};
+  if (typeof detail.contentId === "number" && Number.isFinite(detail.contentId)) out.contentId = detail.contentId;
+  else if (typeof detail.contentId === "string" && detail.contentId.trim()) out.contentId = detail.contentId.trim();
+  if (typeof detail.contentTitle === "string" && detail.contentTitle.trim()) out.contentTitle = detail.contentTitle.trim();
+  return out;
 }
 function campaignSponsorIds(campaign) {
   const ids = [];
@@ -10079,11 +10656,6 @@ function firstId(...candidates) {
     if (s4 !== "") return s4;
   }
   return void 0;
-}
-function toNumber(value) {
-  if (value === void 0 || value === null || value === "") return void 0;
-  const n6 = Number(value);
-  return Number.isFinite(n6) ? n6 : void 0;
 }
 function pushGa4(event) {
   const commerceNames = /* @__PURE__ */ new Set([
@@ -10121,6 +10693,7 @@ function pushGa4(event) {
 }
 
 // src/core/client.ts
+var SLOT_DECLARATION_DEBOUNCE_MS = 1e3;
 var VioFacade = class {
   constructor() {
     this.apiInstance = null;
@@ -10134,6 +10707,17 @@ var VioFacade = class {
      * (another key or environment) is still in flight after a re-init; its answer
      * belongs to that configuration and must not land in this one. */
     this.generation = 0;
+    /** Slot ids present on the page (`Vio.registerSlot`): how many elements hold each + its display name. */
+    this.slotRegistry = /* @__PURE__ */ new Map();
+    /** Pending debounced declaration of the registry. */
+    this.slotDeclareTimer = null;
+    /** A name appeared (or the key changed) since the registry was last declared. */
+    this.slotsDirty = false;
+    /** Manifests POSTed by this page load (abuse / rollout guard, see declareSlots). */
+    this.declarationsThisLoad = 0;
+    /** Each cap warns once per page load. */
+    this.warnedLocationCap = false;
+    this.warnedDeclarationCap = false;
     // Client-side managers — created lazily on first access. They don't
     // need Vio.init() to work (state is purely local).
     this.cartManager = null;
@@ -10149,6 +10733,31 @@ var VioFacade = class {
     this.bootstrapFailedAt = 0;
     this.generation++;
     this.checkoutManager?.clearPaymentMethodsCache();
+    if (this.slotDeclareTimer) {
+      clearTimeout(this.slotDeclareTimer);
+      this.slotDeclareTimer = null;
+    }
+    this.slotsDirty = this.slotRegistry.size > 0;
+    this.declarationsThisLoad = 0;
+    this.warnedLocationCap = false;
+    this.warnedDeclarationCap = false;
+  }
+  /**
+   * The content (article, page) this SDK instance is rendered in — what every
+   * analytics event carries as `content_id` / `content_title` when the event
+   * has no explicit one: init option → URL query → `vio:content-*` metas →
+   * canonical/og:url → pathname (see `resolveContent`). Resolved LIVE on each
+   * call — a few querySelectors — so an SPA route change, a new canonical or
+   * a new title are seen without any re-init. Never throws; `{}` without a
+   * document.
+   */
+  content() {
+    let init;
+    if (Configuration.isInitialized) {
+      const cfg = Configuration.get();
+      init = { contentId: cfg.contentId, contentTitle: cfg.contentTitle };
+    }
+    return resolveContent(init);
   }
   get isInitialized() {
     return Configuration.isInitialized;
@@ -10200,11 +10809,12 @@ var VioFacade = class {
       throw new Error("[Vio] bootstrap recently failed \u2014 backing off");
     }
     const generation = this.generation;
-    const promise = this.api.bootstrap().then(
+    const promise = this.api.bootstrap(Configuration.get().platform).then(
       (res) => {
         if (generation !== this.generation) return this.bootstrap();
         this.cachedBootstrap = res;
         this.bootstrapFailedAt = 0;
+        if (this.slotsDirty) this.scheduleSlotDeclaration();
         return res;
       },
       (err) => {
@@ -10245,14 +10855,230 @@ var VioFacade = class {
     const cfg = Configuration.get();
     return createCommerceClient({ endpoint: cfg.graphQLBase, apiKey: commerceApiKey });
   }
+  // MARK: - Slots (ADR-0027 / ADR-0034)
+  /**
+   * Declare this page's slots to the campaigns service
+   * (`POST /v2/mobile/components/manifest`, `mode: 'merge'`, the init
+   * platform). Best-effort: it NEVER throws — a failure is logged and resolves
+   * `null`. The same set is not re-posted from this browser for 24 h unless
+   * `force` (then `null` also means "skipped, already declared"). Ids are
+   * trimmed, cut at 100 chars, deduped; empties are dropped.
+   */
+  async declareSlots(slots, opts = {}) {
+    let storageKey;
+    let keys = [];
+    let now = Date.now();
+    try {
+      const all = normalizeSlotLocations(slots);
+      if (all.length === 0) return null;
+      if (!Configuration.isInitialized) {
+        warn("declareSlots() before Vio.init() \u2014 nothing declared");
+        return null;
+      }
+      const cfg = Configuration.get();
+      storageKey = slotDeclarationStorageKey(cfg.platform, cfg.apiKey);
+      now = Date.now();
+      const memory = readSlotDeclaration(storageKey);
+      const pending2 = new Set(pendingSlotKeys(memory, all.map(slotDeclarationKey), now));
+      let locations = opts.force ? all : all.filter((l3) => pending2.has(slotDeclarationKey(l3)));
+      if (locations.length === 0) return null;
+      if (locations.length > MAX_LOCATIONS_PER_DECLARATION) {
+        if (!this.warnedLocationCap) {
+          this.warnedLocationCap = true;
+          warn(
+            `declareSlots(): ${locations.length} slots on one page \u2014 only the first ${MAX_LOCATIONS_PER_DECLARATION} are declared`
+          );
+        }
+        locations = locations.slice(0, MAX_LOCATIONS_PER_DECLARATION);
+      }
+      keys = locations.map(slotDeclarationKey);
+      if (!opts.force && this.declarationsThisLoad >= MAX_DECLARATIONS_PER_LOAD) {
+        if (!this.warnedDeclarationCap) {
+          this.warnedDeclarationCap = true;
+          warn(
+            `declareSlots(): already ${MAX_DECLARATIONS_PER_LOAD} manifests this page load \u2014 further ones are skipped (force: true to override)`
+          );
+        }
+        return null;
+      }
+      this.declarationsThisLoad++;
+      const result = await this.api.declareManifest({
+        platform: cfg.platform,
+        mode: "merge",
+        locations
+      });
+      if (result?.mode === "merge") {
+        writeSlotDeclaration(storageKey, rememberSlotKeys(memory, keys, now));
+      } else {
+        writeSlotDeclaration(storageKey, rememberSlotKeys(memory, keys, failedAt(now)));
+        warn(
+          "slots declared but the server ignored mode=merge (old server); not caching, will retry next load"
+        );
+      }
+      return result;
+    } catch (err) {
+      if (storageKey && keys.length > 0) {
+        writeSlotDeclaration(storageKey, rememberSlotKeys(readSlotDeclaration(storageKey), keys, failedAt(now)));
+      }
+      warn("declareSlots() failed \u2014", err);
+      return null;
+    }
+  }
+  /**
+   * Register a slot present on the page (the `<vio-*>` elements call it with
+   * their effective id — the host's `vio-slot` or the auto-generated one —
+   * and the optional display name). The registry is declared ONCE, debounced,
+   * after the first successful bootstrap — and again whenever a new id or a
+   * new display name appears. A `displayName` given later for an id already
+   * registered replaces the one kept; `undefined` leaves it alone. The
+   * returned function unregisters; removal never re-declares.
+   */
+  registerSlot(name, displayName) {
+    const id = normalizeSlotId(name);
+    if (!id) return () => {
+    };
+    const label = typeof displayName === "string" && displayName.trim() ? displayName.trim() : void 0;
+    const entry = this.slotRegistry.get(id);
+    let changed = false;
+    if (!entry) {
+      this.slotRegistry.set(id, { count: 1, displayName: label });
+      changed = true;
+    } else {
+      entry.count++;
+      if (label !== void 0 && label !== entry.displayName) {
+        entry.displayName = label;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.slotsDirty = true;
+      if (this.cachedBootstrap) this.scheduleSlotDeclaration();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = this.slotRegistry.get(id);
+      if (!current) return;
+      if (current.count <= 1) this.slotRegistry.delete(id);
+      else current.count--;
+    };
+  }
+  /**
+   * The campaign a slot shows now, from the last bootstrap: its assigned and
+   * open campaign for the init platform, else the surface's default. With no
+   * slot, the default. `null` before the bootstrap. See `resolveSlotCampaign`.
+   */
+  campaignForSlot(slot) {
+    const platform = Configuration.isInitialized ? Configuration.get().platform : void 0;
+    return resolveSlotCampaign(this.cachedBootstrap, slot ?? null, Date.now(), platform);
+  }
+  /**
+   * THE attribution helper — the SDK elements, Vev and Replit all use this
+   * one. For a place (`slot`): the campaign it shows right now
+   * (`campaignForSlot`: its assignment, else the surface's default) as
+   * `campaignId` + that campaign's primary sponsor as `sponsorId`, plus the
+   * page's content (`content()`). Pure, never throws; `{}` before the
+   * bootstrap, except the content.
+   *
+   * `hint.sponsorId` — when the caller already knows the sponsor (a card with
+   * `sponsor-id`) it is kept as `sponsorId`, and the campaign follows the same
+   * cascade analytics uses (slot assignment → the sponsor's active campaign →
+   * default), so what the cart remembers matches what the events say.
+   */
+  attribution(slot, hint) {
+    const out = {};
+    try {
+      const name = normalizeSlotId(slot);
+      if (name) out.slot = name;
+      const boot = this.cachedBootstrap;
+      const hinted = toNumber(hint?.sponsorId);
+      if (boot) {
+        if (hinted !== void 0) {
+          const campaignId = resolveCampaignId({ slot: name || void 0, sponsorId: hinted }, boot);
+          if (campaignId !== void 0) out.campaignId = campaignId;
+          out.sponsorId = hinted;
+        } else {
+          const campaign = this.campaignForSlot(name || null);
+          const campaignId = toNumber(campaign?.id);
+          if (campaignId !== void 0) out.campaignId = campaignId;
+          const sponsorId = toNumber(campaign?.primarySponsor?.id);
+          if (sponsorId !== void 0) out.sponsorId = sponsorId;
+        }
+      } else if (hinted !== void 0) {
+        out.sponsorId = hinted;
+      }
+      const content = this.content();
+      if (content.id) out.contentId = content.id;
+      if (content.title) out.contentTitle = content.title;
+    } catch {
+    }
+    return out;
+  }
+  /**
+   * The cart split per campaign — the SAME rule `begin_checkout` / `purchase`
+   * use, for hosts with their own analytics sink (Vev). Every unit of every
+   * line goes to the campaign of its origin; units without one to the campaign
+   * the current rule resolves for the line's sponsor (slot assignment → the
+   * sponsor's active campaign → default); `slot` / `contentId` / `sponsorId`
+   * only when they are the same for the whole slice; `value` with two
+   * decimals; `slice` / `slices` number the parts. Pure over the current cart
+   * (or over `opts.items`); `[]` when there is nothing.
+   */
+  cartSlices(sponsorId, opts = {}) {
+    try {
+      let lines = [];
+      if (Array.isArray(opts.items)) {
+        lines = opts.items.filter((i5) => sponsorId === void 0 || Number(i5?.sponsorId) === Number(sponsorId));
+      } else {
+        this.cart.getAllCarts().forEach((state, id) => {
+          if (sponsorId === void 0 || id === Number(sponsorId)) lines.push(...state.items);
+        });
+      }
+      const boot = this.cachedBootstrap;
+      return cartSlicesFrom(
+        lines,
+        (slot, lineSponsorId) => resolveCampaignId({ slot, sponsorId: lineSponsorId }, boot)
+      );
+    } catch {
+      return [];
+    }
+  }
+  scheduleSlotDeclaration() {
+    if (this.slotDeclareTimer) clearTimeout(this.slotDeclareTimer);
+    this.slotDeclareTimer = setTimeout(() => {
+      this.slotDeclareTimer = null;
+      this.slotsDirty = false;
+      void this.declareSlots(
+        [...this.slotRegistry.entries()].map(
+          ([id, { displayName }]) => displayName ? { id, displayName } : id
+        )
+      );
+    }, SLOT_DECLARATION_DEBOUNCE_MS);
+  }
   findSponsor(sponsorId) {
     const boot = this.cachedBootstrap;
     if (!boot) return void 0;
     const id = Number(sponsorId);
     if (Number(boot.primarySponsor?.id) === id) return boot.primarySponsor;
-    return boot.secondarySponsors?.find((s4) => Number(s4.id) === id);
+    const secondary = boot.secondarySponsors?.find((s4) => Number(s4.id) === id);
+    if (secondary) return secondary;
+    const campaigns = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+    for (const c4 of campaigns) {
+      if (!c4 || typeof c4 !== "object") continue;
+      if (Number(c4.primarySponsor?.id) === id) return c4.primarySponsor ?? void 0;
+      const s4 = Array.isArray(c4.secondarySponsors) ? c4.secondarySponsors.find((x2) => Number(x2?.id) === id) : void 0;
+      if (s4) return s4;
+    }
+    return void 0;
   }
 };
+function warn(...args) {
+  if (typeof console !== "undefined") console.warn("[Vio]", ...args);
+}
+function failedAt(now) {
+  return now - (SLOT_DECLARATION_TTL_MS - SLOT_DECLARATION_FAILURE_TTL_MS);
+}
 var _vioGlobal = globalThis;
 var Vio = _vioGlobal.__VIO_FACADE__ ?? (_vioGlobal.__VIO_FACADE__ = new VioFacade());
 
@@ -10951,6 +11777,139 @@ function e6(e7, r6) {
   };
 }
 
+// src/ui/slot-registration.ts
+var SCOPE_ATTR = "vio-scope";
+var SCOPE_NAME_ATTR = "vio-scope-name";
+var SCOPE_DATA_ATTR = "data-vio-scope";
+var SCOPE_NAME_DATA_ATTR = "data-vio-scope-name";
+var liveAutoIds = (() => {
+  const g2 = globalThis;
+  return g2.__VIO_LIVE_SLOT_IDS__ ?? (g2.__VIO_LIVE_SLOT_IDS__ = /* @__PURE__ */ new Map());
+})();
+var SlotRegistration = class {
+  constructor(host, kind) {
+    this.host = host;
+    this.kind = kind;
+    this.identity = null;
+    this.release = null;
+    /** The auto identity held (its number is kept while the element lives). */
+    this.auto = null;
+    /** Set by connect(); the scope label is read then too. */
+    this.connected = false;
+    this.scope = "";
+    this.scopeName = "";
+  }
+  /** The effective slot id ('' before connect / after disconnect). */
+  get effective() {
+    return this.identity?.id ?? "";
+  }
+  /** On connect: read the scope from the DOM, then register. */
+  connect(attrs) {
+    this.connected = true;
+    this.scope = scopeOf(this.host, attrs);
+    this.scopeName = scopeNameOf(this.host, attrs);
+    this.sync(attrs);
+  }
+  /** (Re)register when the attributes changed the identity. */
+  sync(attrs) {
+    if (!this.connected) return;
+    const scope = scopeOf(this.host, attrs);
+    if (scope !== this.scope) {
+      this.scope = scope;
+      this.scopeName = scopeNameOf(this.host, attrs);
+      this.releaseAuto();
+    } else {
+      const scopeName = scopeNameOf(this.host, attrs);
+      if (scopeName !== this.scopeName) this.scopeName = scopeName;
+    }
+    const next = this.resolve(attrs);
+    if (sameIdentity(next, this.identity)) return;
+    this.unregister();
+    if (!next) return;
+    try {
+      this.release = typeof Vio.registerSlot === "function" ? Vio.registerSlot(next.id, next.displayName) : null;
+      this.identity = next;
+    } catch {
+      this.release = null;
+      this.identity = null;
+    }
+  }
+  /** What the identity is for these attributes (null before connect without a host id). */
+  resolve(attrs) {
+    const explicit = normalizeSlotId(attrs.vioSlot);
+    const name = typeof attrs.vioSlotName === "string" && attrs.vioSlotName.trim() ? attrs.vioSlotName.trim() : void 0;
+    if (explicit) {
+      this.releaseAuto();
+      return { id: explicit, displayName: name };
+    }
+    if (!this.connected) return null;
+    const auto = this.claimAuto();
+    return { id: auto.id, displayName: name ?? autoSlotDisplayName(this.kind, auto.number - 1, this.scopeName) };
+  }
+  /** Unregister whatever is registered and free the auto number. */
+  clear() {
+    this.unregister();
+    this.releaseAuto();
+    this.connected = false;
+  }
+  unregister() {
+    try {
+      this.release?.();
+    } catch {
+    }
+    this.release = null;
+    this.identity = null;
+  }
+  /** The element's auto id: the one it already holds, else the first free number. */
+  claimAuto() {
+    if (this.auto && this.auto.scope === this.scope) return this.auto;
+    this.releaseAuto();
+    for (let number = 1; ; number++) {
+      const id = autoSlotId(this.kind, number - 1, this.scope);
+      const holders = liveAutoIds.get(id);
+      if (!holders || holders.size === 0 || holders.size === 1 && holders.has(this.host)) {
+        const set = holders ?? /* @__PURE__ */ new Set();
+        set.add(this.host);
+        liveAutoIds.set(id, set);
+        this.auto = { id, scope: this.scope, number };
+        return this.auto;
+      }
+    }
+  }
+  releaseAuto() {
+    if (!this.auto) return;
+    const holders = liveAutoIds.get(this.auto.id);
+    holders?.delete(this.host);
+    if (holders && holders.size === 0) liveAutoIds.delete(this.auto.id);
+    this.auto = null;
+  }
+};
+function sameIdentity(a3, b3) {
+  if (!a3 || !b3) return a3 === b3;
+  return a3.id === b3.id && a3.displayName === b3.displayName;
+}
+function scopeOf(el, attrs) {
+  const own = attrs && typeof attrs.vioScope === "string" ? attrs.vioScope : typeof el.vioScope === "string" ? el.vioScope ?? "" : el.getAttribute(SCOPE_ATTR) ?? "";
+  return normalizeScope(own) || normalizeScope(closestAcrossShadow(el, `[${SCOPE_DATA_ATTR}]`)?.getAttribute(SCOPE_DATA_ATTR));
+}
+function scopeNameOf(el, attrs) {
+  const own = attrs && typeof attrs.vioScopeName === "string" ? attrs.vioScopeName : typeof el.vioScopeName === "string" ? el.vioScopeName ?? "" : el.getAttribute(SCOPE_NAME_ATTR) ?? "";
+  return own.trim() || (closestAcrossShadow(el, `[${SCOPE_NAME_DATA_ATTR}]`)?.getAttribute(SCOPE_NAME_DATA_ATTR) ?? "").trim();
+}
+function closestAcrossShadow(start, selector) {
+  try {
+    let node = start;
+    while (node) {
+      const found = typeof node.closest === "function" ? node.closest(selector) : null;
+      if (found) return found;
+      const root = node.getRootNode();
+      node = root && root !== node && typeof root.host === "object" ? root.host ?? null : null;
+    }
+  } catch {
+  }
+  return null;
+}
+
 // src/ui/components/vio-product.ts
 var VioProduct = class extends i4 {
   constructor() {
@@ -10962,6 +11921,13 @@ var VioProduct = class extends i4 {
     this.imageUrl = "";
     this.productId = "";
     this.sponsorId = "";
+    this.vioSlot = "";
+    this.vioSlotName = "";
+    this.vioScope = "";
+    this.vioScopeName = "";
+    this.vioContentId = "";
+    this.vioContentTitle = "";
+    this.slotRegistration = new SlotRegistration(this, "card");
     this.hasVariants = false;
     this.variants = void 0;
     this.options = void 0;
@@ -10970,6 +11936,36 @@ var VioProduct = class extends i4 {
     this.cartQty = 0;
     this.justAdded = false;
     this.boundCartChange = () => this.updateInCart();
+  }
+  /** The slot id in effect: `vio-slot`, else the auto id (`card-N`). Read-only. */
+  get effectiveSlot() {
+    return this.slotRegistration.effective;
+  }
+  /** The slot campaign's sponsor as the string the attributes use ('' when unknown). */
+  sponsorFromAttribution() {
+    const id = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot).sponsorId : void 0;
+    return id !== void 0 ? String(id) : "";
+  }
+  slotAttributes() {
+    return {
+      vioSlot: this.vioSlot,
+      vioSlotName: this.vioSlotName,
+      vioScope: this.vioScope,
+      vioScopeName: this.vioScopeName
+    };
+  }
+  /**
+   * What every event carries for attribution (`Vio.attribution`): the place,
+   * its campaign and sponsor, and the content — overridden here when the host
+   * set `vio-content-id` / `vio-content-title` on this card.
+   */
+  attribution() {
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { sponsorId: this.sponsorId || void 0 }) : { slot: this.effectiveSlot || void 0 };
+    return {
+      ...base,
+      ...this.vioContentId ? { contentId: this.vioContentId } : {},
+      ...this.vioContentTitle ? { contentTitle: this.vioContentTitle } : {}
+    };
   }
   static {
     this.styles = i`
@@ -11084,14 +12080,19 @@ var VioProduct = class extends i4 {
   connectedCallback() {
     super.connectedCallback();
     this.updateInCart();
+    this.slotRegistration.connect(this.slotAttributes());
     Vio.cart.addEventListener("change", this.boundCartChange);
   }
   disconnectedCallback() {
     Vio.cart.removeEventListener("change", this.boundCartChange);
+    this.slotRegistration.clear();
     super.disconnectedCallback();
   }
   updated(changed) {
     if (changed.has("productId") || changed.has("sponsorId")) this.updateInCart();
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+      this.slotRegistration.sync(this.slotAttributes());
+    }
   }
   /** Reflect whether (and how many units of) this product sit in the cart. */
   updateInCart() {
@@ -11117,12 +12118,14 @@ var VioProduct = class extends i4 {
         composed: true,
         detail: {
           productId: this.productId,
-          sponsorId: this.sponsorId,
           brand: this.brand,
           name: this.name,
           price: this.price,
           retailer: this.retailer,
-          imageUrl: this.imageUrl
+          imageUrl: this.imageUrl,
+          ...this.attribution(),
+          // The host's sponsor-id wins; without one, the slot's campaign sponsor.
+          sponsorId: this.sponsorId || this.sponsorFromAttribution()
         }
       })
     );
@@ -11142,18 +12145,28 @@ var VioProduct = class extends i4 {
       this.onClick();
       return;
     }
+    const attribution = this.attribution();
     this.dispatchEvent(
       new CustomEvent("vio:product-add", {
         bubbles: true,
         composed: true,
         detail: {
           productId: this.productId,
-          sponsorId: this.sponsorId,
           brand: this.brand,
           name: this.name,
           price: this.price,
           retailer: this.retailer,
-          imageUrl: this.imageUrl
+          imageUrl: this.imageUrl,
+          ...attribution,
+          // The host's sponsor-id wins; without one, the slot's campaign sponsor.
+          sponsorId: this.sponsorId || this.sponsorFromAttribution(),
+          // The host adds to the cart: pass this through as `origin` so the
+          // purchase is attributed to this place and campaign.
+          origin: {
+            campaignId: attribution.campaignId,
+            slot: attribution.slot,
+            contentId: attribution.contentId
+          }
         }
       })
     );
@@ -11222,6 +12235,24 @@ __decorateClass([
   n5({ type: String, attribute: "sponsor-id" })
 ], VioProduct.prototype, "sponsorId", 2);
 __decorateClass([
+  n5({ type: String, attribute: "vio-slot" })
+], VioProduct.prototype, "vioSlot", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot-name" })
+], VioProduct.prototype, "vioSlotName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope" })
+], VioProduct.prototype, "vioScope", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope-name" })
+], VioProduct.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-id" })
+], VioProduct.prototype, "vioContentId", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-title" })
+], VioProduct.prototype, "vioContentTitle", 2);
+__decorateClass([
   n5({ type: Boolean, attribute: "has-variants" })
 ], VioProduct.prototype, "hasVariants", 2);
 __decorateClass([
@@ -11257,6 +12288,13 @@ var VioProductCarousel = class extends i4 {
     this.sponsorId = 0;
     this.productRefs = "";
     this.currency = "NOK";
+    this.vioSlot = "";
+    this.vioSlotName = "";
+    this.vioScope = "";
+    this.vioScopeName = "";
+    this.vioContentId = "";
+    this.vioContentTitle = "";
+    this.slotRegistration = new SlotRegistration(this, "carousel");
     this.fetched = null;
     this.isLoading = false;
     this.fetchError = "";
@@ -11267,6 +12305,27 @@ var VioProductCarousel = class extends i4 {
     this.unobserveImpression = null;
     this.impressed = false;
     this.listTracked = false;
+  }
+  /** The slot id in effect: `vio-slot`, else the auto id (`carousel-N`). Read-only. */
+  get effectiveSlot() {
+    return this.slotRegistration.effective;
+  }
+  slotAttributes() {
+    return {
+      vioSlot: this.vioSlot,
+      vioSlotName: this.vioSlotName,
+      vioScope: this.vioScope,
+      vioScopeName: this.vioScopeName
+    };
+  }
+  /** Attribution every analytics event of this carousel carries (`Vio.attribution` + the content overrides). */
+  attribution() {
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0 }) : { slot: this.effectiveSlot || void 0 };
+    return {
+      ...base,
+      ...this.vioContentId ? { contentId: this.vioContentId } : {},
+      ...this.vioContentTitle ? { contentTitle: this.vioContentTitle } : {}
+    };
   }
   static {
     this.styles = i`
@@ -11415,6 +12474,7 @@ var VioProductCarousel = class extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    this.slotRegistration.connect(this.slotAttributes());
     this.observeForAnalytics();
     if (this.productRefs.trim() || this.productIds.trim()) {
       void this.autoFetch();
@@ -11423,13 +12483,27 @@ var VioProductCarousel = class extends i4 {
   disconnectedCallback() {
     this.unobserveImpression?.();
     this.unobserveImpression = null;
+    this.slotRegistration.clear();
     super.disconnectedCallback();
   }
   updated(changed) {
-    const propChanged = changed.has("productRefs") || changed.has("productIds") || changed.has("commerceKey") || changed.has("sponsorId");
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+      this.slotRegistration.sync(this.slotAttributes());
+    }
+    const propChanged = changed.has("productRefs") || changed.has("productIds") || changed.has("commerceKey") || changed.has("sponsorId") || changed.has("vioSlot");
     if (propChanged && (this.productRefs.trim() || this.productIds.trim())) {
       void this.autoFetch();
     }
+  }
+  /**
+   * The sponsor of this carousel: the host's `sponsor-id`, else the primary
+   * sponsor of the campaign the slot shows (ADR-0034 — "the campaign of the
+   * block is its sponsor"), else 0 (unknown).
+   */
+  effectiveSponsorId() {
+    if (this.sponsorId > 0) return this.sponsorId;
+    const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.effectiveSlot || null)?.primarySponsor?.id) : NaN;
+    return Number.isFinite(fromSlot) && fromSlot > 0 ? fromSlot : 0;
   }
   async autoFetch() {
     if (!Vio.isInitialized) {
@@ -11439,7 +12513,14 @@ var VioProductCarousel = class extends i4 {
     this.isLoading = true;
     this.fetchError = "";
     try {
-      const refs = this.productRefs.trim() ? this.parseRefs(this.productRefs) : this.productIds.split(",").map((s4) => parseInt(s4.trim(), 10)).filter((n6) => !Number.isNaN(n6)).map((id) => ({ sponsorId: this.sponsorId, productId: id }));
+      if (this.productRefs.trim() === "" && !this.commerceKey && this.sponsorId <= 0 && !Vio.bootstrapCache) {
+        try {
+          await Vio.bootstrap();
+        } catch {
+        }
+      }
+      const sponsorId = this.effectiveSponsorId();
+      const refs = this.productRefs.trim() ? this.parseRefs(this.productRefs) : this.productIds.split(",").map((s4) => parseInt(s4.trim(), 10)).filter((n6) => !Number.isNaN(n6)).map((id) => ({ sponsorId, productId: id }));
       if (refs.length === 0) {
         this.fetched = [];
         return;
@@ -11451,23 +12532,23 @@ var VioProductCarousel = class extends i4 {
         bySponsor.set(r6.sponsorId, arr);
       }
       const fetched = await Promise.all(
-        Array.from(bySponsor.entries()).map(async ([sponsorId, ids]) => {
-          const commerce = this.commerceKey && this.productRefs.trim() === "" ? Vio.commerceWithKey(this.commerceKey) : Vio.commerceFor(sponsorId);
+        Array.from(bySponsor.entries()).map(async ([sponsorId2, ids]) => {
+          const commerce = this.commerceKey && this.productRefs.trim() === "" ? Vio.commerceWithKey(this.commerceKey) : Vio.commerceFor(sponsorId2);
           const products = await commerce.channel.product.getByIds({
             product_ids: ids,
             currency: this.currency,
             image_size: "large"
           });
-          return { sponsorId, products };
+          return { sponsorId: sponsorId2, products };
         })
       );
       const lookup = /* @__PURE__ */ new Map();
-      for (const { sponsorId, products } of fetched) {
-        for (const p3 of products) lookup.set(`${sponsorId}:${p3.id}`, p3);
+      for (const { sponsorId: sponsorId2, products } of fetched) {
+        for (const p3 of products) lookup.set(`${sponsorId2}:${p3.id}`, p3);
       }
-      this.fetched = refs.map(({ sponsorId, productId }) => {
-        const product = lookup.get(`${sponsorId}:${productId}`);
-        return product ? { product, sponsorId } : null;
+      this.fetched = refs.map(({ sponsorId: sponsorId2, productId }) => {
+        const product = lookup.get(`${sponsorId2}:${productId}`);
+        return product ? { product, sponsorId: sponsorId2 } : null;
       }).filter((x2) => x2 !== null);
       this.maybeTrackList();
     } catch (err) {
@@ -11484,10 +12565,12 @@ var VioProductCarousel = class extends i4 {
         {
           sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
           componentTemplateId: "product-carousel",
-          locationId: this.label || void 0
+          // The slot is the real location id; the label only stands in for it.
+          locationId: this.effectiveSlot || this.label || void 0,
+          ...this.attribution()
         },
         {
-          key: `carousel:${this.label || this.productIds || this.productRefs || "default"}`,
+          key: `carousel:${this.effectiveSlot || this.label || this.productIds || this.productRefs || "default"}`,
           onImpression: () => {
             this.impressed = true;
             this.maybeTrackList();
@@ -11505,14 +12588,16 @@ var VioProductCarousel = class extends i4 {
     if (entries.length === 0) return;
     this.listTracked = true;
     try {
+      const sponsorId = this.effectiveSponsorId();
       Vio.analytics.track("view_item_list", {
         context: {
-          sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+          sponsorId: sponsorId > 0 ? sponsorId : void 0,
           componentTemplateId: "product-carousel",
-          locationId: this.label || void 0
+          locationId: this.effectiveSlot || this.label || void 0,
+          ...this.attribution()
         },
         commerce: {
-          items: entries.map(({ product, sponsorId }) => ({
+          items: entries.map(({ product, sponsorId: sponsorId2 }) => ({
             productId: product.id,
             name: product.title,
             price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0
@@ -11565,6 +12650,9 @@ var VioProductCarousel = class extends i4 {
             retailer=${retailer}
             image-url=${img}
             ?has-variants=${(p3.variants?.length ?? 0) > 1}
+            .vioSlot=${this.effectiveSlot}
+            .vioContentId=${this.vioContentId}
+            .vioContentTitle=${this.vioContentTitle}
           ></vio-product>
         `;
       })}`;
@@ -11634,6 +12722,24 @@ __decorateClass([
 __decorateClass([
   n5({ type: String })
 ], VioProductCarousel.prototype, "currency", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot" })
+], VioProductCarousel.prototype, "vioSlot", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot-name" })
+], VioProductCarousel.prototype, "vioSlotName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope" })
+], VioProductCarousel.prototype, "vioScope", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope-name" })
+], VioProductCarousel.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-id" })
+], VioProductCarousel.prototype, "vioContentId", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-title" })
+], VioProductCarousel.prototype, "vioContentTitle", 2);
 __decorateClass([
   e6(".scroller")
 ], VioProductCarousel.prototype, "scroller", 2);
@@ -11872,6 +12978,18 @@ var VioProductDetail = class extends i4 {
     this.sponsorId = 0;
     this.autoOpen = true;
     this.currency = "NOK";
+    this.vioSlot = "";
+    this.vioSlotName = "";
+    this.vioScope = "";
+    this.vioScopeName = "";
+    this.vioContentId = "";
+    this.vioContentTitle = "";
+    this.slotRegistration = new SlotRegistration(this, "detail");
+    /** What the click that opened the detail carried ('' when nothing), and for which product. */
+    this.eventSlot = "";
+    this.eventContentId = "";
+    this.eventContentTitle = "";
+    this.eventProductId = "";
     this.product = null;
     this.sellerName = null;
     this.sellerSettled = false;
@@ -11902,13 +13020,53 @@ var VioProductDetail = class extends i4 {
       const ev = e7;
       const productIdNum = parseInt(ev.detail.productId, 10);
       if (Number.isNaN(productIdNum)) return;
-      const sponsorIdNum = parseInt(ev.detail.sponsorId, 10);
-      if (Number.isNaN(sponsorIdNum) || sponsorIdNum <= 0) return;
+      const slot = typeof ev.detail.slot === "string" ? ev.detail.slot.trim() : "";
+      let sponsorIdNum = parseInt(ev.detail.sponsorId, 10);
+      if (Number.isNaN(sponsorIdNum) || sponsorIdNum <= 0) {
+        const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(slot || this.effectiveSlot || null)?.primarySponsor?.id) : NaN;
+        if (!Number.isFinite(fromSlot) || fromSlot <= 0) return;
+        sponsorIdNum = fromSlot;
+      }
+      this.eventSlot = slot;
+      this.eventProductId = String(ev.detail.productId);
+      this.eventContentId = ev.detail.contentId !== void 0 && ev.detail.contentId !== null ? String(ev.detail.contentId).trim() : "";
+      this.eventContentTitle = typeof ev.detail.contentTitle === "string" ? ev.detail.contentTitle.trim() : "";
       this.productId = ev.detail.productId;
       this.sponsorId = sponsorIdNum;
       this.currency = ev.detail.currency || getGlobalCurrency();
       this.show();
       void this.fetchProduct();
+    };
+  }
+  /** The card's context applies to the product it opened — not to one the host opened by hand later. */
+  get fromCard() {
+    return this.eventProductId !== "" && this.eventProductId === String(this.productId);
+  }
+  /** The slot id in effect for this element: `vio-slot`, else the auto id (`detail-N`). Read-only. */
+  get effectiveSlot() {
+    return this.slotRegistration.effective;
+  }
+  /** The slot the open product is attributed to: the opening card's, else this element's. */
+  get activeSlot() {
+    return this.fromCard && this.eventSlot || this.effectiveSlot;
+  }
+  slotAttributes() {
+    return {
+      vioSlot: this.vioSlot,
+      vioSlotName: this.vioSlotName,
+      vioScope: this.vioScope,
+      vioScopeName: this.vioScopeName
+    };
+  }
+  /** Attribution every event of the open product carries (`Vio.attribution` of the opening card's slot, else this element's). */
+  attribution() {
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.activeSlot, { sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0 }) : { slot: this.activeSlot || void 0 };
+    const contentId = this.fromCard && this.eventContentId || this.vioContentId;
+    const contentTitle = this.fromCard && this.eventContentTitle || this.vioContentTitle;
+    return {
+      ...base,
+      ...contentId ? { contentId } : {},
+      ...contentTitle ? { contentTitle } : {}
     };
   }
   static {
@@ -12358,15 +13516,20 @@ var VioProductDetail = class extends i4 {
   }
   connectedCallback() {
     super.connectedCallback();
+    this.slotRegistration.connect(this.slotAttributes());
     void this.loadVippsButton();
     document.addEventListener("vio:product-click", this.boundProductClick);
   }
   disconnectedCallback() {
     document.removeEventListener("vio:product-click", this.boundProductClick);
+    this.slotRegistration.clear();
     super.disconnectedCallback();
   }
   updated(changed) {
     if (changed.has("open")) this.dialogFocus.update(this.open);
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+      this.slotRegistration.sync(this.slotAttributes());
+    }
   }
   show() {
     this.open = true;
@@ -12375,6 +13538,10 @@ var VioProductDetail = class extends i4 {
     this.open = false;
     setTimeout(() => {
       if (!this.open) {
+        this.eventSlot = "";
+        this.eventContentId = "";
+        this.eventContentTitle = "";
+        this.eventProductId = "";
         this.product = null;
         this.sellerName = null;
         this.sellerSettled = false;
@@ -12433,7 +13600,8 @@ var VioProductDetail = class extends i4 {
         Vio.analytics.track("view_item", {
           context: {
             sponsorId: this.sponsorId > 0 ? Number(this.sponsorId) : void 0,
-            componentTemplateId: "product-detail"
+            componentTemplateId: "product-detail",
+            ...this.attribution()
           },
           commerce: {
             items: [
@@ -12473,7 +13641,7 @@ var VioProductDetail = class extends i4 {
   }
   /** Which buy buttons to render — backend-configured per sponsor. */
   async loadAvailablePaymentMethods() {
-    const spId = this.sponsorId || globalThis.__VIO_SPONSOR_ID__;
+    const spId = this.sponsorId || (typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.activeSlot || null)?.primarySponsor?.id) : 0) || globalThis.__VIO_SPONSOR_ID__;
     if (!spId) return;
     try {
       const methods = await Vio.checkout.getAvailablePaymentMethods(spId);
@@ -12755,12 +13923,14 @@ var VioProductDetail = class extends i4 {
     const sponsor = Vio.bootstrapCache?.primarySponsor;
     const secondaries = Vio.bootstrapCache?.secondarySponsors ?? [];
     const sponsorName = sponsor?.id === this.sponsorId ? sponsor.name : secondaries.find((s4) => s4.id === this.sponsorId)?.name;
+    const { campaignId, slot, contentId } = this.attribution();
     Vio.cart.addProduct({
       product: this.product,
       sponsorId: this.sponsorId,
       sponsorName,
       quantity: this.quantity,
-      variantId: variant?.id
+      variantId: variant?.id,
+      origin: { campaignId, slot, contentId }
     });
     return variant?.id;
   }
@@ -12777,7 +13947,8 @@ var VioProductDetail = class extends i4 {
             productId: this.product.id,
             sponsorId: this.sponsorId,
             quantity: this.quantity,
-            variantId
+            variantId,
+            ...this.attribution()
           }
         })
       );
@@ -12802,7 +13973,7 @@ var VioProductDetail = class extends i4 {
         new CustomEvent("vio:checkout-open", {
           bubbles: true,
           composed: true,
-          detail: { sponsorId: this.sponsorId, paymentMethod: "klarna", express: true }
+          detail: { sponsorId: this.sponsorId, paymentMethod: "klarna", express: true, ...this.attribution() }
         })
       );
     } finally {
@@ -12832,7 +14003,7 @@ var VioProductDetail = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, express: false }
+        detail: { sponsorId: this.sponsorId, express: false, ...this.attribution() }
       })
     );
   }
@@ -12868,7 +14039,7 @@ var VioProductDetail = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, paymentMethod: "vipps", express: false }
+        detail: { sponsorId: this.sponsorId, paymentMethod: "vipps", express: false, ...this.attribution() }
       })
     );
   }
@@ -12881,7 +14052,7 @@ var VioProductDetail = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, paymentMethod: "stripe", express: false }
+        detail: { sponsorId: this.sponsorId, paymentMethod: "stripe", express: false, ...this.attribution() }
       })
     );
   }
@@ -13164,6 +14335,24 @@ __decorateClass([
 __decorateClass([
   n5({ type: String })
 ], VioProductDetail.prototype, "currency", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot" })
+], VioProductDetail.prototype, "vioSlot", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot-name" })
+], VioProductDetail.prototype, "vioSlotName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope" })
+], VioProductDetail.prototype, "vioScope", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope-name" })
+], VioProductDetail.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-id" })
+], VioProductDetail.prototype, "vioContentId", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-title" })
+], VioProductDetail.prototype, "vioContentTitle", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "product", 2);
@@ -14054,24 +15243,24 @@ var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen
 var SHIPS_APART = "kan ikke sendes sammen";
 function friendlyPaymentError(raw, method) {
   void method;
-  const text = String(raw ?? "");
-  const lower = text.toLowerCase();
+  const text2 = String(raw ?? "");
+  const lower = text2.toLowerCase();
   if (lower.includes("got 0") || lower.includes("amount must be a positive")) {
     return EMPTY_CART_MESSAGE;
   }
-  if (lower.includes("replaced by a newer") || text.includes("CHECKOUT_SUPERSEDED")) {
+  if (lower.includes("replaced by a newer") || text2.includes("CHECKOUT_SUPERSEDED")) {
     return CART_CHANGED_MESSAGE;
   }
-  if (lower.includes("already been paid") || text.includes("CART_ALREADY_PAID")) {
+  if (lower.includes("already been paid") || text2.includes("CART_ALREADY_PAID")) {
     return CART_PAID_MESSAGE;
   }
-  if (text.includes(SHIPS_APART)) return norwegianSentence(text);
+  if (text2.includes(SHIPS_APART)) return norwegianSentence(text2);
   return PAYMENT_START_FAILED_MESSAGE;
 }
-function norwegianSentence(text) {
-  const at = text.indexOf(SHIPS_APART);
-  const prefixEnd = text.lastIndexOf(": ", at);
-  return (prefixEnd === -1 ? text : text.slice(prefixEnd + 2)).trim();
+function norwegianSentence(text2) {
+  const at = text2.indexOf(SHIPS_APART);
+  const prefixEnd = text2.lastIndexOf(": ", at);
+  return (prefixEnd === -1 ? text2 : text2.slice(prefixEnd + 2)).trim();
 }
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
@@ -17701,6 +18890,9 @@ export {
   VioTokens,
   addItem,
   applyVioTheme,
+  autoSlotDisplayName,
+  autoSlotId,
+  cartSlicesFrom,
   checkApplePayAvailability,
   createCart,
   createCheckout,
@@ -17721,9 +18913,15 @@ export {
   getGlobalCurrency,
   getLineItemsBySupplier,
   getVippsStatus,
+  lineOrigins,
+  normalizeOrigin,
+  normalizeScope,
   primaryImageUrl,
   purchaseFromPaymentSuccess,
   resolveCampaignId,
+  resolveContent,
+  resolveSlotCampaign,
+  sameOrigin,
   showApplePaySheet,
   updateCheckout,
   updateItem,
