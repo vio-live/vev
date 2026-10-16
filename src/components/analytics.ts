@@ -58,6 +58,8 @@ export type VioItemInput = {
   campaignId?: number;
   slot?: string;
   contentId?: string;
+  /** The sponsor whose cart the line is in. Only on items read from the cart. */
+  sponsorId?: number;
 };
 
 /** GA4 e-commerce item (the shape GTM/GA4 expects in `ecommerce.items`). */
@@ -214,23 +216,37 @@ function persistedSponsorIfKnown(): number | undefined {
 /** Events that a cart with several campaigns splits (ADR-0034, amendment 2). */
 const SPLIT_BY_CAMPAIGN = new Set(["begin_checkout", "purchase"]);
 
-type CampaignGroup = { campaignId?: number; slot?: string; contentId?: string; items: VioItemInput[] };
+type CampaignGroup = { campaignId?: number; slot?: string; contentId?: string; sponsorId?: number; items: VioItemInput[] };
 
 /** Items grouped by the campaign of their origin, in order of first
- * appearance; items with no origin share one group (the event's own). */
+ * appearance; items with no origin share one group (the event's own
+ * attribution: the SDK resolves its campaign from the event's sponsor). The
+ * group's slot / content / sponsor only when they are the same for the whole
+ * group — the SDK's `cartSlices` rule; a group's sponsor comes from its
+ * lines, never from the event. */
 function groupItemsByCampaign(items: VioItemInput[]): CampaignGroup[] {
-  const groups = new Map<string, CampaignGroup>();
+  const groups = new Map<string, CampaignGroup & { slots: Set<string>; contents: Set<string>; sponsors: Set<number> }>();
   for (const it of items) {
     const cid = num(it.campaignId);
     const k = cid != null ? String(cid) : "";
     let g = groups.get(k);
     if (!g) {
-      g = { campaignId: cid, slot: it.slot, contentId: it.contentId, items: [] };
+      g = { campaignId: cid, items: [], slots: new Set(), contents: new Set(), sponsors: new Set() };
       groups.set(k, g);
     }
+    if (it.slot) g.slots.add(it.slot);
+    if (it.contentId) g.contents.add(it.contentId);
+    const sid = num(it.sponsorId);
+    if (sid != null) g.sponsors.add(sid);
     g.items.push(it);
   }
-  return [...groups.values()];
+  return [...groups.values()].map((g) => ({
+    campaignId: g.campaignId,
+    slot: g.slots.size === 1 ? [...g.slots][0] : undefined,
+    contentId: g.contents.size === 1 ? [...g.contents][0] : undefined,
+    sponsorId: g.sponsors.size === 1 ? [...g.sponsors][0] : undefined,
+    items: g.items,
+  }));
 }
 
 function forwardToVio(name: string, params: EventParams): void {
@@ -239,29 +255,30 @@ function forwardToVio(name: string, params: EventParams): void {
   if (!analytics?.track) return; // vendored SDK predates Vio.analytics
   // begin_checkout / purchase go out ONCE PER CAMPAIGN present in the cart,
   // each with its lines and its value and the same transaction id, so the
-  // statistics per campaign come out exact (ADR-0034, amendment 2). The cart
-  // lines carry their origin from the SDK 0.23.0 on; before that nothing has a
-  // campaign and the event goes out once, as today. GA4 (above) always gets
-  // the one event with every item: a publisher's purchase is one purchase.
+  // statistics per campaign come out exact (ADR-0034, amendment 2). The split
+  // is done here, not by the SDK: Vev runs the core with autoTrack:false, so
+  // the SDK's own per-campaign purchase never fires on these pages. A cart
+  // whose lines carry no origin (persisted before 0.23.0) goes out once, as
+  // before. GA4 (above) always gets the one event with every item: a
+  // publisher's purchase is one purchase.
   if (SPLIT_BY_CAMPAIGN.has(name) && params.items?.length) {
     const groups = groupItemsByCampaign(params.items);
+    // The same precedence with one group or several: what the lines say
+    // (their campaign, slot, content, sponsor) over what the event says.
+    const withGroup = (g: CampaignGroup): EventParams => ({
+      ...params,
+      items: g.items,
+      value: sumValue(g.items),
+      campaignId: g.campaignId ?? params.campaignId,
+      slot: g.slot ?? params.slot,
+      contentId: g.contentId ?? params.contentId,
+      sponsorId: g.sponsorId ?? params.sponsorId,
+    });
     if (groups.length > 1) {
-      for (const g of groups) {
-        sendToVio(analytics, name, {
-          ...params,
-          items: g.items,
-          value: sumValue(g.items),
-          campaignId: g.campaignId ?? params.campaignId,
-          slot: g.slot ?? params.slot,
-          contentId: g.contentId ?? params.contentId,
-        });
-      }
+      for (const g of groups) sendToVio(analytics, name, withGroup(g));
       return;
     }
-    const only = groups[0];
-    if (only?.campaignId != null && params.campaignId == null) {
-      params = { ...params, campaignId: only.campaignId, slot: params.slot ?? only.slot, contentId: params.contentId ?? only.contentId };
-    }
+    if (groups.length === 1) params = withGroup(groups[0]);
   }
   sendToVio(analytics, name, params);
 }
@@ -382,8 +399,8 @@ export function trackAddToCart(item: VioItemInput, attribution?: VioAttribution)
 
 /**
  * The attribution a `vio:*` event detail carries (the SDK's detail, cart and
- * checkout spread `Vio.attribution()` into theirs from 0.23.0 on): slot,
- * campaign and article. Only what is there — never a made-up value.
+ * checkout spread `Vio.attribution()` into theirs): slot, campaign and
+ * article. Only what is there — never a made-up value.
  */
 function attributionOf(d: any): VioAttribution {
   const out: VioAttribution = {};
@@ -433,15 +450,14 @@ function cartToItems(sponsorId?: number): VioItemInput[] {
         currency: it.currency,
         quantity: num(it.quantity) ?? 1,
         variantId: it.variantId,
+        // The cart it is in: purchase and begin_checkout are per sponsor.
+        sponsorId: num((cart as any).sponsorId),
       };
-      // The line remembers where it was added from (ADR-0034): one origin, or
-      // several with a quantity each when the same product came from more
-      // than one block. Lines of an older SDK have none.
-      const origins: any[] = Array.isArray(it.origins) && it.origins.length
-        ? it.origins
-        : it.origin && typeof it.origin === "object"
-          ? [{ ...it.origin, quantity: it.quantity }]
-          : [];
+      // The line remembers where its units were added from (ADR-0034,
+      // `CartLineItem.origins`: campaign, slot, article, quantity per origin
+      // — several when the same product came from more than one block).
+      // Lines persisted before the SDK 0.23.0 have none.
+      const origins: any[] = Array.isArray(it.origins) ? it.origins : [];
       if (!origins.length) {
         out.push(base);
         continue;
@@ -567,18 +583,22 @@ export function initVioAnalytics(): () => void {
   // never Qliro's/Walley's own reference.
   const onPaymentSuccess = (e: Event) => {
     const d = (e as CustomEvent).detail ?? {};
-    const items = lastCartSnapshot;
+    // Only the sponsor that was paid: the checkout is per sponsor, and the
+    // other carts are still there (their own payment follows). Apple Pay
+    // from the cart names no sponsor and pays every cart: all of it then.
+    const paidSponsor = num(d.sponsorId);
+    const items = paidSponsor != null ? lastCartSnapshot.filter((i) => i.sponsorId === paidSponsor) : lastCartSnapshot;
     const { orderId } = purchaseFromPaymentSuccess(d);
     trackEvent("purchase", {
       currency: currencyOf(items),
       value: sumValue(items),
       transaction_id: orderId,
       payment_type: d.method,
-      sponsorId: num(d.sponsorId) ?? lastCartSponsor,
+      sponsorId: paidSponsor ?? lastCartSponsor,
       items,
       ...attributionOf(d),
     });
-    lastCartSnapshot = [];
+    lastCartSnapshot = paidSponsor != null ? lastCartSnapshot.filter((i) => i.sponsorId !== paidSponsor) : [];
   };
 
   // remove_from_cart — the CartManager is the choke point for removals (the

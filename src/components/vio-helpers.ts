@@ -144,8 +144,13 @@ export function persistSponsorId(id: number): void {
 // the picker, the cart or the checkout hands to Commerce goes through
 // `resolveSponsorId`, and none is ever made up.
 
-/** The sponsors a key's configuration knows: its primary and its secondaries. */
-export type SponsorConfig = { ids: number[]; primaryId: number };
+/** The sponsors a key's configuration knows. `ids`: the default campaign's
+ * (its primary and secondaries — what the "Active Sponsor" selector offers);
+ * `knownIds`: those plus the primary and secondaries of every entry of
+ * `campaigns[]` — every sponsor the SDK resolves (`Vio.commerceFor`, the
+ * cart, the payment methods): a campaign assigned to a slot may bring one
+ * that is not in the default campaign (ADR-0034). */
+export type SponsorConfig = { ids: number[]; primaryId: number; knownIds: number[] };
 export type SponsorListItem = { id: number; name: string; isPrimary: boolean };
 
 function toSponsorId(value: unknown): number | null {
@@ -171,10 +176,27 @@ export function sponsorListFromBootstrap(boot: unknown): SponsorListItem[] {
   return list;
 }
 
+/** Pure. Every sponsor id a `/v2/mobile/config` answer names: the default
+ * campaign's, then the primary and secondaries of each `campaigns[]` entry
+ * (the same set the SDK's `findSponsor` accepts). Deduped, in that order. */
+export function knownSponsorIdsFromBootstrap(boot: unknown): number[] {
+  const ids = sponsorListFromBootstrap(boot).map((s) => s.id);
+  const b = (boot ?? {}) as { campaigns?: any[] };
+  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) {
+    if (!c || typeof c !== "object") continue;
+    for (const s of [c.primarySponsor, ...(Array.isArray(c.secondarySponsors) ? c.secondarySponsors : [])]) {
+      const id = toSponsorId(s?.id);
+      if (id != null && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
 /** Pure. The configuration of a `/v2/mobile/config` answer, or null. */
 export function sponsorConfigFromBootstrap(boot: unknown): SponsorConfig | null {
   const list = sponsorListFromBootstrap(boot);
-  return list.length ? { ids: list.map((s) => s.id), primaryId: list[0].id } : null;
+  if (!list.length) return null;
+  return { ids: list.map((s) => s.id), primaryId: list[0].id, knownIds: knownSponsorIdsFromBootstrap(boot) };
 }
 
 /**
@@ -238,16 +260,17 @@ export function getActiveSponsorId(preferred?: unknown): number | null {
 
 /**
  * The sponsor a Commerce call for `requested` uses: `requested` itself when
- * the connected key knows it (a cart's sponsor, an addon's picked product),
- * else the page's active sponsor, else the primary. Null while this window
- * has no configuration.
+ * the connected key knows it — in any of its campaigns (`knownIds`): a cart's
+ * sponsor, an addon's picked product, the sponsor of a campaign assigned to
+ * a slot — else the page's active sponsor, else the primary. Null while this
+ * window has no configuration.
  */
 export function sponsorForCommerce(requested?: unknown): number | null {
   const config = currentSponsorConfig();
   if (!config) return null;
   return resolveSponsorId(
     [requested, runtimeSponsorId(), getPersistedSponsorId()],
-    config.ids,
+    config.knownIds,
     config.primaryId
   );
 }
@@ -360,9 +383,11 @@ export function useActiveSponsorId(preferred?: number | null, slot?: string | nu
 // already declared from this browser in the last 24 h. The editor's canvas is
 // a page like any other: a block is declared as soon as it exists on it.
 //
-// The vendored SDK may predate this API (0.22.0 has no registerSlot): every
-// call below checks for it, so the blocks keep working — unregistered, and
-// attributed as before — until the 0.23.0 rebundle lands.
+// The vendored SDK (vio-sdk/index.js, 0.23.0) has this API. The calls below
+// still check for it, on purpose: a block must never throw into the editor's
+// canvas, and the bundle and the blocks have drifted before — the same rule
+// analytics.ts applies to `Vio.analytics`. With an older bundle the blocks
+// simply run unregistered and attributed as before.
 
 export type SlotKind = "card" | "carousel" | "grid" | "open";
 
@@ -396,16 +421,23 @@ function sdkHas(method: string): boolean {
  * campaign the slot shows now (its open assignment, else the sponsor's active
  * campaign, else the default), the sponsor, and the page's content
  * (`Vio.content()`). The sponsor hint is the block's effective sponsor, so
- * what the cart remembers matches what the events say. With a bundle that
- * predates the helper, only what this side knows: the slot and the sponsor.
+ * what the cart remembers matches what the events say. Without the helper
+ * (an older bundle), only what this side knows: the slot and the sponsor.
  */
 export function vioAttribution(slot?: string | null, sponsorId?: number | null): VioAttribution {
   const name = typeof slot === "string" && slot.trim() ? slot.trim() : undefined;
   const sid = toSponsorId(sponsorId) ?? undefined;
+  // A slot whose campaign the block could NOT follow (its sponsor is not one
+  // of the key's — see sponsorForSlot) must not attribute to that campaign:
+  // the events then carry the slot by name and the campaign the sponsor rule
+  // gives the block's actual sponsor (`attribution(null, { sponsorId })`).
+  const campaign = name ? slotAssignedCampaign(name) : null;
+  const followed = !campaign || sid == null || toSponsorId(campaign.primarySponsor?.id) === sid;
   if (sdkHas("attribution")) {
     try {
-      const out = (Vio as any).attribution(name ?? null, sid != null ? { sponsorId: sid } : undefined) ?? {};
-      return name && !out.slot ? { ...out, slot: name } : { ...out };
+      const hint = sid != null ? { sponsorId: sid } : undefined;
+      const out = (Vio as any).attribution(followed ? name ?? null : null, hint) ?? {};
+      return name ? { ...out, slot: name } : { ...out };
     } catch {
       /* attribution never breaks a render or a click */
     }
@@ -416,7 +448,8 @@ export function vioAttribution(slot?: string | null, sponsorId?: number | null):
   return out;
 }
 
-/** The `origin` a cart line keeps (ADR-0034): where it was added from. */
+/** The `origin` of the units a block adds to the cart (`CartOrigin` in the
+ * SDK: campaign, slot, article) — what `CartLineItem.origins[]` remembers. */
 export function cartOrigin(attribution: VioAttribution): { campaignId?: number; slot?: string; contentId?: string } {
   const origin: { campaignId?: number; slot?: string; contentId?: string } = {};
   if (attribution.campaignId != null) origin.campaignId = attribution.campaignId;
@@ -427,10 +460,10 @@ export function cartOrigin(attribution: VioAttribution): { campaignId?: number; 
 
 /**
  * The campaign ASSIGNED to `slot` and open now, or null when the slot shows
- * the surface's default campaign (nothing assigned, or the bundle predates
- * slots). `Vio.campaignForSlot` answers the default in that case; the page's
- * "Active Sponsor" is how a Vev page chooses a sponsor within the default
- * campaign, so only an assignment overrides it.
+ * the surface's default campaign (nothing assigned). `Vio.campaignForSlot`
+ * answers the default in that case; the page's "Active Sponsor" is how a Vev
+ * page chooses a sponsor within the default campaign, so only an assignment
+ * overrides it.
  */
 export function slotAssignedCampaign(slot?: string | null): any | null {
   const name = typeof slot === "string" ? slot.trim() : "";
@@ -459,7 +492,7 @@ export function sponsorForSlot(slot: string | null | undefined, pageSponsor: num
   if (!campaign) return pageSponsor;
   const sid = toSponsorId(campaign.primarySponsor?.id);
   const config = currentSponsorConfig();
-  if (config && sid != null && (config.ids.includes(sid) || sid === config.primaryId)) return sid;
+  if (config && sid != null && config.knownIds.includes(sid)) return sid;
   const warnKey = `${String(slot).trim()}:${sid ?? "none"}`;
   if (!slotSponsorWarned.has(warnKey)) {
     slotSponsorWarned.add(warnKey);
@@ -516,14 +549,22 @@ export type VioSlotIdentity = {
  * in an effect, released on unmount, re-registered when the id or the name
  * changes (the designer typing in the panel re-declares — the SDK debounces
  * and dedupes). Works in the editor and on the published page alike. The
- * block's Vev key comes from `useModel()` — the model Vev renders the block
- * with (`KEY`, or `KEY-MASTERKEY` for an instance of a master component).
+ * block's key comes from `useModel()` — the model Vev renders the block with
+ * — as the INSTANCE KEY CHAIN, the way @vev/react's widget-node ids the host
+ * (`model.virtualKey || model.key`): an instance of a master component (a
+ * template used by thirty articles) gets its own key per instance, so thirty
+ * carousels are thirty slots, not one.
  */
 export function useVioSlot({ slot, slotName, kind, title }: VioSlotInput): VioSlotIdentity {
   const model: any = useModel();
   const page = useVevPage();
   const explicit = typeof slot === "string" ? slot.trim() : "";
-  const key = typeof model?.key === "string" ? model.key.trim() : "";
+  const key =
+    typeof model?.virtualKey === "string" && model.virtualKey.trim()
+      ? model.virtualKey.trim()
+      : typeof model?.key === "string"
+        ? model.key.trim()
+        : "";
   const id = explicit || (key ? `${kind}-${key}` : "");
   const name = typeof slotName === "string" && slotName.trim() ? slotName.trim() : "";
   const own = typeof title === "string" && title.trim() ? title.trim() : "";
@@ -666,7 +707,9 @@ export function adoptConnection(boot: unknown, key: string, environment: string)
   // changed, and the carts of unknown sponsors go below anyway.
   const keyChanged = previous != null && previous !== fingerprint;
   if (keyChanged) forgetSponsorState({ carts: true });
-  const droppedCarts = pruneCartsOutside(config.ids);
+  // Any sponsor of any campaign of the key keeps its cart: a slot's campaign
+  // may sell with a sponsor the default campaign does not have.
+  const droppedCarts = pruneCartsOutside(config.knownIds);
   (globalThis as { __VIO_PRIMARY_SPONSOR_ID__?: number }).__VIO_PRIMARY_SPONSOR_ID__ = config.primaryId;
   writeStorage(VIO_CONNECTION_STORAGE, fingerprint);
   writeStorage(VIO_SPONSORS_STORAGE, JSON.stringify(sponsors));
