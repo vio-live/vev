@@ -9,6 +9,245 @@ var __decorateClass = (decorators, target, key, kind) => {
   return result;
 };
 
+// src/core/slots.ts
+var SLOT_ID_MAX_LENGTH = 100;
+var SLOT_DECLARATION_TTL_MS = 24 * 60 * 60 * 1e3;
+var SLOT_DECLARATION_FAILURE_TTL_MS = 60 * 60 * 1e3;
+var MAX_LOCATIONS_PER_DECLARATION = 100;
+var MAX_DECLARATIONS_PER_LOAD = 3;
+function resolveSlotCampaign(boot, slot, now = Date.now(), platform, pageCampaignId, sponsorId) {
+  if (!boot) return null;
+  const page = activeCampaignEntry(boot, pageCampaignId);
+  const assignment = findSlotAssignmentDetail(boot, slot, now, platform);
+  const sponsor = toNumber(sponsorId);
+  if (assignment && assignmentApplies(assignment, page, sponsor)) return assignment.campaign;
+  return activeCampaignEntry(boot, pageCampaignId, sponsor) ?? (sponsor !== void 0 ? sponsorCampaignEntry(boot, sponsor) : null) ?? defaultCampaignEntry(boot);
+}
+function sponsorCampaignEntry(boot, sponsorId) {
+  const id = toNumber(sponsorId);
+  if (!boot || id === void 0) return null;
+  try {
+    const matches = activeCampaigns(boot).filter((c4) => campaignSponsorIds(c4).includes(id));
+    if (matches.length === 0) return null;
+    const defaultId = toNumber(boot.campaign?.id);
+    return matches.find((c4) => toNumber(c4.id) === defaultId) ?? matches[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function assignmentApplies(assignment, page, sponsorId) {
+  if (assignment.slot.source !== "page") return true;
+  if (isStalePageAssignment(assignment, page)) return false;
+  return sponsorId === void 0 || campaignSponsorIds(assignment.campaign).includes(sponsorId);
+}
+function isStalePageAssignment(assignment, page) {
+  return !!page && assignment.slot.source === "page" && toNumber(page.id) !== toNumber(assignment.campaign.id);
+}
+function toCampaignId(value) {
+  let n6;
+  if (typeof value === "number") n6 = value;
+  else if (typeof value === "string" && /^\s*\d+\s*$/.test(value)) n6 = Number(value);
+  else return void 0;
+  return Number.isSafeInteger(n6) && n6 > 0 ? n6 : void 0;
+}
+function campaignCandidates(hint) {
+  const raw = Array.isArray(hint) ? hint : [hint];
+  const out = [];
+  for (const v2 of raw) {
+    const id = toCampaignId(v2);
+    if (id !== void 0 && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+function activeCampaignEntry(boot, hint, sponsorId) {
+  if (!boot) return null;
+  try {
+    const active = activeCampaigns(boot);
+    for (const id of campaignCandidates(hint)) {
+      const entry = active.find((c4) => toNumber(c4.id) === id);
+      if (!entry) continue;
+      if (sponsorId !== void 0 && !campaignSponsorIds(entry).includes(sponsorId)) continue;
+      return entry;
+    }
+  } catch {
+  }
+  return null;
+}
+function campaignSponsorIds(campaign) {
+  const ids = [];
+  const primary = toNumber(campaign.primarySponsor?.id);
+  if (primary !== void 0) ids.push(primary);
+  const secondaries = Array.isArray(campaign.secondarySponsors) ? campaign.secondarySponsors : [];
+  for (const s4 of secondaries) {
+    const id = toNumber(s4?.id);
+    if (id !== void 0) ids.push(id);
+  }
+  return ids;
+}
+function findSlotAssignmentDetail(boot, slot, now = Date.now(), platform) {
+  const name = typeof slot === "string" ? slot.trim() : "";
+  if (!boot || !name) return null;
+  try {
+    const matches = [];
+    for (const campaign of activeCampaigns(boot)) {
+      const match = slotsOf(campaign).find((s4) => assignmentMatches(s4, name, now, platform));
+      if (match) matches.push({ campaign, slot: match });
+    }
+    if (matches.length === 0) return null;
+    const defaultId = toNumber(boot.campaign?.id);
+    return matches.find((m2) => toNumber(m2.campaign.id) === defaultId) ?? matches[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function defaultCampaignEntry(boot) {
+  if (!boot?.campaign || typeof boot.campaign !== "object") return null;
+  const defaultId = toNumber(boot.campaign.id);
+  if (defaultId === void 0) return null;
+  try {
+    const listed = wellFormedCampaigns(boot).find((c4) => toNumber(c4.id) === defaultId);
+    if (listed) return listed;
+  } catch {
+  }
+  return {
+    ...boot.campaign,
+    isDefault: true,
+    primarySponsor: boot.primarySponsor ?? null,
+    secondarySponsors: Array.isArray(boot.secondarySponsors) ? boot.secondarySponsors : [],
+    slots: []
+  };
+}
+function wellFormedCampaigns(boot) {
+  const list = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+  return list.filter((c4) => !!c4 && typeof c4 === "object");
+}
+function activeCampaigns(boot) {
+  return wellFormedCampaigns(boot).filter((c4) => c4.status === "active");
+}
+function slotsOf(campaign) {
+  const slots = Array.isArray(campaign.slots) ? campaign.slots : [];
+  return slots.filter((s4) => !!s4 && typeof s4 === "object");
+}
+function assignmentMatches(s4, name, now, platform) {
+  if (typeof s4.name !== "string" || s4.name.trim() !== name) return false;
+  if (platform && s4.platform != null && s4.platform !== platform) return false;
+  const start = parseTime(s4.startDate);
+  if (start !== void 0 && start > now) return false;
+  const end = parseTime(s4.endDate);
+  if (end !== void 0 && now >= end) return false;
+  return true;
+}
+function parseTime(value) {
+  if (value == null || value === "") return void 0;
+  const t4 = Date.parse(String(value));
+  return Number.isFinite(t4) ? t4 : void 0;
+}
+function toNumber(value) {
+  if (value === void 0 || value === null || value === "") return void 0;
+  const n6 = Number(value);
+  return Number.isFinite(n6) ? n6 : void 0;
+}
+function normalizeSlotId(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, SLOT_ID_MAX_LENGTH).trim();
+}
+function normalizeSlotLocations(slots) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  if (!Array.isArray(slots)) return out;
+  for (const raw of slots) {
+    const id = normalizeSlotId(typeof raw === "string" ? raw : raw?.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const displayName = raw && typeof raw === "object" && typeof raw.displayName === "string" ? raw.displayName.trim() : "";
+    const campaignId = raw && typeof raw === "object" ? toCampaignId(raw.campaignId) : void 0;
+    const location2 = { id };
+    if (displayName) location2.displayName = displayName;
+    if (campaignId !== void 0) location2.campaignId = campaignId;
+    out.push(location2);
+  }
+  return out;
+}
+function autoSlotId(kind, ordinal, scope) {
+  const tail = `${kind}-${ordinal + 1}`;
+  let prefix = normalizeScope(scope);
+  const room = SLOT_ID_MAX_LENGTH - tail.length - 1;
+  if (prefix.length > room) prefix = prefix.slice(0, Math.max(0, room)).replace(/-+$/, "");
+  return `${prefix ? `${prefix}-` : ""}${tail}`;
+}
+function autoSlotDisplayName(kind, ordinal, scopeName) {
+  const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${ordinal + 1}`;
+  const name = typeof scopeName === "string" ? scopeName.trim() : "";
+  return name ? `${label} \xB7 ${name}` : label;
+}
+function normalizeScope(scope) {
+  if (typeof scope !== "string") return "";
+  return scope.trim().replace(/\s+/g, "-");
+}
+var SLOT_DECLARATION_MEMORY_CAP = 500;
+function slotDeclarationKey(location2, pageCampaignId) {
+  const campaignId = toCampaignId(location2.campaignId) ?? toCampaignId(pageCampaignId);
+  return location2.id + (location2.displayName ? `${location2.displayName}` : "") + (campaignId !== void 0 ? `${campaignId}` : "");
+}
+function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
+  return keys.filter((key) => {
+    const at = memory?.[key];
+    if (typeof at !== "number" || !Number.isFinite(at)) return true;
+    return now - at >= ttl || now < at;
+  });
+}
+function slotKeyId(key) {
+  const cut = key.search(/[\u001f\u001e]/);
+  return cut >= 0 ? key.slice(0, cut) : key;
+}
+function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
+  const next = { ...memory ?? {} };
+  const ids = new Set(keys.map(slotKeyId));
+  for (const existing of Object.keys(next)) {
+    if (ids.has(slotKeyId(existing)) && !keys.includes(existing)) delete next[existing];
+  }
+  for (const key of keys) next[key] = at;
+  const entries = Object.entries(next);
+  if (entries.length <= cap) return next;
+  entries.sort((a3, b3) => b3[1] - a3[1]);
+  return Object.fromEntries(entries.slice(0, cap));
+}
+function slotDeclarationStorageKey(platform, apiKey) {
+  return `vio.slots.${platform}.${fnv1a(apiKey)}`;
+}
+function fnv1a(input) {
+  let hash = 2166136261;
+  for (let i5 = 0; i5 < input.length; i5++) {
+    hash ^= input.charCodeAt(i5);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+function readSlotDeclaration(storageKey) {
+  try {
+    if (typeof localStorage === "undefined") return {};
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    if (Array.isArray(parsed.keys)) return {};
+    const out = {};
+    for (const [key, at] of Object.entries(parsed)) {
+      if (typeof at === "number" && Number.isFinite(at)) out[key] = at;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeSlotDeclaration(storageKey, memory) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(storageKey, JSON.stringify(memory));
+  } catch {
+  }
+}
+
 // src/core/configuration.ts
 var DEFAULT_URLS = {
   // The Vio Backend development environment was removed on 2026-09-16; its REST
@@ -47,6 +286,8 @@ var ConfigurationSingleton = class {
       platform: input.platform ?? "web",
       contentId: input.contentId,
       contentTitle: input.contentTitle,
+      campaignId: toCampaignId(input.campaignId),
+      debug: input.debug === true,
       apiBase: input.apiBase ?? defaults.apiBase,
       graphQLBase: input.graphQLBase ?? defaults.graphQLBase,
       eventsBase: input.eventsBase ?? defaults.eventsBase,
@@ -7521,7 +7762,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.23.1";
+var SDK_VERSION = "0.24.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -9702,165 +9943,6 @@ function stripQueryAndHash(url) {
   return clean.trim() || void 0;
 }
 
-// src/core/slots.ts
-var SLOT_ID_MAX_LENGTH = 100;
-var SLOT_DECLARATION_TTL_MS = 24 * 60 * 60 * 1e3;
-var SLOT_DECLARATION_FAILURE_TTL_MS = 60 * 60 * 1e3;
-var MAX_LOCATIONS_PER_DECLARATION = 100;
-var MAX_DECLARATIONS_PER_LOAD = 3;
-function resolveSlotCampaign(boot, slot, now = Date.now(), platform) {
-  if (!boot) return null;
-  return findSlotAssignment(boot, slot, now, platform) ?? defaultCampaignEntry(boot);
-}
-function findSlotAssignment(boot, slot, now = Date.now(), platform) {
-  const name = typeof slot === "string" ? slot.trim() : "";
-  if (!boot || !name) return null;
-  try {
-    const matches = activeCampaigns(boot).filter(
-      (c4) => slotsOf(c4).some((s4) => assignmentMatches(s4, name, now, platform))
-    );
-    if (matches.length === 0) return null;
-    const defaultId = toNumber(boot.campaign?.id);
-    return matches.find((c4) => toNumber(c4.id) === defaultId) ?? matches[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-function defaultCampaignEntry(boot) {
-  if (!boot?.campaign || typeof boot.campaign !== "object") return null;
-  const defaultId = toNumber(boot.campaign.id);
-  if (defaultId === void 0) return null;
-  try {
-    const listed = wellFormedCampaigns(boot).find((c4) => toNumber(c4.id) === defaultId);
-    if (listed) return listed;
-  } catch {
-  }
-  return {
-    ...boot.campaign,
-    isDefault: true,
-    primarySponsor: boot.primarySponsor ?? null,
-    secondarySponsors: Array.isArray(boot.secondarySponsors) ? boot.secondarySponsors : [],
-    slots: []
-  };
-}
-function wellFormedCampaigns(boot) {
-  const list = Array.isArray(boot.campaigns) ? boot.campaigns : [];
-  return list.filter((c4) => !!c4 && typeof c4 === "object");
-}
-function activeCampaigns(boot) {
-  return wellFormedCampaigns(boot).filter((c4) => c4.status === "active");
-}
-function slotsOf(campaign) {
-  const slots = Array.isArray(campaign.slots) ? campaign.slots : [];
-  return slots.filter((s4) => !!s4 && typeof s4 === "object");
-}
-function assignmentMatches(s4, name, now, platform) {
-  if (typeof s4.name !== "string" || s4.name.trim() !== name) return false;
-  if (platform && s4.platform != null && s4.platform !== platform) return false;
-  const start = parseTime(s4.startDate);
-  if (start !== void 0 && start > now) return false;
-  const end = parseTime(s4.endDate);
-  if (end !== void 0 && now >= end) return false;
-  return true;
-}
-function parseTime(value) {
-  if (value == null || value === "") return void 0;
-  const t4 = Date.parse(String(value));
-  return Number.isFinite(t4) ? t4 : void 0;
-}
-function toNumber(value) {
-  if (value === void 0 || value === null || value === "") return void 0;
-  const n6 = Number(value);
-  return Number.isFinite(n6) ? n6 : void 0;
-}
-function normalizeSlotId(value) {
-  if (typeof value !== "string") return "";
-  return value.trim().slice(0, SLOT_ID_MAX_LENGTH).trim();
-}
-function normalizeSlotLocations(slots) {
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  if (!Array.isArray(slots)) return out;
-  for (const raw of slots) {
-    const id = normalizeSlotId(typeof raw === "string" ? raw : raw?.id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const displayName = raw && typeof raw === "object" && typeof raw.displayName === "string" ? raw.displayName.trim() : "";
-    out.push(displayName ? { id, displayName } : { id });
-  }
-  return out;
-}
-function autoSlotId(kind, ordinal, scope) {
-  const tail = `${kind}-${ordinal + 1}`;
-  let prefix = normalizeScope(scope);
-  const room = SLOT_ID_MAX_LENGTH - tail.length - 1;
-  if (prefix.length > room) prefix = prefix.slice(0, Math.max(0, room)).replace(/-+$/, "");
-  return `${prefix ? `${prefix}-` : ""}${tail}`;
-}
-function autoSlotDisplayName(kind, ordinal, scopeName) {
-  const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${ordinal + 1}`;
-  const name = typeof scopeName === "string" ? scopeName.trim() : "";
-  return name ? `${label} \xB7 ${name}` : label;
-}
-function normalizeScope(scope) {
-  if (typeof scope !== "string") return "";
-  return scope.trim().replace(/\s+/g, "-");
-}
-var SLOT_DECLARATION_MEMORY_CAP = 500;
-function slotDeclarationKey(location2) {
-  return location2.displayName ? `${location2.id}${location2.displayName}` : location2.id;
-}
-function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
-  return keys.filter((key) => {
-    const at = memory?.[key];
-    if (typeof at !== "number" || !Number.isFinite(at)) return true;
-    return now - at >= ttl || now < at;
-  });
-}
-function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
-  const next = { ...memory ?? {} };
-  for (const key of keys) next[key] = at;
-  const entries = Object.entries(next);
-  if (entries.length <= cap) return next;
-  entries.sort((a3, b3) => b3[1] - a3[1]);
-  return Object.fromEntries(entries.slice(0, cap));
-}
-function slotDeclarationStorageKey(platform, apiKey) {
-  return `vio.slots.${platform}.${fnv1a(apiKey)}`;
-}
-function fnv1a(input) {
-  let hash = 2166136261;
-  for (let i5 = 0; i5 < input.length; i5++) {
-    hash ^= input.charCodeAt(i5);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
-function readSlotDeclaration(storageKey) {
-  try {
-    if (typeof localStorage === "undefined") return {};
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    if (Array.isArray(parsed.keys)) return {};
-    const out = {};
-    for (const [key, at] of Object.entries(parsed)) {
-      if (typeof at === "number" && Number.isFinite(at)) out[key] = at;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-function writeSlotDeclaration(storageKey, memory) {
-  try {
-    if (typeof localStorage === "undefined") return;
-    localStorage.setItem(storageKey, JSON.stringify(memory));
-  } catch {
-  }
-}
-
 // src/core/cart/slices.ts
 function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
   if (!Array.isArray(lines) || lines.length === 0) return [];
@@ -10578,27 +10660,27 @@ function vioCart() {
     return null;
   }
 }
-function resolveCampaignId(ctx, boot) {
+function resolveCampaignId(ctx, boot, opts = {}) {
   if (ctx.campaignId !== void 0) return ctx.campaignId;
   const defaultId = boot?.campaign?.id;
-  if (ctx.slot) {
-    const platform = Configuration.isInitialized ? Configuration.get().platform : void 0;
-    const assigned = toNumber(findSlotAssignment(boot, ctx.slot, Date.now(), platform)?.id);
-    if (assigned !== void 0) return assigned;
-  }
+  const config = Configuration.isInitialized ? Configuration.get() : void 0;
   const sponsorId = toNumber(ctx.sponsorId);
-  if (sponsorId === void 0) return defaultId;
-  try {
-    const campaigns = Array.isArray(boot?.campaigns) ? boot.campaigns : [];
-    const matches = campaigns.filter(
-      (c4) => !!c4 && typeof c4 === "object" && c4.status === "active" && campaignSponsorIds(c4).includes(sponsorId)
-    );
-    const chosen = matches.find((c4) => c4.id === defaultId) ?? matches[0];
-    const chosenId = toNumber(chosen?.id);
-    if (chosenId !== void 0) return chosenId;
-  } catch {
+  const candidates = [
+    ...Array.isArray(opts.pageCampaignId) ? opts.pageCampaignId : [opts.pageCampaignId],
+    config?.campaignId
+  ];
+  const page = activeCampaignEntry(boot, candidates, sponsorId);
+  if (ctx.slot) {
+    const assignment = findSlotAssignmentDetail(boot, ctx.slot, Date.now(), config?.platform);
+    if (assignment && assignmentApplies(assignment, activeCampaignEntry(boot, candidates), sponsorId)) {
+      const assigned = toNumber(assignment.campaign.id);
+      if (assigned !== void 0) return assigned;
+    }
   }
-  return defaultId;
+  const pageId = toNumber(page?.id);
+  if (pageId !== void 0) return pageId;
+  if (sponsorId === void 0) return defaultId;
+  return toNumber(sponsorCampaignEntry(boot, sponsorId)?.id) ?? defaultId;
 }
 function campaignOf(detail) {
   return toNumber(detail.campaignId);
@@ -10632,17 +10714,6 @@ function contentOf(detail) {
   else if (typeof detail.contentId === "string" && detail.contentId.trim()) out.contentId = detail.contentId.trim();
   if (typeof detail.contentTitle === "string" && detail.contentTitle.trim()) out.contentTitle = detail.contentTitle.trim();
   return out;
-}
-function campaignSponsorIds(campaign) {
-  const ids = [];
-  const primary = toNumber(campaign.primarySponsor?.id);
-  if (primary !== void 0) ids.push(primary);
-  const secondaries = Array.isArray(campaign.secondarySponsors) ? campaign.secondarySponsors : [];
-  for (const s4 of secondaries) {
-    const id = toNumber(s4?.id);
-    if (id !== void 0) ids.push(id);
-  }
-  return ids;
 }
 function purchaseFromPaymentSuccess(d3) {
   const r6 = d3.result ?? {};
@@ -10707,8 +10778,11 @@ var VioFacade = class {
      * (another key or environment) is still in flight after a re-init; its answer
      * belongs to that configuration and must not land in this one. */
     this.generation = 0;
-    /** Slot ids present on the page (`Vio.registerSlot`): how many elements hold each + its display name. */
+    /** Slot ids present on the page (`Vio.registerSlot`): how many elements hold each, its display name and its own campaign. */
     this.slotRegistry = /* @__PURE__ */ new Map();
+    /** Slots already warned about (`dashboard`: the dashboard's assignment stands; `replaced`: this page moved it). */
+    this.warnedDashboardSlots = /* @__PURE__ */ new Set();
+    this.warnedReplacedSlots = /* @__PURE__ */ new Set();
     /** Pending debounced declaration of the registry. */
     this.slotDeclareTimer = null;
     /** A name appeared (or the key changed) since the registry was last declared. */
@@ -10741,6 +10815,8 @@ var VioFacade = class {
     this.declarationsThisLoad = 0;
     this.warnedLocationCap = false;
     this.warnedDeclarationCap = false;
+    this.warnedDashboardSlots.clear();
+    this.warnedReplacedSlots.clear();
   }
   /**
    * The content (article, page) this SDK instance is rendered in — what every
@@ -10878,9 +10954,14 @@ var VioFacade = class {
       const cfg = Configuration.get();
       storageKey = slotDeclarationStorageKey(cfg.platform, cfg.apiKey);
       now = Date.now();
+      const pageCampaignId = cfg.campaignId;
+      for (const l3 of all) {
+        if (l3.campaignId !== void 0 && l3.campaignId === pageCampaignId) delete l3.campaignId;
+      }
       const memory = readSlotDeclaration(storageKey);
-      const pending2 = new Set(pendingSlotKeys(memory, all.map(slotDeclarationKey), now));
-      let locations = opts.force ? all : all.filter((l3) => pending2.has(slotDeclarationKey(l3)));
+      const keyOf = (l3) => slotDeclarationKey(l3, pageCampaignId);
+      const pending2 = new Set(pendingSlotKeys(memory, all.map(keyOf), now));
+      let locations = opts.force ? all : all.filter((l3) => pending2.has(keyOf(l3)));
       if (locations.length === 0) return null;
       if (locations.length > MAX_LOCATIONS_PER_DECLARATION) {
         if (!this.warnedLocationCap) {
@@ -10891,7 +10972,7 @@ var VioFacade = class {
         }
         locations = locations.slice(0, MAX_LOCATIONS_PER_DECLARATION);
       }
-      keys = locations.map(slotDeclarationKey);
+      keys = locations.map(keyOf);
       if (!opts.force && this.declarationsThisLoad >= MAX_DECLARATIONS_PER_LOAD) {
         if (!this.warnedDeclarationCap) {
           this.warnedDeclarationCap = true;
@@ -10905,10 +10986,16 @@ var VioFacade = class {
       const result = await this.api.declareManifest({
         platform: cfg.platform,
         mode: "merge",
-        locations
+        locations,
+        ...pageCampaignId !== void 0 ? { campaignId: pageCampaignId } : {}
       });
+      this.reportAssignments(result, locations, pageCampaignId, cfg.debug);
       if (result?.mode === "merge") {
-        writeSlotDeclaration(storageKey, rememberSlotKeys(memory, keys, now));
+        const unhandled = this.campaignNotTakenUp(result, locations, pageCampaignId);
+        const settled = keys.filter((k2) => !unhandled.has(k2));
+        let next = rememberSlotKeys(memory, settled, now);
+        if (unhandled.size > 0) next = rememberSlotKeys(next, [...unhandled], failedAt(now));
+        writeSlotDeclaration(storageKey, next);
       } else {
         writeSlotDeclaration(storageKey, rememberSlotKeys(memory, keys, failedAt(now)));
         warn(
@@ -10927,26 +11014,33 @@ var VioFacade = class {
   /**
    * Register a slot present on the page (the `<vio-*>` elements call it with
    * their effective id — the host's `vio-slot` or the auto-generated one —
-   * and the optional display name). The registry is declared ONCE, debounced,
-   * after the first successful bootstrap — and again whenever a new id or a
-   * new display name appears. A `displayName` given later for an id already
-   * registered replaces the one kept; `undefined` leaves it alone. The
-   * returned function unregisters; removal never re-declares.
+   * the optional display name, and the element's own campaign when it has
+   * one: `vio-campaign` or an ancestor's `data-vio-campaign`). The registry is
+   * declared ONCE, debounced, after the first successful bootstrap — and again
+   * whenever a new id, display name or campaign appears. A `displayName` /
+   * `campaignId` given later for an id already registered replaces the one
+   * kept; `undefined` leaves it alone. The returned function unregisters;
+   * removal never re-declares.
    */
-  registerSlot(name, displayName) {
+  registerSlot(name, displayName, campaignId) {
     const id = normalizeSlotId(name);
     if (!id) return () => {
     };
     const label = typeof displayName === "string" && displayName.trim() ? displayName.trim() : void 0;
+    const campaign = toCampaignId(campaignId);
     const entry = this.slotRegistry.get(id);
     let changed = false;
     if (!entry) {
-      this.slotRegistry.set(id, { count: 1, displayName: label });
+      this.slotRegistry.set(id, { count: 1, displayName: label, campaignId: campaign });
       changed = true;
     } else {
       entry.count++;
       if (label !== void 0 && label !== entry.displayName) {
         entry.displayName = label;
+        changed = true;
+      }
+      if (campaign !== void 0 && campaign !== entry.campaignId) {
+        entry.campaignId = campaign;
         changed = true;
       }
     }
@@ -10969,9 +11063,30 @@ var VioFacade = class {
    * open campaign for the init platform, else the surface's default. With no
    * slot, the default. `null` before the bootstrap. See `resolveSlotCampaign`.
    */
-  campaignForSlot(slot) {
-    const platform = Configuration.isInitialized ? Configuration.get().platform : void 0;
-    return resolveSlotCampaign(this.cachedBootstrap, slot ?? null, Date.now(), platform);
+  campaignForSlot(slot, hint) {
+    const config = Configuration.isInitialized ? Configuration.get() : void 0;
+    return resolveSlotCampaign(
+      this.cachedBootstrap,
+      slot ?? null,
+      Date.now(),
+      config?.platform,
+      this.pageCampaignCandidates(hint?.campaignId),
+      toNumber(hint?.sponsorId)
+    );
+  }
+  /** The page-campaign candidates in precedence order: the element's (own, ancestor), then `Vio.init`'s. */
+  pageCampaignCandidates(hint) {
+    const config = Configuration.isInitialized ? Configuration.get() : void 0;
+    return campaignCandidates([...Array.isArray(hint) ? hint : [hint], config?.campaignId]);
+  }
+  /**
+   * The campaign the PAGE belongs to (`Vio.init({ campaignId })`, ADR-0034
+   * amendment 3), as the last bootstrap lists it — only when it is there and
+   * active; `null` otherwise (no page campaign, paused, unknown, no bootstrap).
+   */
+  pageCampaign() {
+    const config = Configuration.isInitialized ? Configuration.get() : void 0;
+    return activeCampaignEntry(this.cachedBootstrap, config?.campaignId);
   }
   /**
    * THE attribution helper — the SDK elements, Vev and Replit all use this
@@ -10983,8 +11098,12 @@ var VioFacade = class {
    *
    * `hint.sponsorId` — when the caller already knows the sponsor (a card with
    * `sponsor-id`) it is kept as `sponsorId`, and the campaign follows the same
-   * cascade analytics uses (slot assignment → the sponsor's active campaign →
-   * default), so what the cart remembers matches what the events say.
+   * cascade analytics uses (slot assignment → page campaign → the sponsor's
+   * active campaign → default), so what the cart remembers matches what the
+   * events say — the page campaign applies there only when that sponsor takes
+   * part in it. `hint.campaignId` — the element's own page campaign
+   * candidates (`vio-campaign`, an ancestor's `data-vio-campaign`), ahead of
+   * `Vio.init`'s; an unusable one falls through to the next; `0` = unset.
    */
   attribution(slot, hint) {
     const out = {};
@@ -10993,13 +11112,16 @@ var VioFacade = class {
       if (name) out.slot = name;
       const boot = this.cachedBootstrap;
       const hinted = toNumber(hint?.sponsorId);
+      const pageCampaignId = this.pageCampaignCandidates(hint?.campaignId);
       if (boot) {
         if (hinted !== void 0) {
-          const campaignId = resolveCampaignId({ slot: name || void 0, sponsorId: hinted }, boot);
+          const campaignId = resolveCampaignId({ slot: name || void 0, sponsorId: hinted }, boot, {
+            pageCampaignId
+          });
           if (campaignId !== void 0) out.campaignId = campaignId;
           out.sponsorId = hinted;
         } else {
-          const campaign = this.campaignForSlot(name || null);
+          const campaign = this.campaignForSlot(name || null, { campaignId: pageCampaignId });
           const campaignId = toNumber(campaign?.id);
           if (campaignId !== void 0) out.campaignId = campaignId;
           const sponsorId = toNumber(campaign?.primarySponsor?.id);
@@ -11044,15 +11166,62 @@ var VioFacade = class {
       return [];
     }
   }
+  /**
+   * What the micro did with the page's campaign per slot (`assignment`):
+   * `console.debug` when `Vio.init({ debug: true })`; a warning once per
+   * slot when the dashboard's own assignment stands (only for a slot this
+   * page actually sent a campaign for) and once per slot when this page moved
+   * it from an earlier page assignment (`replaced`).
+   */
+  reportAssignments(result, sent, pageCampaignId, debug) {
+    const answered = Array.isArray(result?.locations) ? result.locations : [];
+    const campaignFor = (id) => sent.find((l3) => l3.id === id)?.campaignId ?? pageCampaignId;
+    for (const l3 of answered) {
+      if (!l3 || typeof l3 !== "object" || !l3.assignment) continue;
+      if (debug && typeof console !== "undefined") console.debug("[Vio] slot", l3.locationId, "assignment:", l3.assignment);
+      const sentCampaign = campaignFor(l3.locationId);
+      if (sentCampaign === void 0) continue;
+      if (l3.assignment === "dashboard" && !this.warnedDashboardSlots.has(l3.locationId)) {
+        this.warnedDashboardSlots.add(l3.locationId);
+        warn(`slot ${l3.locationId} is assigned from the dashboard; the page's campaign is ignored there`);
+      }
+      if (l3.assignment === "replaced" && !this.warnedReplacedSlots.has(l3.locationId)) {
+        this.warnedReplacedSlots.add(l3.locationId);
+        warn(`slot ${l3.locationId} moved to campaign ${sentCampaign} by this page (it replaced an earlier page assignment)`);
+      }
+    }
+  }
+  /**
+   * The memory keys of the sent locations whose campaign the micro did not
+   * take up: every location when a campaign was sent and no answer carries
+   * `assignment` (an older micro), or the ones answered `none` for a campaign
+   * the bootstrap lists as active. They are remembered with the 1 h TTL.
+   */
+  campaignNotTakenUp(result, sent, pageCampaignId) {
+    const out = /* @__PURE__ */ new Set();
+    const withCampaign = sent.filter((l3) => (l3.campaignId ?? pageCampaignId) !== void 0);
+    if (withCampaign.length === 0) return out;
+    const answered = Array.isArray(result?.locations) ? result.locations : [];
+    const anyAssignment = answered.some((l3) => l3 && typeof l3 === "object" && !!l3.assignment);
+    for (const l3 of withCampaign) {
+      const answer = answered.find((a3) => a3 && a3.locationId === l3.id);
+      const campaignId = l3.campaignId ?? pageCampaignId;
+      const notTaken = !anyAssignment || answer?.assignment === "none" && activeCampaignEntry(this.cachedBootstrap, campaignId) !== null;
+      if (notTaken) out.add(slotDeclarationKey(l3, pageCampaignId));
+    }
+    return out;
+  }
   scheduleSlotDeclaration() {
     if (this.slotDeclareTimer) clearTimeout(this.slotDeclareTimer);
     this.slotDeclareTimer = setTimeout(() => {
       this.slotDeclareTimer = null;
       this.slotsDirty = false;
       void this.declareSlots(
-        [...this.slotRegistry.entries()].map(
-          ([id, { displayName }]) => displayName ? { id, displayName } : id
-        )
+        [...this.slotRegistry.entries()].map(([id, { displayName, campaignId }]) => ({
+          id,
+          ...displayName ? { displayName } : {},
+          ...campaignId !== void 0 ? { campaignId } : {}
+        }))
       );
     }, SLOT_DECLARATION_DEBOUNCE_MS);
   }
@@ -11782,6 +11951,8 @@ var SCOPE_ATTR = "vio-scope";
 var SCOPE_NAME_ATTR = "vio-scope-name";
 var SCOPE_DATA_ATTR = "data-vio-scope";
 var SCOPE_NAME_DATA_ATTR = "data-vio-scope-name";
+var CAMPAIGN_ATTR = "vio-campaign";
+var CAMPAIGN_DATA_ATTR = "data-vio-campaign";
 var liveAutoIds = (() => {
   const g2 = globalThis;
   return g2.__VIO_LIVE_SLOT_IDS__ ?? (g2.__VIO_LIVE_SLOT_IDS__ = /* @__PURE__ */ new Map());
@@ -11802,6 +11973,14 @@ var SlotRegistration = class {
   /** The effective slot id ('' before connect / after disconnect). */
   get effective() {
     return this.identity?.id ?? "";
+  }
+  /** The element's own page campaign (`vio-campaign` / ancestor `data-vio-campaign`); undefined → `Vio.init`'s applies. */
+  get campaignId() {
+    return this.identity?.campaignId;
+  }
+  /** The element's page-campaign candidates in order (own, ancestor) — the hint for `Vio.attribution` / `campaignForSlot`. */
+  get campaignHint() {
+    return this.identity?.campaignCandidates ?? [];
   }
   /** On connect: read the scope from the DOM, then register. */
   connect(attrs) {
@@ -11827,7 +12006,7 @@ var SlotRegistration = class {
     this.unregister();
     if (!next) return;
     try {
-      this.release = typeof Vio.registerSlot === "function" ? Vio.registerSlot(next.id, next.displayName) : null;
+      this.release = typeof Vio.registerSlot !== "function" ? null : next.campaignId !== void 0 ? Vio.registerSlot(next.id, next.displayName, next.campaignId) : Vio.registerSlot(next.id, next.displayName);
       this.identity = next;
     } catch {
       this.release = null;
@@ -11838,13 +12017,20 @@ var SlotRegistration = class {
   resolve(attrs) {
     const explicit = normalizeSlotId(attrs.vioSlot);
     const name = typeof attrs.vioSlotName === "string" && attrs.vioSlotName.trim() ? attrs.vioSlotName.trim() : void 0;
+    const campaignCandidates2 = campaignCandidatesOf(this.host, attrs);
+    const campaignId = campaignCandidates2[0];
     if (explicit) {
       this.releaseAuto();
-      return { id: explicit, displayName: name };
+      return { id: explicit, displayName: name, campaignId, campaignCandidates: campaignCandidates2 };
     }
     if (!this.connected) return null;
     const auto = this.claimAuto();
-    return { id: auto.id, displayName: name ?? autoSlotDisplayName(this.kind, auto.number - 1, this.scopeName) };
+    return {
+      id: auto.id,
+      displayName: name ?? autoSlotDisplayName(this.kind, auto.number - 1, this.scopeName),
+      campaignId,
+      campaignCandidates: campaignCandidates2
+    };
   }
   /** Unregister whatever is registered and free the auto number. */
   clear() {
@@ -11886,7 +12072,12 @@ var SlotRegistration = class {
 };
 function sameIdentity(a3, b3) {
   if (!a3 || !b3) return a3 === b3;
-  return a3.id === b3.id && a3.displayName === b3.displayName;
+  return a3.id === b3.id && a3.displayName === b3.displayName && a3.campaignId === b3.campaignId;
+}
+function campaignCandidatesOf(el, attrs) {
+  const own = attrs && attrs.vioCampaign !== void 0 && attrs.vioCampaign !== null ? attrs.vioCampaign : el.vioCampaign !== void 0 ? el.vioCampaign : el.getAttribute(CAMPAIGN_ATTR);
+  const ancestor = closestAcrossShadow(el, `[${CAMPAIGN_DATA_ATTR}]`)?.getAttribute(CAMPAIGN_DATA_ATTR);
+  return campaignCandidates([own, ancestor]);
 }
 function scopeOf(el, attrs) {
   const own = attrs && typeof attrs.vioScope === "string" ? attrs.vioScope : typeof el.vioScope === "string" ? el.vioScope ?? "" : el.getAttribute(SCOPE_ATTR) ?? "";
@@ -11925,6 +12116,7 @@ var VioProduct = class extends i4 {
     this.vioSlotName = "";
     this.vioScope = "";
     this.vioScopeName = "";
+    this.vioCampaign = "";
     this.vioContentId = "";
     this.vioContentTitle = "";
     this.slotRegistration = new SlotRegistration(this, "card");
@@ -11941,9 +12133,13 @@ var VioProduct = class extends i4 {
   get effectiveSlot() {
     return this.slotRegistration.effective;
   }
+  /** The element's own page campaign (`vio-campaign` / ancestor), if any; `Vio.init`'s applies otherwise. */
+  get effectiveCampaignId() {
+    return this.slotRegistration.campaignId;
+  }
   /** The slot campaign's sponsor as the string the attributes use ('' when unknown). */
   sponsorFromAttribution() {
-    const id = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot).sponsorId : void 0;
+    const id = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { campaignId: this.slotRegistration.campaignHint }).sponsorId : void 0;
     return id !== void 0 ? String(id) : "";
   }
   slotAttributes() {
@@ -11951,7 +12147,8 @@ var VioProduct = class extends i4 {
       vioSlot: this.vioSlot,
       vioSlotName: this.vioSlotName,
       vioScope: this.vioScope,
-      vioScopeName: this.vioScopeName
+      vioScopeName: this.vioScopeName,
+      vioCampaign: this.vioCampaign
     };
   }
   /**
@@ -11960,7 +12157,10 @@ var VioProduct = class extends i4 {
    * set `vio-content-id` / `vio-content-title` on this card.
    */
   attribution() {
-    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { sponsorId: this.sponsorId || void 0 }) : { slot: this.effectiveSlot || void 0 };
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, {
+      sponsorId: this.sponsorId || void 0,
+      campaignId: this.slotRegistration.campaignHint
+    }) : { slot: this.effectiveSlot || void 0 };
     return {
       ...base,
       ...this.vioContentId ? { contentId: this.vioContentId } : {},
@@ -12090,7 +12290,7 @@ var VioProduct = class extends i4 {
   }
   updated(changed) {
     if (changed.has("productId") || changed.has("sponsorId")) this.updateInCart();
-    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName") || changed.has("vioCampaign")) {
       this.slotRegistration.sync(this.slotAttributes());
     }
   }
@@ -12247,6 +12447,9 @@ __decorateClass([
   n5({ type: String, attribute: "vio-scope-name" })
 ], VioProduct.prototype, "vioScopeName", 2);
 __decorateClass([
+  n5({ type: String, attribute: "vio-campaign" })
+], VioProduct.prototype, "vioCampaign", 2);
+__decorateClass([
   n5({ type: String, attribute: "vio-content-id" })
 ], VioProduct.prototype, "vioContentId", 2);
 __decorateClass([
@@ -12292,6 +12495,7 @@ var VioProductCarousel = class extends i4 {
     this.vioSlotName = "";
     this.vioScope = "";
     this.vioScopeName = "";
+    this.vioCampaign = "";
     this.vioContentId = "";
     this.vioContentTitle = "";
     this.slotRegistration = new SlotRegistration(this, "carousel");
@@ -12310,17 +12514,25 @@ var VioProductCarousel = class extends i4 {
   get effectiveSlot() {
     return this.slotRegistration.effective;
   }
+  /** The element's own page campaign (`vio-campaign` / ancestor), if any; `Vio.init`'s applies otherwise. */
+  get effectiveCampaignId() {
+    return this.slotRegistration.campaignId;
+  }
   slotAttributes() {
     return {
       vioSlot: this.vioSlot,
       vioSlotName: this.vioSlotName,
       vioScope: this.vioScope,
-      vioScopeName: this.vioScopeName
+      vioScopeName: this.vioScopeName,
+      vioCampaign: this.vioCampaign
     };
   }
   /** Attribution every analytics event of this carousel carries (`Vio.attribution` + the content overrides). */
   attribution() {
-    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0 }) : { slot: this.effectiveSlot || void 0 };
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, {
+      sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+      campaignId: this.slotRegistration.campaignHint
+    }) : { slot: this.effectiveSlot || void 0 };
     return {
       ...base,
       ...this.vioContentId ? { contentId: this.vioContentId } : {},
@@ -12487,10 +12699,10 @@ var VioProductCarousel = class extends i4 {
     super.disconnectedCallback();
   }
   updated(changed) {
-    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName") || changed.has("vioCampaign")) {
       this.slotRegistration.sync(this.slotAttributes());
     }
-    const propChanged = changed.has("productRefs") || changed.has("productIds") || changed.has("commerceKey") || changed.has("sponsorId") || changed.has("vioSlot");
+    const propChanged = changed.has("productRefs") || changed.has("productIds") || changed.has("commerceKey") || changed.has("sponsorId") || changed.has("vioSlot") || changed.has("vioCampaign");
     if (propChanged && (this.productRefs.trim() || this.productIds.trim())) {
       void this.autoFetch();
     }
@@ -12502,7 +12714,7 @@ var VioProductCarousel = class extends i4 {
    */
   effectiveSponsorId() {
     if (this.sponsorId > 0) return this.sponsorId;
-    const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.effectiveSlot || null)?.primarySponsor?.id) : NaN;
+    const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.effectiveSlot || null, { campaignId: this.slotRegistration.campaignHint })?.primarySponsor?.id) : NaN;
     return Number.isFinite(fromSlot) && fromSlot > 0 ? fromSlot : 0;
   }
   async autoFetch() {
@@ -12651,6 +12863,7 @@ var VioProductCarousel = class extends i4 {
             image-url=${img}
             ?has-variants=${(p3.variants?.length ?? 0) > 1}
             .vioSlot=${this.effectiveSlot}
+            .vioCampaign=${this.effectiveCampaignId !== void 0 ? String(this.effectiveCampaignId) : ""}
             .vioContentId=${this.vioContentId}
             .vioContentTitle=${this.vioContentTitle}
           ></vio-product>
@@ -12734,6 +12947,9 @@ __decorateClass([
 __decorateClass([
   n5({ type: String, attribute: "vio-scope-name" })
 ], VioProductCarousel.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-campaign" })
+], VioProductCarousel.prototype, "vioCampaign", 2);
 __decorateClass([
   n5({ type: String, attribute: "vio-content-id" })
 ], VioProductCarousel.prototype, "vioContentId", 2);
@@ -12982,6 +13198,7 @@ var VioProductDetail = class extends i4 {
     this.vioSlotName = "";
     this.vioScope = "";
     this.vioScopeName = "";
+    this.vioCampaign = "";
     this.vioContentId = "";
     this.vioContentTitle = "";
     this.slotRegistration = new SlotRegistration(this, "detail");
@@ -12989,6 +13206,7 @@ var VioProductDetail = class extends i4 {
     this.eventSlot = "";
     this.eventContentId = "";
     this.eventContentTitle = "";
+    this.eventCampaignId = void 0;
     this.eventProductId = "";
     this.product = null;
     this.sellerName = null;
@@ -13023,11 +13241,16 @@ var VioProductDetail = class extends i4 {
       const slot = typeof ev.detail.slot === "string" ? ev.detail.slot.trim() : "";
       let sponsorIdNum = parseInt(ev.detail.sponsorId, 10);
       if (Number.isNaN(sponsorIdNum) || sponsorIdNum <= 0) {
-        const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(slot || this.effectiveSlot || null)?.primarySponsor?.id) : NaN;
+        const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(
+          Vio.campaignForSlot(slot || this.effectiveSlot || null, {
+            campaignId: [ev.detail.campaignId, ...this.slotRegistration.campaignHint]
+          })?.primarySponsor?.id
+        ) : NaN;
         if (!Number.isFinite(fromSlot) || fromSlot <= 0) return;
         sponsorIdNum = fromSlot;
       }
       this.eventSlot = slot;
+      this.eventCampaignId = toCampaignId(ev.detail.campaignId);
       this.eventProductId = String(ev.detail.productId);
       this.eventContentId = ev.detail.contentId !== void 0 && ev.detail.contentId !== null ? String(ev.detail.contentId).trim() : "";
       this.eventContentTitle = typeof ev.detail.contentTitle === "string" ? ev.detail.contentTitle.trim() : "";
@@ -13046,21 +13269,34 @@ var VioProductDetail = class extends i4 {
   get effectiveSlot() {
     return this.slotRegistration.effective;
   }
+  /** The element's own page campaign (`vio-campaign` / ancestor), if any; `Vio.init`'s applies otherwise. */
+  get effectiveCampaignId() {
+    return this.slotRegistration.campaignId;
+  }
   /** The slot the open product is attributed to: the opening card's, else this element's. */
   get activeSlot() {
     return this.fromCard && this.eventSlot || this.effectiveSlot;
+  }
+  /** The page-campaign candidates of the open product: the opening card's, then this element's own and its ancestor's. */
+  get activeCampaignHint() {
+    const own = this.slotRegistration.campaignHint;
+    return this.fromCard && this.eventCampaignId !== void 0 ? [this.eventCampaignId, ...own] : own;
   }
   slotAttributes() {
     return {
       vioSlot: this.vioSlot,
       vioSlotName: this.vioSlotName,
       vioScope: this.vioScope,
-      vioScopeName: this.vioScopeName
+      vioScopeName: this.vioScopeName,
+      vioCampaign: this.vioCampaign
     };
   }
   /** Attribution every event of the open product carries (`Vio.attribution` of the opening card's slot, else this element's). */
   attribution() {
-    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.activeSlot, { sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0 }) : { slot: this.activeSlot || void 0 };
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.activeSlot, {
+      sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+      campaignId: this.activeCampaignHint
+    }) : { slot: this.activeSlot || void 0 };
     const contentId = this.fromCard && this.eventContentId || this.vioContentId;
     const contentTitle = this.fromCard && this.eventContentTitle || this.vioContentTitle;
     return {
@@ -13527,7 +13763,7 @@ var VioProductDetail = class extends i4 {
   }
   updated(changed) {
     if (changed.has("open")) this.dialogFocus.update(this.open);
-    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName")) {
+    if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName") || changed.has("vioCampaign")) {
       this.slotRegistration.sync(this.slotAttributes());
     }
   }
@@ -13541,6 +13777,7 @@ var VioProductDetail = class extends i4 {
         this.eventSlot = "";
         this.eventContentId = "";
         this.eventContentTitle = "";
+        this.eventCampaignId = void 0;
         this.eventProductId = "";
         this.product = null;
         this.sellerName = null;
@@ -13641,7 +13878,7 @@ var VioProductDetail = class extends i4 {
   }
   /** Which buy buttons to render — backend-configured per sponsor. */
   async loadAvailablePaymentMethods() {
-    const spId = this.sponsorId || (typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.activeSlot || null)?.primarySponsor?.id) : 0) || globalThis.__VIO_SPONSOR_ID__;
+    const spId = this.sponsorId || (typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.activeSlot || null, { campaignId: this.activeCampaignHint })?.primarySponsor?.id) : 0) || globalThis.__VIO_SPONSOR_ID__;
     if (!spId) return;
     try {
       const methods = await Vio.checkout.getAvailablePaymentMethods(spId);
@@ -14347,6 +14584,9 @@ __decorateClass([
 __decorateClass([
   n5({ type: String, attribute: "vio-scope-name" })
 ], VioProductDetail.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-campaign" })
+], VioProductDetail.prototype, "vioCampaign", 2);
 __decorateClass([
   n5({ type: String, attribute: "vio-content-id" })
 ], VioProductDetail.prototype, "vioContentId", 2);
@@ -18888,10 +19128,12 @@ export {
   VioProductCarousel2 as VioProductCarousel,
   VioProductDetail2 as VioProductDetail,
   VioTokens,
+  activeCampaignEntry,
   addItem,
   applyVioTheme,
   autoSlotDisplayName,
   autoSlotId,
+  campaignCandidates,
   cartSlicesFrom,
   checkApplePayAvailability,
   createCart,
@@ -18923,6 +19165,8 @@ export {
   resolveSlotCampaign,
   sameOrigin,
   showApplePaySheet,
+  sponsorCampaignEntry,
+  toCampaignId,
   updateCheckout,
   updateItem,
   updateShippingsBySupplier,

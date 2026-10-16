@@ -125,7 +125,7 @@ of the surface's campaigns, listed by name from the connected key's bootstrap
 (`campaigns[]`, active ones first) the way `Active Sponsor` lists its sponsors — the field
 reads what the Config wrote after connecting, so it says so until the key is connected.
 The choice is saved as the block's `campaignId` (empty = the default campaign) and goes
-into `Vio.init({ campaignId })`: the SDK (≥ 0.24.0) applies it wherever a slot has no
+into `Vio.init({ campaignId })`: the SDK (0.24.0, vendored) applies it wherever a slot has no
 assignment from the dashboard — **assignment > page campaign > default** — for the
 products a block fetches (that campaign's primary sponsor, when the key knows it), for
 every event's `campaign_id`, and for the declaration of the page's slots, which carries
@@ -175,10 +175,10 @@ forward. A cart line keeps the `origin` of every unit (campaign, slot, article).
 - `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
   tagged `vev`), so the dashboard's assignments for Vev apply here.
 
-The vendored SDK is **0.23.1** (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
-`content` / `cartSlices`, `origins` on the cart lines). The blocks still check for that
-API before calling it — a block must never throw into the editor — so with an older
-bundle they behave as before, unregistered.
+The vendored SDK is **0.24.0** (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
+`content` / `cartSlices` / `pageCampaign`, `campaignId` in `Vio.init`, `origins` on the cart
+lines). The blocks still check for that API before calling it — a block must never throw
+into the editor — so with an older bundle they behave as before, unregistered.
 
 ## Development
 

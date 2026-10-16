@@ -1,9 +1,20 @@
 /**
- * The SDK facade (vio-web-sdk 0.23.1). Beyond init / bootstrap / cart /
- * checkout / analytics, the slot API of ADR-0027 / ADR-0034 the blocks use:
- *   registerSlot(id, displayName?) → release()   campaignForSlot(slot?)
- *   attribution(slot?, { sponsorId? }) → { slot?, campaignId?, sponsorId?, contentId?, contentTitle? }
- *   content() → { id?, title? }                   declareSlots(slots, { force? })
+ * The SDK facade (vio-web-sdk 0.24.0). Beyond init / bootstrap / cart /
+ * checkout / analytics, the slot and page-campaign API of ADR-0027 / ADR-0034
+ * (amendment 3) the blocks use:
+ *   init({ apiKey, environment?, platform?, contentId?, contentTitle?, campaignId?, debug?, … })
+ *     — `campaignId`: the page's campaign, the fallback of every slot without a
+ *     dashboard assignment (assignment > page campaign > default), carried by
+ *     the page's declaration; `debug`: console.debug of the slot decisions.
+ *   registerSlot(id, displayName?, campaignId?) → release()
+ *   declareSlots(slots, { force? }) → { …, locations[].assignment: 'created'|'kept'|'replaced'|'dashboard'|'none' }
+ *   pageCampaign() → BootstrapCampaignEntry | null   (the init's campaign when the key has it active)
+ *   campaignForSlot(slot?, { campaignId?, sponsorId? }?) → BootstrapCampaignEntry | null
+ *   attribution(slot?, { sponsorId?, campaignId? }?) → { slot?, campaignId?, sponsorId?, contentId?, contentTitle? }
+ *     — with `sponsorId` the campaign follows assignment > page campaign > the
+ *     sponsor's active campaign > default; `campaignId` overrides the init's page campaign.
+ *   content() → { id?, title? }
+ *   cartSlices(sponsorId?, { items? }?) → [{ campaignId?, sponsorId?, slot?, contentId?, items, value, currency?, slice, slices }]
  * Cart: addProduct / addManual / adjustQuantity / updateQuantity take
  * `{ origin?: { campaignId?, slot?, contentId? } }`; each line keeps
  * `origins: [{ campaignId?, slot?, contentId?, quantity }]`.
