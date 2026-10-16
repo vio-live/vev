@@ -3,9 +3,9 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
-import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
+import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, SLOT_PROPS, pickCardConfig } from "./card-props";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
-import { fetchVioProducts, useActiveSponsorId } from "./vio-helpers";
+import { fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 
 /**
  * Vio Product Carousel — a horizontal, scroll-snapped row of product cards (like
@@ -73,6 +73,9 @@ type Props = {
   visible?: number;
   gap?: number;
   arrows?: boolean;
+  /** Slot (ADR-0034) — both optional; see SLOT_PROPS. */
+  slot?: string;
+  slotName?: string;
   [key: string]: any;
 };
 
@@ -85,13 +88,19 @@ export default function VioProductCarousel(props: Props) {
     visible = 4,
     gap = 16,
     arrows = true,
+    slot: slotProp,
+    slotName,
   } = props;
 
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [list, setList] = useState<any[]>([]);
 
-  // The page's active sponsor, live — the same source as the card and the grid.
-  const activeSponsor = useActiveSponsorId();
+  // The carousel's slot (ADR-0034): the "Slot" field, else `carousel-<vev key>`,
+  // named after its heading and the page; registered as soon as it exists.
+  const { slot } = useVioSlot({ slot: slotProp, slotName, kind: "carousel", title: heading || kicker });
+  // The page's active sponsor, live — the same source as the card and the grid
+  // — unless a campaign is assigned to this slot: then that campaign's sponsor.
+  const activeSponsor = useActiveSponsorId(undefined, slot);
   // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
   // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
   // doble conteo. Corre cuando hay productos, porque recién ahí se monta
@@ -103,10 +112,15 @@ export default function VioProductCarousel(props: Props) {
     if (list.length === 0) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-carousel", locationId: heading || kicker || "Vio Carousel" },
-      `vev-carousel:${activeSponsor}:${heading || kicker || "Vio Carousel"}`,
+      {
+        sponsorId: activeSponsor ?? undefined,
+        componentTemplateId: "vev-carousel",
+        locationId: heading || kicker || "Vio Carousel",
+        ...vioAttribution(slot, activeSponsor),
+      },
+      `vev-carousel:${activeSponsor}:${slot || heading || kicker || "Vio Carousel"}`,
     );
-  }, [list.length, activeSponsor, heading, kicker]);
+  }, [list.length, activeSponsor, heading, kicker, slot]);
   const ids = parseIds(products?.ids);
   const idsKey = ids.join(",");
 
@@ -125,7 +139,11 @@ export default function VioProductCarousel(props: Props) {
     fetchVioProducts(ids, activeSponsor).then((prods) => {
       if (cancelled) return;
       setList(prods);
-      trackViewItemList(prods.map((p) => productToItem(p)), heading || kicker || "Vio Carousel");
+      trackViewItemList(
+        prods.map((p) => productToItem(p)),
+        heading || kicker || "Vio Carousel",
+        vioAttribution(slot, activeSponsor),
+      );
     });
     return () => {
       cancelled = true;
@@ -175,7 +193,7 @@ export default function VioProductCarousel(props: Props) {
         <div className="vio-carousel-track" ref={trackRef} style={{ gap }}>
           {list.map((p, idx) => (
             <div key={p?.id ?? idx} className="vio-carousel-item" style={{ width: itemWidth }}>
-              <ProductCardFromDTO product={p} sponsorId={activeSponsor} config={cardConfig} />
+              <ProductCardFromDTO product={p} sponsorId={activeSponsor} config={cardConfig} slot={slot} />
             </div>
           ))}
         </div>
@@ -224,6 +242,7 @@ registerVevComponent(VioProductCarousel, {
     } as any,
     { name: "gap", title: "Gap (px)", type: "number", initialValue: 16 },
     { name: "arrows", title: "Show arrows", type: "boolean", initialValue: true },
+    ...SLOT_PROPS,
     ...CARD_CONFIG_PROPS,
   ],
 });

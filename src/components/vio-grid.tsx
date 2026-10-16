@@ -3,8 +3,8 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
-import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
-import { fetchVioProducts, useActiveSponsorId } from "./vio-helpers";
+import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, SLOT_PROPS, pickCardConfig } from "./card-props";
+import { fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 
 /**
@@ -38,16 +38,23 @@ type Props = {
   heading?: string;
   columns?: number;
   gap?: number;
+  /** Slot (ADR-0034) — both optional; see SLOT_PROPS. */
+  slot?: string;
+  slotName?: string;
   [key: string]: any;
 };
 
 export default function VioProductGrid(props: Props) {
-  const { products, kicker, heading, columns = 3, gap = 20 } = props;
+  const { products, kicker, heading, columns = 3, gap = 20, slot: slotProp, slotName } = props;
 
   const [list, setList] = useState<any[]>([]);
 
-  // The page's active sponsor, live — the same source as the card and the carousel.
-  const activeSponsor = useActiveSponsorId();
+  // The grid's slot (ADR-0034): the "Slot" field, else `grid-<vev key>`, named
+  // after its heading and the page; registered as soon as it exists.
+  const { slot } = useVioSlot({ slot: slotProp, slotName, kind: "grid", title: heading || kicker });
+  // The page's active sponsor, live — the same source as the card and the
+  // carousel — unless a campaign is assigned to this slot: then its sponsor.
+  const activeSponsor = useActiveSponsorId(undefined, slot);
   // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
   // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
   // doble conteo. Corre cuando hay productos, porque recién ahí se monta
@@ -59,10 +66,15 @@ export default function VioProductGrid(props: Props) {
     if (list.length === 0) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-grid", locationId: heading || kicker || "Vio Grid" },
-      `vev-grid:${activeSponsor}:${heading || kicker || "Vio Grid"}`,
+      {
+        sponsorId: activeSponsor ?? undefined,
+        componentTemplateId: "vev-grid",
+        locationId: heading || kicker || "Vio Grid",
+        ...vioAttribution(slot, activeSponsor),
+      },
+      `vev-grid:${activeSponsor}:${slot || heading || kicker || "Vio Grid"}`,
     );
-  }, [list.length, activeSponsor, heading, kicker]);
+  }, [list.length, activeSponsor, heading, kicker, slot]);
   const ids = parseIds(products?.ids);
   const idsKey = ids.join(",");
 
@@ -81,7 +93,11 @@ export default function VioProductGrid(props: Props) {
     fetchVioProducts(ids, activeSponsor).then((prods) => {
       if (cancelled) return;
       setList(prods);
-      trackViewItemList(prods.map((p) => productToItem(p)), heading || kicker || "Vio Grid");
+      trackViewItemList(
+        prods.map((p) => productToItem(p)),
+        heading || kicker || "Vio Grid",
+        vioAttribution(slot, activeSponsor),
+      );
     });
     return () => {
       cancelled = true;
@@ -116,7 +132,7 @@ export default function VioProductGrid(props: Props) {
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap }}
       >
         {list.map((p, idx) => (
-          <ProductCardFromDTO key={p?.id ?? idx} product={p} sponsorId={activeSponsor} config={cardConfig} />
+          <ProductCardFromDTO key={p?.id ?? idx} product={p} sponsorId={activeSponsor} config={cardConfig} slot={slot} />
         ))}
       </div>
     </div>
@@ -153,6 +169,7 @@ registerVevComponent(VioProductGrid, {
       },
     } as any,
     { name: "gap", title: "Gap (px)", type: "number", initialValue: 20 },
+    ...SLOT_PROPS,
     ...CARD_CONFIG_PROPS,
   ],
 });

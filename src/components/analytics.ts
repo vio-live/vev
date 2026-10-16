@@ -1,4 +1,4 @@
-import { currentSponsorConfig, getPersistedSponsorId } from "./vio-helpers";
+import { currentSponsorConfig, getPersistedSponsorId, type VioAttribution } from "./vio-helpers";
 import { Vio, purchaseFromPaymentSuccess } from "../../vio-sdk";
 
 /**
@@ -53,6 +53,11 @@ export type VioItemInput = {
   variantId?: number | string;
   index?: number;
   listName?: string;
+  /** Where a cart line was added from — its `origin` (ADR-0034): the campaign,
+   *  the slot and the article. Only on items read from the cart. */
+  campaignId?: number;
+  slot?: string;
+  contentId?: string;
 };
 
 /** GA4 e-commerce item (the shape GTM/GA4 expects in `ecommerce.items`). */
@@ -109,6 +114,14 @@ type EventParams = {
   item_list_name?: string;
   transaction_id?: string;
   payment_type?: string;
+  // Attribution (ADR-0034): the sponsor, the place, its campaign and the
+  // article. Goes to the Vio pipeline as context — never into GA4's
+  // `ecommerce` object, which only takes GA4's own fields.
+  sponsorId?: number;
+  slot?: string;
+  campaignId?: number;
+  contentId?: string;
+  contentTitle?: string;
   [key: string]: unknown;
 };
 
@@ -139,8 +152,11 @@ const DIAGNOSTIC_EVENT_NAMES = new Set(["sdk_error", "checkout_error"]);
 export function trackEvent(name: string, params: EventParams = {}): void {
   if (!state.enabled) return;
 
-  const { currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, ...rest } =
-    params;
+  const {
+    currency, value, items, item_list_name, transaction_id, payment_type,
+    sponsorId, slot, campaignId, contentId, contentTitle,
+    ...rest
+  } = params;
   const ecommerce: Record<string, unknown> = { ...rest };
   if (currency) ecommerce.currency = currency;
   if (value != null) ecommerce.value = Math.round(value * 100) / 100;
@@ -195,12 +211,65 @@ function persistedSponsorIfKnown(): number | undefined {
   return config.ids.includes(id) ? id : undefined;
 }
 
+/** Events that a cart with several campaigns splits (ADR-0034, amendment 2). */
+const SPLIT_BY_CAMPAIGN = new Set(["begin_checkout", "purchase"]);
+
+type CampaignGroup = { campaignId?: number; slot?: string; contentId?: string; items: VioItemInput[] };
+
+/** Items grouped by the campaign of their origin, in order of first
+ * appearance; items with no origin share one group (the event's own). */
+function groupItemsByCampaign(items: VioItemInput[]): CampaignGroup[] {
+  const groups = new Map<string, CampaignGroup>();
+  for (const it of items) {
+    const cid = num(it.campaignId);
+    const k = cid != null ? String(cid) : "";
+    let g = groups.get(k);
+    if (!g) {
+      g = { campaignId: cid, slot: it.slot, contentId: it.contentId, items: [] };
+      groups.set(k, g);
+    }
+    g.items.push(it);
+  }
+  return [...groups.values()];
+}
+
 function forwardToVio(name: string, params: EventParams): void {
   if (!VIO_EVENT_NAMES.has(name)) return;
   const analytics = (Vio as any).analytics;
   if (!analytics?.track) return; // vendored SDK predates Vio.analytics
+  // begin_checkout / purchase go out ONCE PER CAMPAIGN present in the cart,
+  // each with its lines and its value and the same transaction id, so the
+  // statistics per campaign come out exact (ADR-0034, amendment 2). The cart
+  // lines carry their origin from the SDK 0.23.0 on; before that nothing has a
+  // campaign and the event goes out once, as today. GA4 (above) always gets
+  // the one event with every item: a publisher's purchase is one purchase.
+  if (SPLIT_BY_CAMPAIGN.has(name) && params.items?.length) {
+    const groups = groupItemsByCampaign(params.items);
+    if (groups.length > 1) {
+      for (const g of groups) {
+        sendToVio(analytics, name, {
+          ...params,
+          items: g.items,
+          value: sumValue(g.items),
+          campaignId: g.campaignId ?? params.campaignId,
+          slot: g.slot ?? params.slot,
+          contentId: g.contentId ?? params.contentId,
+        });
+      }
+      return;
+    }
+    const only = groups[0];
+    if (only?.campaignId != null && params.campaignId == null) {
+      params = { ...params, campaignId: only.campaignId, slot: params.slot ?? only.slot, contentId: params.contentId ?? only.contentId };
+    }
+  }
+  sendToVio(analytics, name, params);
+}
+
+function sendToVio(analytics: any, name: string, params: EventParams): void {
   const {
     currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, error_code,
+    slot, campaignId, contentId, contentTitle,
     ...rest
   } = params;
   const props: Record<string, unknown> = { ...rest };
@@ -232,11 +301,21 @@ function forwardToVio(name: string, params: EventParams): void {
       // Cascada: lo explícito del evento → el sponsor del carrito (si es
       // uno solo) → el sponsor persistido de la página, solo si la key
       // conectada lo conoce. Nunca un id inventado: atribuir a un sponsor
-      // equivocado es peor que no atribuir. El SDK deriva campaign_id del
-      // sponsor (la campaña activa en la que participa).
+      // equivocado es peor que no atribuir. El campaign_id lo deriva el SDK
+      // (explícito → slot asignado → campaña activa del sponsor → default);
+      // el slot, la campaña y el artículo vienen de `Vio.attribution(slot)`
+      // del bloque que emite (ADR-0034) y van tal cual.
       context: (() => {
         const sid = num(sponsorId) ?? soleCartSponsor() ?? persistedSponsorIfKnown();
-        return sid || errorCode ? { sponsorId: sid || undefined, errorCode } : undefined;
+        const ctx: Record<string, unknown> = {};
+        if (sid) ctx.sponsorId = sid;
+        if (errorCode) ctx.errorCode = errorCode;
+        if (typeof slot === "string" && slot) ctx.slot = slot;
+        const cid = num(campaignId);
+        if (cid != null) ctx.campaignId = cid;
+        if (contentId != null && contentId !== "") ctx.contentId = contentId;
+        if (typeof contentTitle === "string" && contentTitle) ctx.contentTitle = contentTitle;
+        return Object.keys(ctx).length ? ctx : undefined;
       })(),
       props: Object.keys(props).length ? props : undefined,
     });
@@ -257,43 +336,63 @@ function sumValue(items: VioItemInput[]): number {
   return items.reduce((acc, i) => acc + (i.price ?? 0) * (i.quantity ?? 1), 0);
 }
 
-/** Impression: a set of product cards rendered (carousel / grid / single card). */
-export function trackViewItemList(items: VioItemInput[], listName?: string): void {
+/** Impression: a set of product cards rendered (carousel / grid / single card).
+ * `attribution` is the block's `vioAttribution(slot, sponsor)` (ADR-0034). */
+export function trackViewItemList(items: VioItemInput[], listName?: string, attribution?: VioAttribution): void {
   if (!items.length) return;
   const withIndex = items.map((i, idx) => ({ ...i, index: i.index ?? idx, listName }));
   trackEvent("view_item_list", {
     currency: currencyOf(items),
     item_list_name: listName,
     items: withIndex,
+    ...attribution,
   });
 }
 
 /** A shoppable card was clicked (before the detail opens). */
-export function trackSelectItem(item: VioItemInput, listName?: string): void {
+export function trackSelectItem(item: VioItemInput, listName?: string, attribution?: VioAttribution): void {
   trackEvent("select_item", {
     currency: item.currency,
     item_list_name: listName,
     items: [{ ...item, listName }],
+    ...attribution,
   });
 }
 
 /** The product detail was opened for a product. */
-export function trackViewItem(item: VioItemInput): void {
+export function trackViewItem(item: VioItemInput, attribution?: VioAttribution): void {
   trackEvent("view_item", {
     currency: item.currency,
     value: item.price,
     items: [item],
+    ...attribution,
   });
 }
 
 /** A product was added to the cart. */
-export function trackAddToCart(item: VioItemInput): void {
+export function trackAddToCart(item: VioItemInput, attribution?: VioAttribution): void {
   const qty = item.quantity ?? 1;
   trackEvent("add_to_cart", {
     currency: item.currency,
     value: (item.price ?? 0) * qty,
     items: [{ ...item, quantity: qty }],
+    ...attribution,
   });
+}
+
+/**
+ * The attribution a `vio:*` event detail carries (the SDK's detail, cart and
+ * checkout spread `Vio.attribution()` into theirs from 0.23.0 on): slot,
+ * campaign and article. Only what is there — never a made-up value.
+ */
+function attributionOf(d: any): VioAttribution {
+  const out: VioAttribution = {};
+  if (typeof d?.slot === "string" && d.slot.trim()) out.slot = d.slot.trim();
+  const cid = num(d?.campaignId);
+  if (cid != null) out.campaignId = cid;
+  if (d?.contentId != null && String(d.contentId).trim()) out.contentId = String(d.contentId).trim();
+  if (typeof d?.contentTitle === "string" && d.contentTitle.trim()) out.contentTitle = d.contentTitle.trim();
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +425,7 @@ function cartToItems(sponsorId?: number): VioItemInput[] {
   for (const cart of carts.values?.() ?? []) {
     if (sid != null && sid > 0 && (cart as any).sponsorId !== sid) continue;
     for (const it of (cart as any).items ?? []) {
-      out.push({
+      const base: VioItemInput = {
         productId: it.productId,
         name: it.name,
         brand: it.brand,
@@ -334,7 +433,28 @@ function cartToItems(sponsorId?: number): VioItemInput[] {
         currency: it.currency,
         quantity: num(it.quantity) ?? 1,
         variantId: it.variantId,
-      });
+      };
+      // The line remembers where it was added from (ADR-0034): one origin, or
+      // several with a quantity each when the same product came from more
+      // than one block. Lines of an older SDK have none.
+      const origins: any[] = Array.isArray(it.origins) && it.origins.length
+        ? it.origins
+        : it.origin && typeof it.origin === "object"
+          ? [{ ...it.origin, quantity: it.quantity }]
+          : [];
+      if (!origins.length) {
+        out.push(base);
+        continue;
+      }
+      for (const o of origins) {
+        out.push({
+          ...base,
+          quantity: num(o?.quantity) ?? base.quantity,
+          campaignId: num(o?.campaignId),
+          slot: typeof o?.slot === "string" && o.slot ? o.slot : undefined,
+          contentId: o?.contentId != null && o.contentId !== "" ? String(o.contentId) : undefined,
+        });
+      }
     }
   }
   return out;
@@ -409,7 +529,7 @@ export function initVioAnalytics(): () => void {
     const item =
       findCartItem(d.productId, d.sponsorId, d.variantId) ??
       ({ productId: d.productId, variantId: d.variantId } as VioItemInput);
-    trackAddToCart({ ...item, quantity: num(d.quantity) ?? item.quantity ?? 1 });
+    trackAddToCart({ ...item, quantity: num(d.quantity) ?? item.quantity ?? 1 }, attributionOf(d));
   };
 
   // begin_checkout — the cart / detail asked to open the checkout (Klarna
@@ -424,6 +544,7 @@ export function initVioAnalytics(): () => void {
       payment_type: d.paymentMethod,
       sponsorId: num(d.sponsorId) ?? soleCartSponsor(),
       items,
+      ...attributionOf(d),
     });
   };
 
@@ -455,6 +576,7 @@ export function initVioAnalytics(): () => void {
       payment_type: d.method,
       sponsorId: num(d.sponsorId) ?? lastCartSponsor,
       items,
+      ...attributionOf(d),
     });
     lastCartSnapshot = [];
   };
@@ -482,6 +604,7 @@ export function initVioAnalytics(): () => void {
           variantId: d.variantId,
         },
       ],
+      ...attributionOf(d),
     });
   };
 
@@ -535,7 +658,16 @@ export function initVioAnalytics(): () => void {
  */
 export function observeVioImpression(
   el: Element | null,
-  context: { sponsorId?: number; componentTemplateId: string; locationId?: string },
+  context: {
+    sponsorId?: number;
+    componentTemplateId: string;
+    locationId?: string;
+    /** `vioAttribution(slot, sponsor)` of the block: the slot IS the location id (ADR-0034). */
+    slot?: string;
+    campaignId?: number;
+    contentId?: string;
+    contentTitle?: string;
+  },
   key: string,
 ): () => void {
   if (!el || !state.enabled || !state.sendToVio) return () => {};
@@ -548,7 +680,11 @@ export function observeVioImpression(
       {
         sponsorId: sid ?? undefined,
         componentTemplateId: context.componentTemplateId,
-        locationId: context.locationId || undefined,
+        locationId: context.slot || context.locationId || undefined,
+        slot: context.slot || undefined,
+        campaignId: num(context.campaignId),
+        contentId: context.contentId || undefined,
+        contentTitle: context.contentTitle || undefined,
       },
       { key },
     );

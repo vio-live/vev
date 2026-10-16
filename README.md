@@ -71,6 +71,8 @@ Every product surface (Card / Carousel / Grid) shares the same **card options**:
 | Show brand / name / price / retailer | boolean each | all on |
 | Discount badge | Off · Auto (from sale price) · Manual (text) | Off |
 | 'Annonse' label | boolean + text | off / `Annonse` |
+| Slot | text (optional) | — |
+| Slot name | text (optional) | — |
 
 Plus **editableCSS** styling (Design tab) for card, image, buttons, badge, brand,
 name, price and retailer. Products with variants always open the detail drawer on
@@ -88,7 +90,44 @@ Per block:
   `Show arrows` + card options.
 - **Vio Product Grid** — product picker (multi), `Kicker`, `Heading`,
   `Columns` (2–5, collapses to 2 on mobile), `Gap` + card options.
-- **Vio · Open Product Info** — product picker. Attach to any element.
+- **Vio · Open Product Info** — product picker, `Slot`, `Slot name`. Attach to any element.
+
+### Slots — one campaign per block (ADR-0027 / ADR-0034)
+
+A **slot** is a place on a page the Vio dashboard can assign a campaign to, with a
+date window; whatever no slot names shows the surface's default campaign. **Every
+Vio block registers its own slot automatically** — nobody has to fill anything:
+
+- **Id**: the block's `Slot` field when set — several blocks with the same value are
+  **one** slot in the dashboard — else `<kind>-<vev key>` (`card-…`, `carousel-…`,
+  `grid-…`, `open-…`), the block's own Vev model key, which survives republishing.
+- **Name** (how the dashboard lists it): the `Slot name` field, else the block's
+  heading (carousel/grid `Heading`, else `Kicker`), else its kind — followed by
+  ` · <page title>`, so the dashboard can tell which article a block belongs to.
+- **Registration**: `Vio.registerSlot()` on mount (the SDK declares the page's slots
+  once per load after the bootstrap, `mode: merge`, and skips a set it declared from
+  that browser in the last 24 h). The editor's canvas counts as a page: a block shows
+  up in the dashboard as soon as it exists on the canvas, with Vio Config connected.
+- **Campaign per block**: a block whose slot has a campaign assigned (and open now)
+  fetches its products with that campaign's primary sponsor — instead of the page's
+  Active Sponsor — if the connected key has that sponsor; otherwise it keeps the
+  page's sponsor and says so once in the console. With nothing assigned, nothing
+  changes: the page's Active Sponsor rules, as before.
+- **Attribution**: every event a block emits (`view_item_list`, `select_item`,
+  `view_item`, `add_to_cart`, impressions, `begin_checkout` from the Vipps button)
+  carries `Vio.attribution(slot)` — `slot`, `campaign_id`, `sponsor_id`, `content_id`,
+  `content_title` (the article, resolved by the SDK from the page). A cart line keeps
+  its `origin` (campaign, slot, article); `purchase` and `begin_checkout` go to Vio
+  **once per campaign present in the cart**, each with its lines and value and the same
+  transaction id. The publisher's GA4 `dataLayer` keeps one event per purchase.
+- The `Open product info` **interaction** (Vio Config) and the action addon take an
+  optional `Slot` too: the detail opened from them carries it.
+- `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
+  tagged `vev`), so the dashboard's assignments for Vev apply here.
+
+Requires the vendored SDK ≥ 0.23.0 (`Vio.registerSlot` / `campaignForSlot` /
+`attribution` / `content`). With an older bundle the blocks behave as before — they
+check for the API and skip registration and slot attribution.
 
 ## Development
 
@@ -148,7 +187,8 @@ src/components/
   product-picker.tsx      # modal product picker (single + multi select)
   product-select.tsx      # picker form component
   action-open-product.tsx # Vio · Open Product Info (action addon)
-  vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag)
+  vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag),
+                          # slots: useVioSlot / sponsorForSlot / vioAttribution
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
 ```

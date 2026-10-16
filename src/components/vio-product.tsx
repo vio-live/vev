@@ -2,7 +2,7 @@ import React from "react";
 import { registerVevComponent } from "@vev/react";
 import ProductSelect from "./product-picker";
 import { VioProductCardSelf, type CardConfig } from "./card-view";
-import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS } from "./card-props";
+import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, SLOT_PROPS } from "./card-props";
 
 /**
  * Vio Product Card — a single Vev-native product card. Thin wrapper: maps props
@@ -14,9 +14,12 @@ type Props = {
   product?: { productId?: number; sponsorId?: number };
   /** Vev's image field: { url, key } — or a bare url from older values. */
   image?: { url?: string } | string;
+  /** Slot (ADR-0034) — both optional; see SLOT_PROPS. */
+  slot?: string;
+  slotName?: string;
 } & CardConfig;
 
-export default function VioProductCard({ product, image, ...config }: Props) {
+export default function VioProductCard({ product, image, slot, slotName, ...config }: Props) {
   const imageOverride = typeof image === "string" ? image : image?.url;
   return (
     <VioProductCardSelf
@@ -25,6 +28,8 @@ export default function VioProductCard({ product, image, ...config }: Props) {
       sponsorId={product?.sponsorId}
       config={config}
       imageOverride={imageOverride || undefined}
+      slot={slot}
+      slotName={slotName}
     />
   );
 }
@@ -53,6 +58,7 @@ registerVevComponent(VioProductCard, {
       type: "image",
       description: "Replaces the product's photo on this card. Leave empty to use the product's.",
     },
+    ...SLOT_PROPS,
     ...CARD_CONFIG_PROPS,
   ],
 });
