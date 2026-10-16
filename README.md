@@ -130,18 +130,24 @@ assignment from the dashboard — **assignment > page campaign > default** — f
 products a block fetches (that campaign's primary sponsor, when the key knows it), for
 every event's `campaign_id`, and for the declaration of the page's slots, which carries
 the campaign. Changing it re-initialises the SDK like changing the key (bootstrap again,
-slots declared again under the new campaign, blocks re-resolved). A saved campaign that is
-not one of the connected key's falls back to the default and the panel says so, like a
-saved sponsor the key lacks. The picker and the Vipps check follow the same sponsor.
-Blocks have no field of their own for this: "Blocks on this page register under this
-campaign; the dashboard can reassign any of them."
+slots declared again under the new campaign, blocks re-resolved) — in the editor's
+properties panel too, which learns the new value through `localStorage` (`vio.campaignId`,
+written only in the editor) and re-inits its own SDK, so the picker lists that campaign's
+catalog and the Vipps check queries that sponsor. Only an **active** campaign can be
+chosen; a saved one that is not one of the connected key's, or is paused / ended /
+scheduled, falls back to the default and the panel says so, like a saved sponsor the key
+lacks. Blocks have no field of their own for this; the panel says it plainly: "Blocks sell
+through this campaign's primary sponsor, overriding Active Sponsor; products picked under
+another sponsor show as unavailable. The dashboard can still reassign any slot."
 
 **Campaign per block.** A block whose slot has a campaign assigned (and open now) fetches
 its products with that campaign's primary sponsor — instead of the page's Active Sponsor
 — when the connected key knows that sponsor in **any** of its campaigns (`campaigns[]`
-of the bootstrap, not only the default one); otherwise it keeps the page's sponsor,
-says so once in the console, and attributes **without** that campaign. With nothing
-assigned, nothing changes: the page's Active Sponsor rules, as before.
+of the bootstrap, not only the default one); otherwise it falls back to the page
+campaign's primary sponsor (so sponsor and campaign agree), else the page's sponsor, says
+so once in the console, and attributes without that slot's campaign. With nothing
+assigned: the page campaign's primary sponsor when a campaign is chosen in Vio Config,
+else the page's Active Sponsor, as before.
 
 **Attribution.** Every event a block emits (`view_item_list`, `select_item`, `view_item`,
 `add_to_cart`, impressions, `begin_checkout` from the Vipps button) carries
