@@ -25,6 +25,8 @@ import {
   readPersistedSponsors,
   resolveSponsorId,
   sponsorForCommerce,
+  sponsorForSlot,
+  vioAttribution,
   VIO_CONNECTION_STORAGE,
   VIO_SPONSORS_STORAGE,
   type SponsorConfig,
@@ -377,15 +379,20 @@ export default function VioConfig({
   //
   // It lives on Vio Config because that's the singleton that mounts the
   // product-detail drawer; a per-element addon can't be assumed present.
-  useVevEvent<{ product?: { productId?: number; sponsorId?: number } }>(
+  useVevEvent<{ product?: { productId?: number; sponsorId?: number }; slot?: string }>(
     "OPEN_PRODUCT_INFO",
     (payload) => {
       const productId = payload?.product?.productId;
       if (productId == null) return;
-      // The sponsor it was picked under when the connected key has it, else
-      // the page's active sponsor (openProductInfo → sponsorForCommerce).
-      trackViewItem({ productId: Number(productId) });
-      openProductInfo(Number(productId), payload?.product?.sponsorId);
+      // The interaction's optional "Slot" (ADR-0034): the place it was opened
+      // from, carried by the detail's events — and its campaign's sponsor,
+      // when one is assigned. Else the sponsor it was picked under when the
+      // connected key has it, else the page's active sponsor
+      // (openProductInfo → sponsorForCommerce).
+      const slot = typeof payload?.slot === "string" && payload.slot.trim() ? payload.slot.trim() : undefined;
+      const sponsorId = sponsorForSlot(slot, sponsorForCommerce(payload?.product?.sponsorId));
+      trackViewItem({ productId: Number(productId) }, vioAttribution(slot, sponsorId));
+      openProductInfo(Number(productId), payload?.product?.sponsorId, undefined, slot);
     },
   );
 
@@ -815,6 +822,13 @@ registerVevComponent(VioConfig, {
             { name: "productId", type: "number" },
             { name: "sponsorId", type: "number" },
           ],
+        },
+        {
+          name: "slot",
+          title: "Slot",
+          type: "string",
+          description:
+            "Optional. Attributes what starts here (product views, purchases) to a slot that already exists on this page — the id a Vio block registered, or the Slot you gave one. It does not create a slot.",
         },
       ],
     },

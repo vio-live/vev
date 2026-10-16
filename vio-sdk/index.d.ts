@@ -1,3 +1,13 @@
+/**
+ * The SDK facade (vio-web-sdk 0.23.1). Beyond init / bootstrap / cart /
+ * checkout / analytics, the slot API of ADR-0027 / ADR-0034 the blocks use:
+ *   registerSlot(id, displayName?) → release()   campaignForSlot(slot?)
+ *   attribution(slot?, { sponsorId? }) → { slot?, campaignId?, sponsorId?, contentId?, contentTitle? }
+ *   content() → { id?, title? }                   declareSlots(slots, { force? })
+ * Cart: addProduct / addManual / adjustQuantity / updateQuantity take
+ * `{ origin?: { campaignId?, slot?, contentId? } }`; each line keeps
+ * `origins: [{ campaignId?, slot?, contentId?, quantity }]`.
+ */
 export const Vio: any;
 export const VioProduct: any;
 export const VioProductCarousel: any;
@@ -52,6 +62,7 @@ export function createPaymentStripe(variables: any, options?: any): Promise<any>
 export function createPaymentVipps(variables: any, options?: any): Promise<any>;
 export function getVippsStatus(variables: any, options?: any): Promise<any>;
 
+export const SDK_VERSION: string;
 export const VioTokens: any;
 
 /** Mirrors VioThemeOverrides in vio-web-sdk/src/ui/tokens.ts. Typed on purpose:

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Vio, ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
 import {
+  cartOrigin,
   checkHasVariants,
   fetchVioProduct,
   getProductPriceAmount,
@@ -8,6 +9,10 @@ import {
   openCart,
   sponsorForCommerce,
   useActiveSponsorId,
+  useVioSlot,
+  useVioSlotId,
+  vioAttribution,
+  type VioAttribution,
   type VippsOffer,
 } from "./vio-helpers";
 import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame, useFrameWidth } from "./editor-fit";
@@ -335,6 +340,10 @@ type ProductCardViewProps = {
   standalone?: boolean;
   /** A picture the editor chose for this card, in place of the product's. */
   imageOverride?: string;
+  /** The slot of the block this card is in (its own, or the carousel's /
+   *  grid's): every event, the click that opens the detail and the cart line
+   *  carry its attribution (ADR-0034). */
+  slot?: string;
 };
 
 export function ProductCardView({
@@ -347,6 +356,7 @@ export function ProductCardView({
   rootRef,
   standalone = false,
   imageOverride,
+  slot,
 }: ProductCardViewProps) {
   const [pop, setPop] = useState(false);
   const [vippsBusy, setVippsBusy] = useState(false);
@@ -438,16 +448,24 @@ export function ProductCardView({
   const isOverlay = layout === "overlay";
   const accentStyle = accentColor ? ({ ["--vnc-accent" as any]: accentColor } as React.CSSProperties) : undefined;
 
+  // Where this card is and which campaign it shows, read at the moment of the
+  // interaction: `Vio.attribution(slot, { sponsorId })` (ADR-0034).
+  const attribution = (): VioAttribution => vioAttribution(slot, sponsorId);
+
   const openDetail = () => {
     if (productId == null || sponsorId == null) return;
     // Funnel: a shoppable card was clicked (select_item), and the detail it opens
     // counts as a product view (view_item).
+    const attr = attribution();
     const item = p ? productToItem(p) : { productId, name, brand };
-    trackSelectItem(item);
-    trackViewItem(item);
+    trackSelectItem(item, undefined, attr);
+    trackViewItem(item, attr);
+    // The detail takes the slot and the content from the click and carries
+    // them on everything it emits while this product is open.
     document.dispatchEvent(
       new CustomEvent("vio:product-click", {
         detail: {
+          ...attr,
           productId: String(productId),
           sponsorId: String(sponsorId),
           brand,
@@ -467,8 +485,11 @@ export function ProductCardView({
       return;
     }
     try {
-      Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1 });
-      trackAddToCart(productToItem(p, { quantity: 1 }));
+      const attr = attribution();
+      // The line remembers where it was added from: purchase and
+      // begin_checkout are then split per campaign present in the cart.
+      Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1, origin: cartOrigin(attr) });
+      trackAddToCart(productToItem(p, { quantity: 1 }), attr);
       setPop(true);
       setTimeout(() => setPop(false), 420);
       openCart();
@@ -492,17 +513,19 @@ export function ProductCardView({
     }
     setVippsBusy(true);
     try {
+      const attr = attribution();
       const item = productToItem(p, { quantity: 1 });
-      Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1 });
-      trackAddToCart(item);
+      Vio.cart.addProduct({ product: p, sponsorId: Number(sponsorId), quantity: 1, origin: cartOrigin(attr) });
+      trackAddToCart(item, attr);
       let redirected = false;
       if (vippsOffer === "express") {
         trackEvent("begin_checkout", {
           currency: p.price?.currency_code,
           value: priceAmount ?? undefined,
           payment_type: "vipps_express",
-          sponsorId: Number(sponsorId),
           items: [item],
+          ...attr,
+          sponsorId: Number(sponsorId),
         });
         try {
           const res = await Vio.checkout.startVippsExpress(Number(sponsorId));
@@ -514,7 +537,7 @@ export function ProductCardView({
       if (!redirected) {
         document.dispatchEvent(
           new CustomEvent("vio:checkout-open", {
-            detail: { sponsorId: Number(sponsorId), paymentMethod: "vipps", express: false },
+            detail: { ...attr, sponsorId: Number(sponsorId), paymentMethod: "vipps", express: false },
           })
         );
       }
@@ -664,10 +687,13 @@ export function ProductCardFromDTO({
   product,
   sponsorId,
   config,
+  slot,
 }: {
   product: any;
   sponsorId?: number | null;
   config?: CardConfig;
+  /** The carousel's / grid's slot: the cards inside it are that same place. */
+  slot?: string;
 }) {
   const id = product?.id != null ? Number(product.id) : undefined;
   const qty = useCartQty(id, sponsorId);
@@ -678,6 +704,7 @@ export function ProductCardFromDTO({
       product={product}
       qty={qty}
       config={config}
+      slot={slot}
     />
   );
 }
@@ -688,29 +715,46 @@ export function VioProductCardSelf({
   sponsorId,
   config,
   imageOverride,
+  slot,
+  slotName,
+  hostRef,
 }: {
   productId?: number;
   /** The sponsor the product was picked under. */
   sponsorId?: number;
   config?: CardConfig;
   imageOverride?: string;
+  /** The "Slot" / "Slot name" fields of the block (both optional). */
+  slot?: string;
+  slotName?: string;
+  /** Vev's host ref of the block (for the slot's name: page position, header/footer). */
+  hostRef?: { current: HTMLElement | null } | null;
 }) {
+  // The card's slot (ADR-0034): the "Slot" field, else `card-<vev key>`.
+  const slotId = useVioSlotId({ slot, kind: "card" });
   // The page's active sponsor (Vio Config's choice, live), not the one the
   // product was picked under: switching the sponsor must switch what every
   // card shows, and a product the new channel does not carry shows as
   // unavailable — as in the carousel and grid, which read the same source.
   // The picked sponsor only serves while nothing has set one on the page,
   // and only if the connected key has it (a page built on vio-backend's
-  // sponsor ids falls to the key's primary).
-  const activeSponsor = useActiveSponsorId(sponsorId);
+  // sponsor ids falls to the key's primary). A campaign assigned to the
+  // card's slot overrides all of that with its own sponsor.
+  const activeSponsor = useActiveSponsorId(sponsorId, slotId);
   const { product, loading } = useVioProduct(productId, activeSponsor);
   const qty = useCartQty(productId, activeSponsor);
+  // Registered once the product is known — in the editor too: its title names
+  // the slot ("Lue sort · Artikkel"), `Card 2 · Artikkel` when there is none.
+  useVioSlot({ slot, slotName, kind: "card", title: product?.title, ready: !loading, hostRef });
 
   // Impression (view_item_list of one) — fired here so a standalone card counts,
   // without double-firing when the same view renders inside a carousel / grid
   // (those fire the list impression at the container).
+  // Only on a new product (as before): a sponsor switch refetches, and the
+  // new DTO fires this once — the attribution is read at that moment.
   useEffect(() => {
-    if (product) trackViewItemList([productToItem(product)], product?.title);
+    if (product) trackViewItemList([productToItem(product)], product?.title, vioAttribution(slotId, activeSponsor));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product]);
 
   // Impresión REAL (≥50% visible ≥1s). Depende de product: el ref recién
@@ -720,10 +764,14 @@ export function VioProductCardSelf({
     if (!product) return;
     return observeVioImpression(
       rootRef.current,
-      { sponsorId: activeSponsor ?? undefined, componentTemplateId: "vev-card" },
-      `vev-card:${activeSponsor}:${productId}`,
+      {
+        sponsorId: activeSponsor ?? undefined,
+        componentTemplateId: "vev-card",
+        ...vioAttribution(slotId, activeSponsor),
+      },
+      `vev-card:${activeSponsor}:${slotId}:${productId}`,
     );
-  }, [product, activeSponsor, productId]);
+  }, [product, activeSponsor, productId, slotId]);
 
   return (
     <ProductCardView
@@ -736,6 +784,7 @@ export function VioProductCardSelf({
       rootRef={rootRef}
       standalone
       imageOverride={imageOverride}
+      slot={slotId}
     />
   );
 }

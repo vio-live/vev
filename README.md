@@ -71,6 +71,8 @@ Every product surface (Card / Carousel / Grid) shares the same **card options**:
 | Show brand / name / price / retailer | boolean each | all on |
 | Discount badge | Off · Auto (from sale price) · Manual (text) | Off |
 | 'Annonse' label | boolean + text | off / `Annonse` |
+| Slot | text (optional) | — |
+| Slot name | text (optional) | — |
 
 Plus **editableCSS** styling (Design tab) for card, image, buttons, badge, brand,
 name, price and retailer. Products with variants always open the detail drawer on
@@ -88,7 +90,73 @@ Per block:
   `Show arrows` + card options.
 - **Vio Product Grid** — product picker (multi), `Kicker`, `Heading`,
   `Columns` (2–5, collapses to 2 on mobile), `Gap` + card options.
-- **Vio · Open Product Info** — product picker. Attach to any element.
+- **Vio · Open Product Info** — product picker, `Slot`, `Slot name`. Attach to any element.
+
+### Slots — one campaign per block (ADR-0027 / ADR-0034)
+
+A **slot** is a place on a page the Vio dashboard can assign a campaign to, with a
+date window; whatever no slot names shows the surface's default campaign. **Every
+Vio block registers its own slot automatically** — nobody has to fill anything.
+
+**Id.** The block's `Slot` field when set — several blocks with the same value are
+**one** slot in the dashboard — else `<kind>-<instance key>` (`card-…`, `carousel-…`,
+`grid-…`, `open-…`): the block's Vev instance key chain (`model.virtualKey || model.key`,
+what Vev itself ids the element with), which survives republishing and is distinct for
+every instance of a master component (thirty articles built from one template are
+thirty slots).
+
+**Name** (how the dashboard lists it): the `Slot name` field; else the block's heading
+(carousel/grid `Heading`, then `Kicker`; a card: its product's title); else its kind and
+position among its kind on the page (`Carousel 2`). Followed by ` · <page title>` so the
+dashboard can tell which article a block belongs to — except for blocks in a **header or
+footer section** or a **fixed** element, which every page shows (no page suffix; give
+those a `Slot name` if the default reads poorly). An explicit `Slot` with no `Slot name`
+stays **unnamed**: the server keeps the name that slot already has (another block may
+have named it).
+
+**Registration.** `Vio.registerSlot()` on mount (a card: once its product is known); the
+SDK declares the page's slots once per load after the bootstrap (`mode: merge`,
+`platform: vev`) and skips a set it declared from that browser in the last 24 h. The
+editor's canvas counts as a page: a block shows up in the dashboard as soon as it exists
+on the canvas, with Vio Config connected.
+
+**Campaign per block.** A block whose slot has a campaign assigned (and open now) fetches
+its products with that campaign's primary sponsor — instead of the page's Active Sponsor
+— when the connected key knows that sponsor in **any** of its campaigns (`campaigns[]`
+of the bootstrap, not only the default one); otherwise it keeps the page's sponsor,
+says so once in the console, and attributes **without** that campaign. With nothing
+assigned, nothing changes: the page's Active Sponsor rules, as before.
+
+**Attribution.** Every event a block emits (`view_item_list`, `select_item`, `view_item`,
+`add_to_cart`, impressions, `begin_checkout` from the Vipps button) carries
+`Vio.attribution(slot)` — `slot`, `campaign_id`, `sponsor_id`, `content_id`,
+`content_title` (the article, resolved by the SDK from the page). The card's
+`vio:product-click` carries it too, so the SDK's product detail inherits it; from the
+SDK 0.23.x on, the detail, cart and checkout put it on `vio:added-to-cart`,
+`vio:removed-from-cart`, `vio:checkout-open` and `vio:payment-success`, which the blocks
+forward. A cart line keeps the `origin` of every unit (campaign, slot, article). The
+`Open product info` **interaction** (Vio Config) and the action addon take an optional
+`Slot` too: the detail opened from them carries it.
+
+**What changes in the analytics with the 0.23.x bundle** (the same deploy carries it):
+
+- `component_impression.location_id` is the **slot id** (it was the heading text, or
+  `Vio Carousel` / `Vio Grid`), and the impression dedupe key includes the slot
+  (`vev-carousel:<sponsor>:<slot>`), so a sponsor or slot change counts anew.
+- Every event carries an explicit `sponsor_id` (the block's), `campaign_id` resolved from
+  the slot, and `content_id` / `content_title`.
+- `purchase` and `begin_checkout` go to Vio **once per campaign present in the cart**
+  (the SDK's `cartSlices` rule: each unit to the campaign of its origin, units without
+  one to the campaign their sponsor resolves to), each with its lines and value and the
+  same transaction id, scoped to the sponsor that was paid. The publisher's GA4
+  `dataLayer` keeps one event per purchase, its rows merged by product + variant.
+- `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
+  tagged `vev`), so the dashboard's assignments for Vev apply here.
+
+The vendored SDK is **0.23.1** (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
+`content` / `cartSlices`, `origins` on the cart lines). The blocks still check for that
+API before calling it — a block must never throw into the editor — so with an older
+bundle they behave as before, unregistered.
 
 ## Development
 
@@ -148,7 +216,8 @@ src/components/
   product-picker.tsx      # modal product picker (single + multi select)
   product-select.tsx      # picker form component
   action-open-product.tsx # Vio · Open Product Info (action addon)
-  vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag)
+  vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag),
+                          # slots: useVioSlot / sponsorForSlot / vioAttribution
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
 ```

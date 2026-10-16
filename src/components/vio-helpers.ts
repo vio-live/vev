@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useModel, usePages, useRoute } from "@vev/react";
 import { Vio } from "../../vio-sdk";
 
 /**
@@ -143,8 +144,13 @@ export function persistSponsorId(id: number): void {
 // the picker, the cart or the checkout hands to Commerce goes through
 // `resolveSponsorId`, and none is ever made up.
 
-/** The sponsors a key's configuration knows: its primary and its secondaries. */
-export type SponsorConfig = { ids: number[]; primaryId: number };
+/** The sponsors a key's configuration knows. `ids`: the default campaign's
+ * (its primary and secondaries — what the "Active Sponsor" selector offers);
+ * `knownIds`: those plus the primary and secondaries of every entry of
+ * `campaigns[]` — every sponsor the SDK resolves (`Vio.commerceFor`, the
+ * cart, the payment methods): a campaign assigned to a slot may bring one
+ * that is not in the default campaign (ADR-0034). */
+export type SponsorConfig = { ids: number[]; primaryId: number; knownIds: number[] };
 export type SponsorListItem = { id: number; name: string; isPrimary: boolean };
 
 function toSponsorId(value: unknown): number | null {
@@ -170,10 +176,27 @@ export function sponsorListFromBootstrap(boot: unknown): SponsorListItem[] {
   return list;
 }
 
+/** Pure. Every sponsor id a `/v2/mobile/config` answer names: the default
+ * campaign's, then the primary and secondaries of each `campaigns[]` entry
+ * (the same set the SDK's `findSponsor` accepts). Deduped, in that order. */
+export function knownSponsorIdsFromBootstrap(boot: unknown): number[] {
+  const ids = sponsorListFromBootstrap(boot).map((s) => s.id);
+  const b = (boot ?? {}) as { campaigns?: any[] };
+  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) {
+    if (!c || typeof c !== "object") continue;
+    for (const s of [c.primarySponsor, ...(Array.isArray(c.secondarySponsors) ? c.secondarySponsors : [])]) {
+      const id = toSponsorId(s?.id);
+      if (id != null && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
 /** Pure. The configuration of a `/v2/mobile/config` answer, or null. */
 export function sponsorConfigFromBootstrap(boot: unknown): SponsorConfig | null {
   const list = sponsorListFromBootstrap(boot);
-  return list.length ? { ids: list.map((s) => s.id), primaryId: list[0].id } : null;
+  if (!list.length) return null;
+  return { ids: list.map((s) => s.id), primaryId: list[0].id, knownIds: knownSponsorIdsFromBootstrap(boot) };
 }
 
 /**
@@ -237,16 +260,17 @@ export function getActiveSponsorId(preferred?: unknown): number | null {
 
 /**
  * The sponsor a Commerce call for `requested` uses: `requested` itself when
- * the connected key knows it (a cart's sponsor, an addon's picked product),
- * else the page's active sponsor, else the primary. Null while this window
- * has no configuration.
+ * the connected key knows it — in any of its campaigns (`knownIds`): a cart's
+ * sponsor, an addon's picked product, the sponsor of a campaign assigned to
+ * a slot — else the page's active sponsor, else the primary. Null while this
+ * window has no configuration.
  */
 export function sponsorForCommerce(requested?: unknown): number | null {
   const config = currentSponsorConfig();
   if (!config) return null;
   return resolveSponsorId(
     [requested, runtimeSponsorId(), getPersistedSponsorId()],
-    config.ids,
+    config.knownIds,
     config.primaryId
   );
 }
@@ -315,7 +339,7 @@ export function announceActiveSponsor(id: number | null): void {
  * configuration, then follows the Config's announcements. Null means "no
  * sponsor yet": the block waits instead of asking Commerce with a made-up id.
  */
-export function useActiveSponsorId(preferred?: number | null): number | null {
+export function useActiveSponsorId(preferred?: number | null, slot?: string | null): number | null {
   const [sponsorId, setSponsorId] = useState<number | null>(() => getActiveSponsorId(preferred));
   useEffect(() => {
     let alive = true;
@@ -337,7 +361,374 @@ export function useActiveSponsorId(preferred?: number | null): number | null {
       window.removeEventListener("vio:sponsor-changed", onChange);
     };
   }, [preferred]);
+  // A block with a slot follows the slot's campaign (ADR-0034). Read against
+  // the bootstrap the SDK holds, which is there whenever the page's sponsor is
+  // (the Config announces it after bootstrapping), so this re-evaluates with it.
+  const { sponsorId: effective, fallback } = resolveSlotSponsor(slot, sponsorId);
+  // The one-time warning for a slot whose campaign the block cannot follow
+  // goes out from an effect, never from the render.
+  const fallbackSponsor = fallback ? fallback.campaignSponsorId : null;
+  const fallbackName = fallback ? fallback.campaignName : "";
+  useEffect(() => {
+    if (fallback && typeof slot === "string" && slot.trim()) {
+      warnSlotFallbackOnce(slot.trim(), { campaignName: fallbackName, campaignSponsorId: fallbackSponsor });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slot, fallbackSponsor, fallbackName]);
+  return effective;
+}
+
+// ---- Slots (ADR-0027 / ADR-0034) -----------------------------------------------
+//
+// A slot is a place on a page the dashboard can assign a campaign to, with a
+// date window; whatever no slot names shows the surface's default campaign.
+// Every Vio block registers itself, with no designer input:
+//   - id: the "Slot" field when set (several blocks with the same value are ONE
+//     slot), else `${kind}-${instanceKey}` — the block's Vev instance key chain
+//     (`model.virtualKey || model.key`, what @vev/react ids the host with): it
+//     survives republishing and is distinct per instance of a master component;
+//   - display name: the "Slot name" field, else the block's heading (a card:
+//     its product's title), else `${Kind} ${n}` by position among the same
+//     kind on the page — followed by the page's title, except for a block in a
+//     header / footer section or a fixed element, which every page shows. An
+//     explicit "Slot" with no name is left unnamed: the server keeps the name
+//     the slot already has (another block may have named it).
+// The SDK declares the registry (`POST /v2/mobile/components/manifest`, mode
+// merge) once per page load after the bootstrap, debounced, and skips a set it
+// already declared from this browser in the last 24 h. The editor's canvas is
+// a page like any other: a block is declared as soon as it exists on it.
+//
+// The calls below check that the vendored SDK has this API, on purpose: a
+// block must never throw into the editor's canvas, and the bundle and the
+// blocks have drifted before — the same rule analytics.ts applies to
+// `Vio.analytics`. With an older bundle the blocks run unregistered and
+// attributed as before.
+
+export type SlotKind = "card" | "carousel" | "grid" | "open";
+
+const SLOT_KIND_LABEL: Record<SlotKind, string> = {
+  card: "Card",
+  carousel: "Carousel",
+  grid: "Grid",
+  open: "Open product",
+};
+
+/** The server keeps display names up to 255 characters. */
+const SLOT_NAME_MAX_LENGTH = 255;
+/** The server keeps slot ids up to 100 characters (the SDK cuts, not drops). */
+export const SLOT_ID_MAX_LENGTH = 100;
+
+/** A slot id as the SDK registers it: trimmed, cut at 100, trimmed again. */
+export function normalizeSlotId(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, SLOT_ID_MAX_LENGTH).trim();
+}
+
+/** What `Vio.attribution(slot)` answers: the campaign the place shows, its
+ * sponsor, the place and the article. Every event and cart line carries it. */
+export type VioAttribution = {
+  slot?: string;
+  campaignId?: number;
+  sponsorId?: number;
+  contentId?: string;
+  contentTitle?: string;
+};
+
+function sdkHas(method: string): boolean {
+  try {
+    return typeof (Vio as any)?.[method] === "function";
+  } catch {
+    return false;
+  }
+}
+
+type SlotState = {
+  /** Slots already warned about (`warnSlotFallbackOnce`). */
+  warned: Set<string>;
+  /** Mount-order ordinals per kind, the fallback of `slotOrdinal`. */
+  ordinals: Partial<Record<SlotKind, Map<string, number>>>;
+};
+
+/** State shared by every chunk of the package: Vev may bundle each block
+ * apart, so module state would be one per chunk — the reason the SDK anchors
+ * `Vio` on globalThis too. */
+function slotState(): SlotState {
+  const g = globalThis as { __VIO_VEV_SLOTS__?: SlotState };
+  if (!g.__VIO_VEV_SLOTS__) g.__VIO_VEV_SLOTS__ = { warned: new Set(), ordinals: {} };
+  return g.__VIO_VEV_SLOTS__;
+}
+
+/**
+ * The attribution of a place — `Vio.attribution(slot, { sponsorId })`: the
+ * campaign the slot shows now (its open assignment, else the sponsor's active
+ * campaign, else the default), the sponsor, and the page's content
+ * (`Vio.content()`). The sponsor hint is the block's effective sponsor, so
+ * what the cart remembers matches what the events say. Without the helper
+ * (an older bundle), only what this side knows: the slot and the sponsor.
+ */
+export function vioAttribution(slot?: string | null, sponsorId?: number | null): VioAttribution {
+  const name = normalizeSlotId(slot) || undefined;
+  const sid = toSponsorId(sponsorId) ?? undefined;
+  // A slot whose campaign the block could NOT follow (its sponsor is not one
+  // of the key's — see resolveSlotSponsor) must not attribute to that
+  // campaign: the events then carry the slot by name and the campaign the
+  // sponsor rule gives the block's actual sponsor (`attribution(null, { sponsorId })`).
+  const campaign = name ? slotAssignedCampaign(name) : null;
+  const followed = !campaign || sid == null || toSponsorId(campaign.primarySponsor?.id) === sid;
+  if (sdkHas("attribution")) {
+    try {
+      const hint = sid != null ? { sponsorId: sid } : undefined;
+      const out = (Vio as any).attribution(followed ? name ?? null : null, hint) ?? {};
+      return name ? { ...out, slot: name } : { ...out };
+    } catch {
+      /* attribution never breaks a render or a click */
+    }
+  }
+  const out: VioAttribution = {};
+  if (name) out.slot = name;
+  if (sid != null) out.sponsorId = sid;
+  return out;
+}
+
+/** The `origin` of the units a block adds to the cart (`CartOrigin` in the
+ * SDK: campaign, slot, article) — what `CartLineItem.origins[]` remembers. */
+export function cartOrigin(attribution: VioAttribution): { campaignId?: number; slot?: string; contentId?: string } {
+  const origin: { campaignId?: number; slot?: string; contentId?: string } = {};
+  if (attribution.campaignId != null) origin.campaignId = attribution.campaignId;
+  if (attribution.slot) origin.slot = attribution.slot;
+  if (attribution.contentId) origin.contentId = attribution.contentId;
+  return origin;
+}
+
+/**
+ * The campaign ASSIGNED to `slot` and open now, or null when the slot shows
+ * the surface's default campaign (nothing assigned). `Vio.campaignForSlot`
+ * answers the default in that case; the page's "Active Sponsor" is how a Vev
+ * page chooses a sponsor within the default campaign, so only an assignment
+ * overrides it.
+ */
+export function slotAssignedCampaign(slot?: string | null): any | null {
+  const name = normalizeSlotId(slot);
+  if (!name || !sdkHas("campaignForSlot")) return null;
+  try {
+    const campaign = (Vio as any).campaignForSlot(name);
+    if (!campaign || campaign.isDefault === true) return null;
+    const defaultId = Number((Vio as any).bootstrapCache?.campaign?.id);
+    if (Number.isFinite(defaultId) && Number(campaign.id) === defaultId) return null;
+    return campaign;
+  } catch {
+    return null;
+  }
+}
+
+export type SlotSponsor = {
+  sponsorId: number | null;
+  /** Set when the slot has a campaign assigned that the block could not follow. */
+  fallback?: { campaignName: string; campaignSponsorId: number | null };
+};
+
+/**
+ * Pure. The sponsor a block with `slot` fetches its products with: the
+ * primary sponsor of the campaign assigned to the slot (and open now) when
+ * the connected key knows it — in any of its campaigns (`knownIds`); else
+ * `pageSponsor`, the page's active sponsor, with `fallback` saying why
+ * (ADR-0034 §4). The caller decides where to warn: `useActiveSponsorId` from
+ * an effect, `sponsorForSlot` right away (event handlers).
+ */
+export function resolveSlotSponsor(slot: string | null | undefined, pageSponsor: number | null): SlotSponsor {
+  const campaign = slotAssignedCampaign(slot);
+  if (!campaign) return { sponsorId: pageSponsor };
+  // No configuration in this window (Disconnect; the SDK still holds the old
+  // bootstrap): nothing to follow and nothing to warn about.
+  const config = currentSponsorConfig();
+  if (!config) return { sponsorId: pageSponsor };
+  const sid = toSponsorId(campaign.primarySponsor?.id);
+  if (sid != null && config.knownIds.includes(sid)) return { sponsorId: sid };
+  return {
+    sponsorId: pageSponsor,
+    fallback: { campaignName: String(campaign.name ?? campaign.id ?? "?"), campaignSponsorId: sid },
+  };
+}
+
+function warnSlotFallbackOnce(slot: string, fallback: NonNullable<SlotSponsor["fallback"]>): void {
+  const key = `${slot}:${fallback.campaignSponsorId ?? "none"}`;
+  const { warned } = slotState();
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(
+    `[Vio] slot "${slot}": its campaign "${fallback.campaignName}" has sponsor #${fallback.campaignSponsorId ?? "?"}, which is not one of the connected key's sponsors — using the page's sponsor`
+  );
+}
+
+/** `resolveSlotSponsor` for event handlers (a click, an open): the warning
+ * goes out right there, once per slot. Components use `useActiveSponsorId`. */
+export function sponsorForSlot(slot: string | null | undefined, pageSponsor: number | null): number | null {
+  const { sponsorId, fallback } = resolveSlotSponsor(slot, pageSponsor);
+  if (fallback && typeof slot === "string" && slot.trim()) warnSlotFallbackOnce(slot.trim(), fallback);
   return sponsorId;
+}
+
+/**
+ * The Vev page this block is on — the article: its key and title, from Vev's
+ * own store (the route's page key and the pages list, the same source Vev's
+ * page component titles with). `document.title` when the store has no title
+ * for it; nothing outside a Vev app.
+ */
+export function useVevPage(): { key?: string; title?: string } {
+  let key: string | undefined;
+  let title: string | undefined;
+  // Hooks inside a try: the two are always called, in this order, on every
+  // render (the catch only swallows a throw from a store that is not there,
+  // e.g. a bare mount in a test), so React's hook order never changes.
+  try {
+    const route: any = useRoute();
+    const [pages]: any = usePages();
+    key = typeof route?.pageKey === "string" && route.pageKey ? route.pageKey : undefined;
+    const page = Array.isArray(pages) ? pages.find((p: any) => p?.key === key) : undefined;
+    title = typeof page?.title === "string" && page.title.trim() ? page.title.trim() : undefined;
+  } catch {
+    /* outside a Vev app: the document is all there is */
+  }
+  if (!title && typeof document !== "undefined") title = document.title?.trim() || undefined;
+  return { key, title };
+}
+
+/**
+ * The effective slot id of a block — the "Slot" field, else
+ * `${kind}-${instanceKey}` ('' only with neither). The key is the INSTANCE
+ * KEY CHAIN of the model Vev renders the block with (`useModel()`), the way
+ * @vev/react's widget-node ids the host (`model.virtualKey || model.key`):
+ * an instance of a master component — a template used by thirty articles —
+ * gets its own key per instance, so thirty carousels are thirty slots.
+ */
+export function useVioSlotId({ slot, kind }: { slot?: string; kind: SlotKind }): string {
+  const model: any = useModel();
+  const explicit = normalizeSlotId(slot);
+  const key =
+    typeof model?.virtualKey === "string" && model.virtualKey.trim()
+      ? model.virtualKey.trim()
+      : typeof model?.key === "string"
+        ? model.key.trim()
+        : "";
+  return explicit || (key ? normalizeSlotId(`${kind}-${key}`) : "");
+}
+
+export type VioSlotInput = {
+  /** The "Slot" field: an explicit id, shared by every block with the same value. */
+  slot?: string;
+  /** The "Slot name" field. */
+  slotName?: string;
+  kind: SlotKind;
+  /** The block's own heading (carousel/grid `heading`, else `kicker`; a card: its product's title). */
+  title?: string;
+  /** False delays the registration (a card until its product is known). Default true. */
+  ready?: boolean;
+  /** Vev's `hostRef` prop — the block's `<vev>` host: tells a header/footer block apart and gives the ordinal. */
+  hostRef?: { current: HTMLElement | null } | null;
+};
+
+/**
+ * The slot of a Vio block and its ONE registration: `Vio.registerSlot` in an
+ * effect, released on unmount, re-registered when the id or the name changes
+ * (the designer typing in the panel re-declares — the SDK debounces and
+ * dedupes). Works in the editor and on the published page alike. Returns the
+ * effective id (`useVioSlotId`).
+ */
+export function useVioSlot({ slot, slotName, kind, title, ready = true, hostRef }: VioSlotInput): string {
+  const id = useVioSlotId({ slot, kind });
+  const model: any = useModel();
+  const type = typeof model?.type === "string" ? model.type : "";
+  const page = useVevPage();
+  const explicit = typeof slot === "string" && slot.trim() !== "";
+  const name = typeof slotName === "string" ? slotName.trim() : "";
+  const own = typeof title === "string" ? title.trim() : "";
+  const pageTitle = page.title ?? "";
+  useEffect(() => {
+    if (!id || !ready || !sdkHas("registerSlot")) return;
+    // The name is built here, with the DOM mounted: the host says whether the
+    // block is in a header / footer and where it sits among its kind.
+    const host = hostRef?.current ?? null;
+    const displayName = name
+      ? name.slice(0, SLOT_NAME_MAX_LENGTH)
+      : explicit
+        ? undefined
+        : autoSlotDisplayName(kind, id, type, own, pageTitle, host);
+    let release: (() => void) | undefined;
+    try {
+      release = (Vio as any).registerSlot(id, displayName);
+    } catch (err) {
+      if (DEBUG) console.warn("[Vio] registerSlot failed", err);
+      return;
+    }
+    return () => {
+      try {
+        release?.();
+      } catch {
+        /* never break an unmount */
+      }
+    };
+  }, [id, ready, name, explicit, kind, type, own, pageTitle, hostRef]);
+  return id;
+}
+
+/** `<heading> · <page>`, else `Carousel 2 · <page>`; no page for a block every
+ * page shows (header / footer section, fixed element). Capped at 255. */
+function autoSlotDisplayName(
+  kind: SlotKind,
+  id: string,
+  type: string,
+  own: string,
+  pageTitle: string,
+  host: HTMLElement | null
+): string {
+  const base = own || `${SLOT_KIND_LABEL[kind]} ${slotOrdinal(kind, id, type, host)}`;
+  const full = pageTitle && !isSharedAcrossPages(host) ? `${base} · ${pageTitle}` : base;
+  return full.slice(0, SLOT_NAME_MAX_LENGTH);
+}
+
+/** True inside a header / footer section of the page (`<header>` / `<footer>`
+ * right under the page's `.__p`) or the fixed layer (`.fixed`) — what Vev
+ * renders on every page (see @vev/react's page.js / fixed.js). */
+function isSharedAcrossPages(host: HTMLElement | null): boolean {
+  try {
+    return !!host?.closest(".__p > header, .__p > footer, .fixed");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 1-based position of the block among the same-kind Vio blocks of the page in
+ * document order — the hosts carry `__<widget type>` as a class — like the
+ * SDK's ordinal for its elements; stable across loads while the layout is. A
+ * mount-order counter when the DOM cannot tell (no host, no type).
+ */
+function slotOrdinal(kind: SlotKind, id: string, type: string, host: HTMLElement | null): number {
+  const { ordinals } = slotState();
+  const byKind = ordinals[kind] ?? (ordinals[kind] = new Map<string, number>());
+  try {
+    if (host && type && typeof document !== "undefined") {
+      const same = document.querySelectorAll(`vev.__${cssEscape(type)}`);
+      const index = Array.prototype.indexOf.call(same, host);
+      if (index >= 0) {
+        byKind.set(id, index + 1);
+        return index + 1;
+      }
+    }
+  } catch {
+    /* fall through to the counter */
+  }
+  const known = byKind.get(id);
+  if (known) return known;
+  const next = byKind.size + 1;
+  byKind.set(id, next);
+  return next;
+}
+
+function cssEscape(value: string): string {
+  const css = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS;
+  if (css && typeof css.escape === "function") return css.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
 // ---- Changing the key --------------------------------------------------------
@@ -455,7 +846,9 @@ export function adoptConnection(boot: unknown, key: string, environment: string)
   // changed, and the carts of unknown sponsors go below anyway.
   const keyChanged = previous != null && previous !== fingerprint;
   if (keyChanged) forgetSponsorState({ carts: true });
-  const droppedCarts = pruneCartsOutside(config.ids);
+  // Any sponsor of any campaign of the key keeps its cart: a slot's campaign
+  // may sell with a sponsor the default campaign does not have.
+  const droppedCarts = pruneCartsOutside(config.knownIds);
   (globalThis as { __VIO_PRIMARY_SPONSOR_ID__?: number }).__VIO_PRIMARY_SPONSOR_ID__ = config.primaryId;
   writeStorage(VIO_CONNECTION_STORAGE, fingerprint);
   writeStorage(VIO_SPONSORS_STORAGE, JSON.stringify(sponsors));
@@ -652,6 +1045,10 @@ export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void 
     Vio.init({
       apiKey: key,
       environment: sdkEnv as any,
+      // The surface's platform (ADR-0034): goes on the bootstrap (`?platform=`)
+      // and on every slot declaration, so the campaigns service answers with
+      // the slot assignments made for Vev.
+      platform: "vev",
     });
     lastInitKey = key;
     lastInitEnv = sdkEnv;
@@ -827,10 +1224,19 @@ export function loadCatalog(): Promise<CatalogProduct[]> {
 }
 
 /** Dispatch the SDK product-detail open event (the Config's <VioProductDetail>
- * listens), with the sponsor `requested` resolves to (see `sponsorForCommerce`).
+ * listens), with the sponsor `requested` resolves to (see `sponsorForCommerce`)
+ * — or the slot's campaign sponsor when `slot` has one assigned. The detail
+ * takes the slot and the content from the click and carries them on every
+ * event it emits (view_item, add_to_cart, begin_checkout from the drawer).
  * Before the bootstrap it waits for it; with no sponsor at all nothing opens. */
-export function openProductInfo(productId: number, requestedSponsorId?: unknown, currency?: string): void {
-  const dispatch = (sponsorId: number | null) => {
+export function openProductInfo(
+  productId: number,
+  requestedSponsorId?: unknown,
+  currency?: string,
+  slot?: string | null
+): void {
+  const dispatch = (pageSponsor: number | null) => {
+    const sponsorId = sponsorForSlot(slot, pageSponsor);
     if (sponsorId == null) {
       console.warn("[Vio] product info not opened: no sponsor in the connected key's configuration");
       return;
@@ -838,9 +1244,10 @@ export function openProductInfo(productId: number, requestedSponsorId?: unknown,
     document.dispatchEvent(
       new CustomEvent("vio:product-click", {
         detail: {
+          ...vioAttribution(slot, sponsorId),
           productId: String(productId),
           sponsorId: String(sponsorId),
-          currency: currency || getActiveCurrency()
+          currency: currency || getActiveCurrency(),
         },
       })
     );
