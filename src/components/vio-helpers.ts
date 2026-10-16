@@ -415,6 +415,14 @@ const SLOT_KIND_LABEL: Record<SlotKind, string> = {
 
 /** The server keeps display names up to 255 characters. */
 const SLOT_NAME_MAX_LENGTH = 255;
+/** The server keeps slot ids up to 100 characters (the SDK cuts, not drops). */
+export const SLOT_ID_MAX_LENGTH = 100;
+
+/** A slot id as the SDK registers it: trimmed, cut at 100, trimmed again. */
+export function normalizeSlotId(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, SLOT_ID_MAX_LENGTH).trim();
+}
 
 /** What `Vio.attribution(slot)` answers: the campaign the place shows, its
  * sponsor, the place and the article. Every event and cart line carries it. */
@@ -459,7 +467,7 @@ function slotState(): SlotState {
  * (an older bundle), only what this side knows: the slot and the sponsor.
  */
 export function vioAttribution(slot?: string | null, sponsorId?: number | null): VioAttribution {
-  const name = typeof slot === "string" && slot.trim() ? slot.trim() : undefined;
+  const name = normalizeSlotId(slot) || undefined;
   const sid = toSponsorId(sponsorId) ?? undefined;
   // A slot whose campaign the block could NOT follow (its sponsor is not one
   // of the key's — see resolveSlotSponsor) must not attribute to that
@@ -500,7 +508,7 @@ export function cartOrigin(attribution: VioAttribution): { campaignId?: number; 
  * overrides it.
  */
 export function slotAssignedCampaign(slot?: string | null): any | null {
-  const name = typeof slot === "string" ? slot.trim() : "";
+  const name = normalizeSlotId(slot);
   if (!name || !sdkHas("campaignForSlot")) return null;
   try {
     const campaign = (Vio as any).campaignForSlot(name);
@@ -530,9 +538,12 @@ export type SlotSponsor = {
 export function resolveSlotSponsor(slot: string | null | undefined, pageSponsor: number | null): SlotSponsor {
   const campaign = slotAssignedCampaign(slot);
   if (!campaign) return { sponsorId: pageSponsor };
-  const sid = toSponsorId(campaign.primarySponsor?.id);
+  // No configuration in this window (Disconnect; the SDK still holds the old
+  // bootstrap): nothing to follow and nothing to warn about.
   const config = currentSponsorConfig();
-  if (config && sid != null && config.knownIds.includes(sid)) return { sponsorId: sid };
+  if (!config) return { sponsorId: pageSponsor };
+  const sid = toSponsorId(campaign.primarySponsor?.id);
+  if (sid != null && config.knownIds.includes(sid)) return { sponsorId: sid };
   return {
     sponsorId: pageSponsor,
     fallback: { campaignName: String(campaign.name ?? campaign.id ?? "?"), campaignSponsorId: sid },
@@ -592,14 +603,14 @@ export function useVevPage(): { key?: string; title?: string } {
  */
 export function useVioSlotId({ slot, kind }: { slot?: string; kind: SlotKind }): string {
   const model: any = useModel();
-  const explicit = typeof slot === "string" ? slot.trim() : "";
+  const explicit = normalizeSlotId(slot);
   const key =
     typeof model?.virtualKey === "string" && model.virtualKey.trim()
       ? model.virtualKey.trim()
       : typeof model?.key === "string"
         ? model.key.trim()
         : "";
-  return explicit || (key ? `${kind}-${key}` : "");
+  return explicit || (key ? normalizeSlotId(`${kind}-${key}`) : "");
 }
 
 export type VioSlotInput = {
@@ -1233,10 +1244,10 @@ export function openProductInfo(
     document.dispatchEvent(
       new CustomEvent("vio:product-click", {
         detail: {
+          ...vioAttribution(slot, sponsorId),
           productId: String(productId),
           sponsorId: String(sponsorId),
           currency: currency || getActiveCurrency(),
-          ...vioAttribution(slot, sponsorId),
         },
       })
     );
