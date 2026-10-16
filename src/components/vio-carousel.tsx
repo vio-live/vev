@@ -3,7 +3,8 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
-import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, SLOT_PROPS, pickCardConfig } from "./card-props";
+import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
+import { SLOT_PROPS } from "./slot-props";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
 import { fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 
@@ -97,7 +98,7 @@ export default function VioProductCarousel(props: Props) {
 
   // The carousel's slot (ADR-0034): the "Slot" field, else `carousel-<vev key>`,
   // named after its heading and the page; registered as soon as it exists.
-  const { slot } = useVioSlot({ slot: slotProp, slotName, kind: "carousel", title: heading || kicker });
+  const slot = useVioSlot({ slot: slotProp, slotName, kind: "carousel", title: heading || kicker, hostRef: props.hostRef });
   // The page's active sponsor, live — the same source as the card and the grid
   // — unless a campaign is assigned to this slot: then that campaign's sponsor.
   const activeSponsor = useActiveSponsorId(undefined, slot);

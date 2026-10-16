@@ -828,7 +828,7 @@ registerVevComponent(VioConfig, {
           title: "Slot",
           type: "string",
           description:
-            "Optional. The slot this element belongs to in the Vio dashboard (the id of a Vio block, or your own). Its campaign is attributed the product views and purchases that start here.",
+            "Optional. Attributes what starts here (product views, purchases) to a slot that already exists on this page — the id a Vio block registered, or the Slot you gave one. It does not create a slot.",
         },
       ],
     },

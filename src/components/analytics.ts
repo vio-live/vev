@@ -1,4 +1,4 @@
-import { currentSponsorConfig, getPersistedSponsorId, type VioAttribution } from "./vio-helpers";
+import { currentSponsorConfig, getPersistedSponsorId, vioAttribution, type VioAttribution } from "./vio-helpers";
 import { Vio, purchaseFromPaymentSuccess } from "../../vio-sdk";
 
 /**
@@ -75,6 +75,8 @@ type Ga4Item = {
 };
 
 function num(v: unknown): number | undefined {
+  // `Number(null)` and `Number("")` are 0 — never a campaign or a sponsor id.
+  if (v === null || v === undefined || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 }
@@ -137,6 +139,22 @@ function pushDataLayer(name: string, ecommerce: Record<string, unknown>): void {
   w.dataLayer.push({ event: name, ecommerce });
 }
 
+/** One row per product + variant; quantities summed when both sides have one. */
+function mergeItemRows(items: VioItemInput[]): VioItemInput[] {
+  const rows = new Map<string, VioItemInput>();
+  for (const i of items) {
+    const key = `${i.productId ?? ""}::${i.variantId ?? ""}`;
+    const prev = rows.get(key);
+    if (!prev) {
+      rows.set(key, { ...i });
+      continue;
+    }
+    const q = (prev.quantity ?? 0) + (i.quantity ?? 0);
+    if (q > 0) prev.quantity = q;
+  }
+  return [...rows.values()];
+}
+
 const LOG_KEY = "__vioAnalyticsLog";
 function ringLog(entry: unknown): void {
   if (typeof window === "undefined") return;
@@ -165,7 +183,10 @@ export function trackEvent(name: string, params: EventParams = {}): void {
   if (transaction_id) ecommerce.transaction_id = transaction_id;
   if (payment_type) ecommerce.payment_type = payment_type;
   if (item_list_name) ecommerce.item_list_name = item_list_name;
-  if (items && items.length) ecommerce.items = items.map(toGa4Item);
+  // GA4 rows: one per product (+ variant), quantities summed — a line the
+  // reader added from two blocks is ONE row for the publisher. The Vio sink
+  // keeps the per-origin rows (forwardToVio), which is how it splits.
+  if (items && items.length) ecommerce.items = mergeItemRows(items).map(toGa4Item);
 
   if (!DIAGNOSTIC_EVENT_NAMES.has(name)) pushDataLayer(name, ecommerce);
 
@@ -218,17 +239,28 @@ const SPLIT_BY_CAMPAIGN = new Set(["begin_checkout", "purchase"]);
 
 type CampaignGroup = { campaignId?: number; slot?: string; contentId?: string; sponsorId?: number; items: VioItemInput[] };
 
-/** Items grouped by the campaign of their origin, in order of first
- * appearance; items with no origin share one group (the event's own
- * attribution: the SDK resolves its campaign from the event's sponsor). The
- * group's slot / content / sponsor only when they are the same for the whole
- * group — the SDK's `cartSlices` rule; a group's sponsor comes from its
- * lines, never from the event. */
+/** Items grouped by campaign, in order of first appearance — the SDK's
+ * `cartSlices` rule: units with an origin go to its campaign; units without
+ * one to the campaign the current rule resolves for their line's sponsor
+ * (`Vio.attribution(null, { sponsorId })`), never to a campaign-less group
+ * of their own (only when nothing resolves — no bootstrap — they share one
+ * `default` group the SDK attributes on the wire). The group's slot /
+ * content / sponsor only when they are the same for the whole group; a
+ * group's sponsor comes from its lines, never from the event. */
 function groupItemsByCampaign(items: VioItemInput[]): CampaignGroup[] {
   const groups = new Map<string, CampaignGroup & { slots: Set<string>; contents: Set<string>; sponsors: Set<number> }>();
+  const resolvedBySponsor = new Map<string, number | undefined>();
+  const campaignOf = (it: VioItemInput): number | undefined => {
+    const own = num(it.campaignId);
+    if (own != null) return own;
+    const sid = num(it.sponsorId);
+    const key = sid != null ? String(sid) : "";
+    if (!resolvedBySponsor.has(key)) resolvedBySponsor.set(key, num(vioAttribution(null, sid ?? null).campaignId));
+    return resolvedBySponsor.get(key);
+  };
   for (const it of items) {
-    const cid = num(it.campaignId);
-    const k = cid != null ? String(cid) : "";
+    const cid = campaignOf(it);
+    const k = cid != null ? String(cid) : "default";
     let g = groups.get(k);
     if (!g) {
       g = { campaignId: cid, items: [], slots: new Set(), contents: new Set(), sponsors: new Set() };
@@ -249,6 +281,53 @@ function groupItemsByCampaign(items: VioItemInput[]): CampaignGroup[] {
   }));
 }
 
+/**
+ * The SDK's own split (`Vio.cartSlices(sponsorId?)`, when the bundle exports
+ * it) as groups — the same rule, computed by the one that keeps the origins.
+ * Null when the bundle lacks it, when it answers nothing (the cart is already
+ * cleared on `vio:payment-success`) or when the shape is not the expected
+ * `{ campaignId?, slot?, contentId?, commerce: { items, value, currency } }`:
+ * then `groupItemsByCampaign` over the snapshot does the same job.
+ */
+function sdkCartGroups(sponsorId?: number): CampaignGroup[] | null {
+  const fn = (Vio as any)?.cartSlices;
+  if (typeof fn !== "function") return null;
+  try {
+    const slices: any[] = fn.call(Vio, sponsorId);
+    if (!Array.isArray(slices) || slices.length === 0) return null;
+    const groups: CampaignGroup[] = [];
+    for (const s of slices) {
+      const rows: any[] = Array.isArray(s?.commerce?.items) ? s.commerce.items : [];
+      if (!rows.length) return null;
+      const campaignId = num(s?.campaignId);
+      const slot = typeof s?.slot === "string" && s.slot ? s.slot : undefined;
+      const contentId = s?.contentId != null && s.contentId !== "" ? String(s.contentId) : undefined;
+      groups.push({
+        campaignId,
+        slot,
+        contentId,
+        sponsorId,
+        items: rows.map((i) => ({
+          productId: i?.productId,
+          name: i?.name,
+          brand: i?.brand,
+          variantId: i?.variantId,
+          price: num(i?.price),
+          currency: s?.commerce?.currency,
+          quantity: num(i?.quantity) ?? 1,
+          campaignId,
+          slot,
+          contentId,
+          sponsorId,
+        })),
+      });
+    }
+    return groups;
+  } catch {
+    return null;
+  }
+}
+
 function forwardToVio(name: string, params: EventParams): void {
   if (!VIO_EVENT_NAMES.has(name)) return;
   const analytics = (Vio as any).analytics;
@@ -262,7 +341,7 @@ function forwardToVio(name: string, params: EventParams): void {
   // before. GA4 (above) always gets the one event with every item: a
   // publisher's purchase is one purchase.
   if (SPLIT_BY_CAMPAIGN.has(name) && params.items?.length) {
-    const groups = groupItemsByCampaign(params.items);
+    const groups = sdkCartGroups(num(params.sponsorId)) ?? groupItemsByCampaign(params.items);
     // The same precedence with one group or several: what the lines say
     // (their campaign, slot, content, sponsor) over what the event says.
     const withGroup = (g: CampaignGroup): EventParams => ({
@@ -398,9 +477,13 @@ export function trackAddToCart(item: VioItemInput, attribution?: VioAttribution)
 }
 
 /**
- * The attribution a `vio:*` event detail carries (the SDK's detail, cart and
- * checkout spread `Vio.attribution()` into theirs): slot, campaign and
- * article. Only what is there — never a made-up value.
+ * The attribution a `vio:*` event detail carries: slot, campaign and article.
+ * Who puts it there: our own cards (`vio:product-click`, `vio:checkout-open`
+ * from the Vipps button — card-view.tsx) and, from the SDK 0.23.x on, its
+ * product detail, cart and checkout (`vio:added-to-cart`,
+ * `vio:removed-from-cart`, `vio:checkout-open`, `vio:payment-success`, each
+ * spreading `Vio.attribution()` of the slot it was opened from). Older
+ * bundles send none of it. Only what is there — never a made-up value.
  */
 function attributionOf(d: any): VioAttribution {
   const out: VioAttribution = {};
@@ -455,22 +538,26 @@ function cartToItems(sponsorId?: number): VioItemInput[] {
       };
       // The line remembers where its units were added from (ADR-0034,
       // `CartLineItem.origins`: campaign, slot, article, quantity per origin
-      // — several when the same product came from more than one block).
-      // Lines persisted before the SDK 0.23.0 have none.
+      // — several when the same product came from more than one block): one
+      // row per origin. Units no origin accounts for (a cart persisted before
+      // the SDK 0.23.0, a quantity the server raised) are one row with an
+      // empty origin, as the SDK's `lineOrigins` fills the gap.
       const origins: any[] = Array.isArray(it.origins) ? it.origins : [];
-      if (!origins.length) {
-        out.push(base);
-        continue;
-      }
+      let covered = 0;
       for (const o of origins) {
+        const q = num(o?.quantity) ?? 0;
+        if (q <= 0) continue;
+        covered += q;
         out.push({
           ...base,
-          quantity: num(o?.quantity) ?? base.quantity,
+          quantity: q,
           campaignId: num(o?.campaignId),
           slot: typeof o?.slot === "string" && o.slot ? o.slot : undefined,
           contentId: o?.contentId != null && o.contentId !== "" ? String(o.contentId) : undefined,
         });
       }
+      const quantity = base.quantity ?? 1;
+      if (quantity > covered) out.push({ ...base, quantity: quantity - covered });
     }
   }
   return out;

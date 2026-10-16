@@ -10,6 +10,7 @@ import {
   sponsorForCommerce,
   useActiveSponsorId,
   useVioSlot,
+  useVioSlotId,
   vioAttribution,
   type VioAttribution,
   type VippsOffer,
@@ -716,6 +717,7 @@ export function VioProductCardSelf({
   imageOverride,
   slot,
   slotName,
+  hostRef,
 }: {
   productId?: number;
   /** The sponsor the product was picked under. */
@@ -725,10 +727,11 @@ export function VioProductCardSelf({
   /** The "Slot" / "Slot name" fields of the block (both optional). */
   slot?: string;
   slotName?: string;
+  /** Vev's host ref of the block (for the slot's name: page position, header/footer). */
+  hostRef?: { current: HTMLElement | null } | null;
 }) {
-  // The card's slot (ADR-0034): the "Slot" field, else `card-<vev key>`,
-  // registered as soon as the block exists — in the editor too.
-  const identity = useVioSlot({ slot, slotName, kind: "card" });
+  // The card's slot (ADR-0034): the "Slot" field, else `card-<vev key>`.
+  const slotId = useVioSlotId({ slot, kind: "card" });
   // The page's active sponsor (Vio Config's choice, live), not the one the
   // product was picked under: switching the sponsor must switch what every
   // card shows, and a product the new channel does not carry shows as
@@ -737,9 +740,12 @@ export function VioProductCardSelf({
   // and only if the connected key has it (a page built on vio-backend's
   // sponsor ids falls to the key's primary). A campaign assigned to the
   // card's slot overrides all of that with its own sponsor.
-  const activeSponsor = useActiveSponsorId(sponsorId, identity.slot);
+  const activeSponsor = useActiveSponsorId(sponsorId, slotId);
   const { product, loading } = useVioProduct(productId, activeSponsor);
   const qty = useCartQty(productId, activeSponsor);
+  // Registered once the product is known — in the editor too: its title names
+  // the slot ("Lue sort · Artikkel"), `Card 2 · Artikkel` when there is none.
+  useVioSlot({ slot, slotName, kind: "card", title: product?.title, ready: !loading, hostRef });
 
   // Impression (view_item_list of one) — fired here so a standalone card counts,
   // without double-firing when the same view renders inside a carousel / grid
@@ -747,7 +753,7 @@ export function VioProductCardSelf({
   // Only on a new product (as before): a sponsor switch refetches, and the
   // new DTO fires this once — the attribution is read at that moment.
   useEffect(() => {
-    if (product) trackViewItemList([productToItem(product)], product?.title, vioAttribution(identity.slot, activeSponsor));
+    if (product) trackViewItemList([productToItem(product)], product?.title, vioAttribution(slotId, activeSponsor));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product]);
 
@@ -761,11 +767,11 @@ export function VioProductCardSelf({
       {
         sponsorId: activeSponsor ?? undefined,
         componentTemplateId: "vev-card",
-        ...vioAttribution(identity.slot, activeSponsor),
+        ...vioAttribution(slotId, activeSponsor),
       },
-      `vev-card:${activeSponsor}:${identity.slot}:${productId}`,
+      `vev-card:${activeSponsor}:${slotId}:${productId}`,
     );
-  }, [product, activeSponsor, productId, identity.slot]);
+  }, [product, activeSponsor, productId, slotId]);
 
   return (
     <ProductCardView
@@ -778,7 +784,7 @@ export function VioProductCardSelf({
       rootRef={rootRef}
       standalone
       imageOverride={imageOverride}
-      slot={identity.slot}
+      slot={slotId}
     />
   );
 }

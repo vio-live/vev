@@ -24,33 +24,6 @@ async function channelLacksVipps(ctx: any): Promise<boolean> {
   }
 }
 
-/**
- * The slot of a block (ADR-0027 / ADR-0034). Both optional — nobody has to
- * fill them: a block with an empty "Slot" registers itself under its own Vev
- * key, named after its heading and the page. "Slot" is an explicit id that
- * groups blocks (same value = one slot in the dashboard); "Slot name" is how
- * it is listed there. Shared by the card, the carousel, the grid and the
- * open-product addon — see `useVioSlot` in vio-helpers.ts.
- */
-export const SLOT_PROPS: any[] = [
-  {
-    name: "slot",
-    title: "Slot",
-    type: "string",
-    initialValue: "",
-    description:
-      "Optional. An id for this place in the Vio dashboard; blocks with the same value are one slot. Empty: the block registers itself with its own id.",
-  },
-  {
-    name: "slotName",
-    title: "Slot name",
-    type: "string",
-    initialValue: "",
-    description:
-      "Optional. How the slot is listed in the Vio dashboard. Empty: the block's heading (or its kind) and the page title.",
-  },
-];
-
 export const CARD_CONFIG_PROPS: any[] = [
   {
     name: "layout",
