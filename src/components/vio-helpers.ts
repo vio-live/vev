@@ -154,7 +154,7 @@ export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
     list.push({ id, name: String(c?.name ?? `Campaign ${id}`), status, isDefault: c?.isDefault === true });
   };
   for (const c of Array.isArray(b.availableCampaigns) ? b.availableCampaigns : []) add(c, String(c?.status ?? ""));
-  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) add(c, String(c?.status ?? "active"));
+  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) add(c, String(c?.status ?? ""));
   if (b.campaign && typeof b.campaign === "object") add(b.campaign, "active");
   return [...list.filter((c) => c.status === "active"), ...list.filter((c) => c.status !== "active")];
 }
@@ -706,12 +706,14 @@ export function cartOrigin(attribution: VioAttribution): { campaignId?: number; 
 }
 
 /**
- * The non-default campaign `slot` shows now: its assignment from the
- * dashboard (open window), else the page's campaign chosen in Vio Config
- * (SDK 0.24.0 applies it as the fallback), else null — the slot shows the
- * surface's default campaign. `Vio.campaignForSlot` answers the default in
- * that case; the page's "Active Sponsor" is how a Vev page chooses a sponsor
- * within the default campaign, so only those two override it.
+ * The campaign `slot` shows now because something chose it: its assignment
+ * (dashboard or page, open window), else the page's campaign chosen in Vio
+ * Config (SDK 0.24.0 applies it as the fallback); else null — the slot shows
+ * whatever the key serves (the default campaign, or the most recent active
+ * one while the default is paused). `Vio.campaignForSlot` answers that
+ * fallback in the last case; the page's "Active Sponsor" is how a Vev page
+ * chooses a sponsor within it, so only an assignment or the page's choice
+ * override it.
  */
 export function slotAssignedCampaign(slot?: string | null): any | null {
   const name = normalizeSlotId(slot);
@@ -720,8 +722,8 @@ export function slotAssignedCampaign(slot?: string | null): any | null {
   if (!name) return pageCampaign();
   if (!sdkHas("campaignForSlot")) return null;
   try {
-    // 0.24.0: the slot's assignment, else the page's campaign, else the default.
-    return nonDefaultCampaign((Vio as any).campaignForSlot(name));
+    // 0.24.0: the slot's assignment, else the page's campaign, else the fallback.
+    return nonDefaultCampaign((Vio as any).campaignForSlot(name), name);
   } catch {
     return null;
   }
@@ -746,12 +748,16 @@ export function pageCampaign(): any | null {
 
 /** `campaign` unless it is the surface's default one, or the campaign the key
  * serves now (`config.campaign`: the fallback of every slot without an
- * assignment) when the page did not choose it explicitly. */
-function nonDefaultCampaign(campaign: any): any | null {
+ * assignment) when nothing chose it — neither the page explicitly nor an
+ * assignment of `slot` (the entry's `slots[]` lists its open assignments,
+ * dashboard or page, for this platform). */
+function nonDefaultCampaign(campaign: any, slot?: string | null): any | null {
   if (!campaign || campaign.isDefault === true) return null;
   const headId = Number((Vio as any).bootstrapCache?.campaign?.id);
-  if (Number.isFinite(headId) && Number(campaign.id) === headId && resolvePageCampaignId() !== Number(campaign.id)) return null;
-  return campaign;
+  if (!Number.isFinite(headId) || Number(campaign.id) !== headId) return campaign;
+  if (resolvePageCampaignId() === Number(campaign.id)) return campaign;
+  const assigned = !!slot && Array.isArray(campaign.slots) && campaign.slots.some((s: any) => typeof s?.name === "string" && s.name.trim() === slot);
+  return assigned ? campaign : null;
 }
 
 export type SlotSponsor = {

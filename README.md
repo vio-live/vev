@@ -120,9 +120,11 @@ SDK declares the page's slots once per load after the bootstrap (`mode: merge`,
 editor's canvas counts as a page: a block shows up in the dashboard as soon as it exists
 on the canvas, with Vio Config connected.
 
-**Campaign of the page** (ADR-0034, amendment 3). Vio Config has a `Campaign` field: one
+**Campaign of the page** (ADR-0034, amendments 3 and 4). Vio Config has a `Campaign` field: one
 of the surface's campaigns, listed by name from the connected key's bootstrap
-(`campaigns[]`, active ones first) the way `Active Sponsor` lists its sponsors — the field
+(`availableCampaigns[]`: every campaign that has not ended, active ones first, the others
+with their status — `Navidad · scheduled`; an older micro gives only `campaigns[]`, the
+active ones) the way `Active Sponsor` lists its sponsors — the field
 reads what the Config wrote after connecting, so it says so until the key is connected.
 The choice is saved as the block's `campaignId` (empty = the default campaign) and goes
 into `Vio.init({ campaignId })`: the SDK (0.24.0, vendored) applies it wherever a slot has no
@@ -133,10 +135,14 @@ the campaign. Changing it re-initialises the SDK like changing the key (bootstra
 slots declared again under the new campaign, blocks re-resolved) — in the editor's
 properties panel too, which learns the new value through `localStorage` (`vio.campaignId`,
 written only in the editor) and re-inits its own SDK, so the picker lists that campaign's
-catalog and the Vipps check queries that sponsor. Only an **active** campaign can be
-chosen; a saved one that is not one of the connected key's, or is paused / ended /
-scheduled, falls back to the default and the panel says so, like a saved sponsor the key
-lacks. Blocks have no field of their own for this; the panel says it plainly: "Blocks sell
+catalog and the Vipps check queries that sponsor. Any campaign that has **not ended** can be
+chosen, paused or scheduled too: the page's slots register under it right away (the editor
+prepares the article before the window opens) and blocks keep using Active Sponsor until it
+is active; a saved one that is not available for the key any more (ended, removed) counts as
+none and the panel says so, like a saved sponsor the key lacks. "The default campaign" is
+only the one the backend marks `isDefault`; the bootstrap's `campaign` is whatever the key
+serves now (the default while active, else the most recent active one) and never stands in
+for it. Blocks have no field of their own for this; the panel says it plainly: "Blocks sell
 through this campaign's primary sponsor, overriding Active Sponsor; products picked under
 another sponsor show as unavailable. The dashboard can still reassign any slot."
 
