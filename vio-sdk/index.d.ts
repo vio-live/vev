@@ -6,7 +6,7 @@
  *     — `campaignId`: the page's campaign, the fallback of every slot without a
  *     dashboard assignment (assignment > page campaign > default), carried by
  *     the page's declaration; `debug`: console.debug of the slot decisions.
- *   registerSlot(id, displayName?, campaignId?) → release()
+ *   registerSlot(id, displayName?, { kind?, campaignId? } | campaignId?) → release()   (0.25.0: kind goes to the manifest)
  *   declareSlots(slots, { force? }) → { …, locations[].assignment: 'created'|'kept'|'replaced'|'dashboard'|'none' }
  *   pageCampaign() → BootstrapCampaignEntry | null   (the init's campaign when the key has it active)
  *   campaignForSlot(slot?, { campaignId?, sponsorId? }?) → BootstrapCampaignEntry | null
