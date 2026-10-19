@@ -126,6 +126,18 @@ type EventParams = {
   campaignId?: number;
   contentId?: string;
   contentTitle?: string;
+  /** What emitted the event (`COMPONENT_TEMPLATE_ID`: `product-card`,
+   *  `product-carousel`, `product-grid`, `product-detail`):
+   *  `component_template_id` on the wire. Context, never GA4's `ecommerce`. */
+  componentTemplateId?: string;
+  /** Internal: the buyer reference of a purchase — shopcart's `buyer_ref`, a
+   *  keyed hash the SDK normalizes (never an email) — for `commerce.buyer_id`.
+   *  Only to the Vio collector: never into GA4 nor this module's
+   *  `vio:analytics` document event (the SDK's own `vio:analytics` window
+   *  event does carry the full event it sends, hash included). Vev starts the
+   *  SDK without `requireConsent`, so the gate is the host's CMP — whether the
+   *  package loads at all — and the collector's `minimal` privacy mode. */
+  buyerId?: string;
   /** Internal: the raw cart lines (`CartLineItem[]`, origins included) behind
    *  `items`, for `Vio.cartSlices()`. Never leaves this module. */
   cartLines?: unknown[];
@@ -177,12 +189,14 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 
   const {
     currency, value, items, item_list_name, transaction_id, payment_type,
-    sponsorId, slot, campaignId, contentId, contentTitle, cartLines,
+    sponsorId, slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines,
     ...rest
   } = params;
-  // What the sinks outside this module see: never the raw cart lines.
+  // What the sinks outside this module see: never the raw cart lines, never
+  // the buyer reference (only the collector gets it).
   const publicParams: EventParams = { ...params };
   delete publicParams.cartLines;
+  delete publicParams.buyerId;
   const ecommerce: Record<string, unknown> = { ...rest };
   if (currency) ecommerce.currency = currency;
   if (value != null) ecommerce.value = Math.round(value * 100) / 100;
@@ -424,7 +438,7 @@ function forwardToVio(name: string, params: EventParams): void {
 function sendToVio(analytics: any, name: string, params: EventParams): void {
   const {
     currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, error_code,
-    slot, campaignId, contentId, contentTitle, cartLines: _cartLines,
+    slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines: _cartLines,
     ...rest
   } = params;
   const props: Record<string, unknown> = { ...rest };
@@ -433,7 +447,7 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
   try {
     analytics.track(name, {
       commerce:
-        items?.length || value != null || transaction_id || payment_type
+        items?.length || value != null || transaction_id || payment_type || buyerId
           ? {
               items: items?.map((i) => ({
                 productId: i.productId ?? "",
@@ -447,6 +461,9 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
               currency: currency ?? undefined,
               orderId: transaction_id,
               paymentMethod: payment_type,
+              // The SDK keeps only a reference (`normalizeBuyerRef`) —
+              // `buyer_id` on the wire.
+              buyerId: buyerId || undefined,
             }
           : undefined,
       // El sponsor es LA dimensión del dashboard de commerce (filtra por
@@ -458,14 +475,18 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
       // conectada lo conoce. Nunca un id inventado: atribuir a un sponsor
       // equivocado es peor que no atribuir. El campaign_id lo deriva el SDK
       // (explícito → slot asignado → campaña activa del sponsor → default);
-      // el slot, la campaña y el artículo vienen de `Vio.attribution(slot)`
-      // del bloque que emite (ADR-0034) y van tal cual.
+      // el slot, la campaña, el artículo y el tipo de componente vienen de
+      // `Vio.attribution(slot)` del bloque que emite (ADR-0034) y van tal cual.
+      // El tipo solo lo traen los bloques y el detalle del SDK: lo que nace en
+      // el carrito (purchase, remove_from_cart, view_cart, el begin_checkout
+      // del cajón) va sin él.
       context: (() => {
         const sid = num(sponsorId) ?? soleCartSponsor() ?? persistedSponsorIfKnown();
         const ctx: Record<string, unknown> = {};
         if (sid) ctx.sponsorId = sid;
         if (errorCode) ctx.errorCode = errorCode;
         if (typeof slot === "string" && slot) ctx.slot = slot;
+        if (typeof componentTemplateId === "string" && componentTemplateId) ctx.componentTemplateId = componentTemplateId;
         const cid = num(campaignId);
         if (cid != null) ctx.campaignId = cid;
         if (contentId != null && contentId !== "") ctx.contentId = contentId;
@@ -491,8 +512,10 @@ function sumValue(items: VioItemInput[]): number {
   return items.reduce((acc, i) => acc + (i.price ?? 0) * (i.quantity ?? 1), 0);
 }
 
-/** Impression: a set of product cards rendered (carousel / grid / single card).
- * `attribution` is the block's `vioAttribution(slot, sponsor)` (ADR-0034). */
+/** `view_item_list`: the products a block RENDERED (carousel / grid / single
+ * card), fired when they load — not when they are seen; the real impression is
+ * `observeVioImpression`. `attribution` is the block's
+ * `vioAttribution(slot, sponsor, type)` (ADR-0034, 0.25.0). */
 export function trackViewItemList(items: VioItemInput[], listName?: string, attribution?: VioAttribution): void {
   if (!items.length) return;
   const withIndex = items.map((i, idx) => ({ ...i, index: i.index ?? idx, listName }));
@@ -536,13 +559,15 @@ export function trackAddToCart(item: VioItemInput, attribution?: VioAttribution)
 }
 
 /**
- * The attribution a `vio:*` event detail carries: slot, campaign and article.
- * Who puts it there: our own cards (`vio:product-click`, `vio:checkout-open`
- * from the Vipps button — card-view.tsx) and, from the SDK 0.23.x on, its
- * product detail, cart and checkout (`vio:added-to-cart`,
+ * The attribution a `vio:*` event detail carries: slot, campaign, article and
+ * component type. Who puts it there: our own cards (`vio:product-click`,
+ * `vio:checkout-open` from the Vipps button — card-view.tsx) and, from the
+ * SDK 0.23.x on, its product detail, cart and checkout (`vio:added-to-cart`,
  * `vio:removed-from-cart`, `vio:checkout-open`, `vio:payment-success`, each
- * spreading `Vio.attribution()` of the slot it was opened from). Older
- * bundles send none of it. Only what is there — never a made-up value.
+ * spreading `Vio.attribution()` of the slot it was opened from; 0.25.0: the
+ * detail's carry `componentTemplateId: "product-detail"`, the cart's and the
+ * checkout's carry no type). Older bundles send none of it. Only what is
+ * there — never a made-up value.
  */
 function attributionOf(d: any): VioAttribution {
   const out: VioAttribution = {};
@@ -551,6 +576,9 @@ function attributionOf(d: any): VioAttribution {
   if (cid != null) out.campaignId = cid;
   if (d?.contentId != null && String(d.contentId).trim()) out.contentId = String(d.contentId).trim();
   if (typeof d?.contentTitle === "string" && d.contentTitle.trim()) out.contentTitle = d.contentTitle.trim();
+  if (typeof d?.componentTemplateId === "string" && d.componentTemplateId.trim()) {
+    out.componentTemplateId = d.componentTemplateId.trim();
+  }
   return out;
 }
 
@@ -754,7 +782,10 @@ export function initVioAnalytics(): () => void {
   // total will arrive through the server-side order_paid event). The order id
   // is the SDK's normalization: always a Vio id (the redirect's checkout id,
   // Apple Pay's backend confirmation, or the checkout id the drawer attaches),
-  // never Qliro's/Walley's own reference.
+  // never Qliro's/Walley's own reference. The buyer id too (0.25.0): the
+  // `buyerRef` the detail carries — shopcart's keyed hash of the email, already
+  // normalized, never an email — becomes `commerce.buyer_id` on the Vio side
+  // only (see `EventParams.buyerId`).
   const onPaymentSuccess = (e: Event) => {
     const d = (e as CustomEvent).detail ?? {};
     // Only the sponsor that was paid: the checkout is per sponsor, and the
@@ -772,7 +803,7 @@ export function initVioAnalytics(): () => void {
         : [...snapshots.entries()];
     const items = picked.flatMap(([, s]) => s.items);
     const lines = picked.flatMap(([, s]) => s.lines);
-    const { orderId } = purchaseFromPaymentSuccess(d);
+    const { orderId, buyerId } = purchaseFromPaymentSuccess(d);
     trackEvent("purchase", {
       currency: currencyOf(items),
       value: sumValue(items),
@@ -781,6 +812,7 @@ export function initVioAnalytics(): () => void {
       sponsorId: paidSponsor ?? soleSnapshotSponsor(),
       items,
       cartLines: lines,
+      buyerId,
       ...attributionOf(d),
     });
     // Only now: the purchase for these sponsors has gone out.
@@ -850,7 +882,8 @@ export function initVioAnalytics(): () => void {
 
 /**
  * Impresión REAL de un componente de Vio (≥50% visible durante ≥1s, una vez
- * por sesión) — la regla del contrato, idéntica en web, iOS, Android y TV.
+ * por carga de página) — la regla del contrato, idéntica en web, iOS,
+ * Android y TV, con las mismas constantes que el SDK (`observeImpression`).
  *
  * Por qué existe (2026-09-14): el KPI "Shoppable views" del dashboard de
  * commerce cuenta `component_impression`, pero Vev solo emitía
@@ -862,42 +895,117 @@ export function initVioAnalytics(): () => void {
  * cuenta una vez, un carrusel una vez, una tarjeta suelta una vez. Nunca la
  * tarjeta cuando vive adentro de una grilla o carrusel (sería doble conteo).
  *
+ * Observed here, not through the SDK's `observeImpression` (2026-10-19): the
+ * impression carries `commerce.items` — the products the block shows (id,
+ * name, brand, price, currency) — and the SDK's helper tracks the context
+ * alone. The collector's "shown products" per slot and its per-product
+ * impressions read exactly these `items` of `component_impression`
+ * (vio-analytics `IMPRESSION_EVENTS`), so without them a slot sells products
+ * it never "showed". Dedupe per page load, by `key`, in one set for every
+ * chunk of the package; the SDK's own helper also resets it when a session
+ * rotates mid-page, which this does not.
+ *
  * Respeta el toggle "Send to Vio Analytics" del editor: si está apagado, no
  * se observa nada. Devuelve la función de limpieza para el useEffect.
  */
+const IMPRESSION_THRESHOLD = 0.5;
+const IMPRESSION_DWELL_MS = 1000;
+/** The collector's caps on `commerce.items` (vio-analytics schema): more rows
+ * than this, an empty `product_id` or a text over 255 and the WHOLE event is
+ * rejected — the impression would be lost, not trimmed. */
+const IMPRESSION_MAX_ITEMS = 100;
+const ITEM_TEXT_MAX_LENGTH = 255;
+
+function capText(value: string | undefined): string | undefined {
+  return typeof value === "string" && value ? value.slice(0, ITEM_TEXT_MAX_LENGTH) : undefined;
+}
+
+/** Components already counted this page load, by dedupe key — one set for
+ * every chunk of the package (Vev may bundle each block apart). */
+function impressedComponents(): Set<string> {
+  const g = globalThis as { __VIO_VEV_IMPRESSED__?: Set<string> };
+  return g.__VIO_VEV_IMPRESSED__ ?? (g.__VIO_VEV_IMPRESSED__ = new Set());
+}
+
 export function observeVioImpression(
   el: Element | null,
   context: {
     sponsorId?: number;
     componentTemplateId: string;
     locationId?: string;
-    /** `vioAttribution(slot, sponsor)` of the block: the slot IS the location id (ADR-0034). */
+    /** `vioAttribution(slot, sponsor, type)` of the block: the slot IS the location id (ADR-0034). */
     slot?: string;
     campaignId?: number;
     contentId?: string;
     contentTitle?: string;
   },
   key: string,
+  /** The products the block shows — `commerce.items` of the impression. */
+  items: VioItemInput[] = [],
 ): () => void {
   if (!el || !state.enabled || !state.sendToVio) return () => {};
+  if (typeof IntersectionObserver === "undefined") return () => {};
   const a = (Vio as any).analytics;
-  if (typeof a?.observeImpression !== "function") return () => {};
+  if (typeof a?.track !== "function") return () => {};
+  const dedupe = `component_impression:${key}`;
+  const seen = impressedComponents();
+  if (seen.has(dedupe)) return () => {};
   const sid = num(context.sponsorId);
+  const ctx = {
+    sponsorId: sid ?? undefined,
+    componentTemplateId: context.componentTemplateId,
+    locationId: context.slot || context.locationId || undefined,
+    slot: context.slot || undefined,
+    campaignId: num(context.campaignId),
+    contentId: context.contentId || undefined,
+    contentTitle: context.contentTitle || undefined,
+  };
+  // The same rows the SDK's carousel puts on its `view_item_list`: id, name,
+  // price — plus the brand, cheap and already in the DTO. No quantity: it is
+  // a view, not a line. Within the collector's caps, or it drops the event.
+  const rows = items
+    .filter((i) => i.productId != null && String(i.productId).trim() !== "")
+    .slice(0, IMPRESSION_MAX_ITEMS)
+    .map((i) => ({
+      productId: String(i.productId).trim(),
+      name: capText(i.name),
+      brand: capText(i.brand),
+      price: i.price,
+    }));
+  const commerce = rows.length ? { items: rows, currency: currencyOf(items) } : undefined;
+  let dwell: ReturnType<typeof setTimeout> | null = null;
+  let observer: IntersectionObserver;
   try {
-    return a.observeImpression(
-      el,
-      {
-        sponsorId: sid ?? undefined,
-        componentTemplateId: context.componentTemplateId,
-        locationId: context.slot || context.locationId || undefined,
-        slot: context.slot || undefined,
-        campaignId: num(context.campaignId),
-        contentId: context.contentId || undefined,
-        contentTitle: context.contentTitle || undefined,
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= IMPRESSION_THRESHOLD) {
+            if (dwell) continue;
+            dwell = setTimeout(() => {
+              dwell = null;
+              observer.disconnect();
+              if (seen.has(dedupe)) return;
+              seen.add(dedupe);
+              try {
+                a.track("component_impression", { context: ctx, commerce });
+              } catch {
+                /* la analítica nunca rompe la página */
+              }
+            }, IMPRESSION_DWELL_MS);
+          } else if (dwell) {
+            clearTimeout(dwell); // left the viewport before the dwell — not an impression
+            dwell = null;
+          }
+        }
       },
-      { key },
+      { threshold: [IMPRESSION_THRESHOLD] },
     );
+    observer.observe(el);
   } catch {
     return () => {}; // la analítica nunca rompe la página
   }
+  return () => {
+    if (dwell) clearTimeout(dwell);
+    observer.disconnect();
+  };
 }

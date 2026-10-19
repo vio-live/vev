@@ -1,5 +1,5 @@
 /**
- * The SDK facade (vio-web-sdk 0.24.0). Beyond init / bootstrap / cart /
+ * The SDK facade (vio-web-sdk 0.25.0). Beyond init / bootstrap / cart /
  * checkout / analytics, the slot and page-campaign API of ADR-0027 / ADR-0034
  * (amendment 3) the blocks use:
  *   init({ apiKey, environment?, platform?, contentId?, contentTitle?, campaignId?, debug?, … })
@@ -13,8 +13,13 @@
  *   attribution(slot?, { sponsorId?, campaignId? }?) → { slot?, campaignId?, sponsorId?, contentId?, contentTitle? }
  *     — with `sponsorId` the campaign follows assignment > page campaign > the
  *     sponsor's active campaign > default; `campaignId` overrides the init's page campaign.
- *   content() → { id?, title? }
+ *   content() → { id?, title? }   (title: init contentTitle → ?vio_content_title= →
+ *     <meta name="vio:content-title"> → og:title → document.title, resolved live)
  *   cartSlices(sponsorId?, { items? }?) → [{ campaignId?, sponsorId?, slot?, contentId?, items, value, currency?, slice, slices }]
+ * Page scope (0.25.0): an SDK element's auto slot id is `${scope}-${kind}-${n}`,
+ * the scope being its `vio-scope` property / attribute, else the nearest
+ * ancestor's `data-vio-scope` (`data-vio-scope-name` labels it) — what Vio
+ * Config sets on <body> for the page (declareVevPage in vio-helpers.ts).
  * Cart: addProduct / addManual / adjustQuantity / updateQuantity take
  * `{ origin?: { campaignId?, slot?, contentId? } }`; each line keeps
  * `origins: [{ campaignId?, slot?, contentId?, quantity }]`.
@@ -33,16 +38,21 @@ export function registerVioElements(): void;
 export function primaryImageUrl(product: any): string | undefined;
 
 /** Mirrors `purchaseFromPaymentSuccess` in vio-web-sdk/src/core/analytics/
- *  analytics-manager.ts: the Vio order id of a `vio:payment-success` detail
- *  (redirect `orderId` → Apple Pay `result.confirmation.orderId` →
- *  `checkoutId`), never a provider's reference. `{}` when there is none. */
+ *  analytics-manager.ts (0.25.0): the Vio order id of a `vio:payment-success`
+ *  detail (redirect `orderId` → Apple Pay `result.confirmation.orderId` →
+ *  `checkoutId`), never a provider's reference — and the buyer reference the
+ *  detail carries (`buyerRef` from the SDK's checkout, `buyer_ref` from a
+ *  host): shopcart's keyed hash of the email, kept only when it is one
+ *  (`buyerRefOf`), never an email. `{}` when there is neither. */
 export function purchaseFromPaymentSuccess(detail: {
   method?: string;
   sponsorId?: number | string;
   orderId?: string | number;
   checkoutId?: string | number;
+  buyerRef?: string | null;
+  buyer_ref?: string | null;
   result?: { confirmation?: { orderId?: string | number | null; status?: string } | null; [key: string]: unknown } | null;
-}): { orderId?: string };
+}): { orderId?: string; buyerId?: string };
 
 export const CREATE_CART_MUTATION: string;
 export const ADD_ITEM_MUTATION: string;

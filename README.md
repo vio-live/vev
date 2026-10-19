@@ -158,13 +158,37 @@ else the page's Active Sponsor, as before.
 **Attribution.** Every event a block emits (`view_item_list`, `select_item`, `view_item`,
 `add_to_cart`, impressions, `begin_checkout` from the Vipps button) carries
 `Vio.attribution(slot)` — `slot`, `campaign_id`, `sponsor_id`, `content_id`,
-`content_title` (the article, resolved by the SDK from the page). The card's
-`vio:product-click` carries it too, so the SDK's product detail inherits it; from the
-SDK 0.23.x on, the detail, cart and checkout put it on `vio:added-to-cart`,
-`vio:removed-from-cart`, `vio:checkout-open` and `vio:payment-success`, which the blocks
-forward. A cart line keeps the `origin` of every unit (campaign, slot, article). The
-`Open product info` **interaction** (Vio Config) and the action addon take an optional
+`content_title` (the article, resolved by the SDK from the page) — and
+`component_template_id`, **what the block is**, in the SDK's own vocabulary
+(`COMPONENT_TEMPLATE_ID` in vio-helpers.ts): `product-card` for the single card,
+`product-carousel` / `product-grid` for a carousel / grid **and the cards it renders**, so
+a block's impressions and its clicks count under one type; `product-detail` for the
+`view_item` of the `Open product info` addon and interaction (what opens is the SDK's
+detail, which calls itself the same). The card's `vio:product-click` carries the
+attribution too, so the SDK's product detail inherits it; from the SDK 0.23.x on, the
+detail, cart and checkout put it on `vio:added-to-cart`, `vio:removed-from-cart`,
+`vio:checkout-open` and `vio:payment-success`, which the blocks forward (0.25.0: the
+detail's carry `componentTemplateId: product-detail`; what starts in the cart —
+`remove_from_cart`, `view_cart`, the cart drawer's `begin_checkout`, `purchase` — has no
+component type). A cart line keeps the `origin` of every unit (campaign, slot, article).
+The `Open product info` **interaction** (Vio Config) and the action addon take an optional
 `Slot` too: the detail opened from them carries it.
+
+**Page identity.** A published Vev page ships an empty `<title>`, so the SDK had no
+`content_title` for it and the detail it mounts registered one `detail-1` for every page
+of the surface. Vio Config now declares the page to the SDK (`declareVevPage`, on the
+published page only — the editor's canvas is Vev's), from the same Vev store the blocks
+name their slots with: `<body data-vio-scope="<page key>" data-vio-scope-name="<page
+title>">` — the **scope** the SDK standard shares with Replit (an element's auto slot id
+becomes `<page key>-detail-1`, named `Detail 1 · <title>`; the blocks' own `card-<vev key>`
+slots are per instance already and ignore it) — and, only while the document has neither a
+`<title>` nor an `og:title` of its own (the host's SEO wins), `<meta
+name="vio:content-title">` with the page title, which `Vio.content()` reads live (init
+option → `?vio_content_title=` → this meta → `og:title` → `document.title`), so
+`content_title` says the page on every event without a re-init. A value another host wrote
+is never touched: a host that already declares `data-vio-scope` on `<body>` keeps it and
+the detail inherits that one. When the scope is Vio Config's own, the detail also gets it
+as its `vio-scope` / `vio-scope-name`, so a title the store resolves late still reaches it.
 
 **What changes in the analytics with the 0.23.x bundle** (the same deploy carries it):
 
@@ -180,6 +204,32 @@ forward. A cart line keeps the `origin` of every unit (campaign, slot, article).
   `dataLayer` keeps one event per purchase, its rows merged by product + variant.
 - `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
   tagged `vev`), so the dashboard's assignments for Vev apply here.
+
+**With the 0.25.0 bundle** (2026-10-19):
+
+- Every event the blocks emit — and the SDK detail's `add_to_cart` and `begin_checkout` —
+  carries `component_template_id` (see *Attribution* above); it used to be only on
+  `component_impression`, as `vev-card` / `vev-carousel` / `vev-grid`. `purchase`,
+  `remove_from_cart`, `view_cart` and the cart drawer's `begin_checkout` come from the
+  cart and carry none.
+- `component_impression` carries `items` — the products the block shows (id, name, brand,
+  price) and their currency, the rows the SDK's own carousel puts on its `view_item_list`,
+  within the collector's caps (at most 100 rows, no empty id, texts cut at 255 — over them
+  it drops the whole event). The collector's **shown products** per slot and its
+  per-product impressions read exactly these (`IMPRESSION_EVENTS` = `component_impression`,
+  `ad_impression`; `view_item_list` is not one of them), so without them a slot sold
+  products it never "showed". The block observes the impression itself with the contract's
+  rule (≥50 % visible for ≥1 s, once per page load per dedupe key) because the SDK's
+  `observeImpression` takes no items; a carousel / grid empties its list when the sponsor
+  changes, so sponsor B is never credited with sponsor A's products.
+- `purchase` carries `commerce.buyer_id` when the SDK's `vio:payment-success` says
+  `buyerRef` (shopcart's keyed hash of the email — `purchaseFromPaymentSuccess` returns it
+  as `buyerId`, never an email). It goes to the Vio collector only — never to GA4's
+  `dataLayer` nor to the package's `vio:analytics` document event (the SDK's own
+  `vio:analytics` window event carries the full event it sends, hash included). The
+  package starts the SDK without `requireConsent`, so the gate is the host's CMP — whether
+  the package loads at all — and the collector's `minimal` privacy mode.
+- `content_title` and the detail's slot carry the Vev page (see *Page identity* above).
 
 The vendored SDK is **0.25.0** (built from `vio-web-sdk` branch `feat/contexto-estandar-0.25.0`, commit `5e252c8`, before its npm publish) (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
 `content` / `cartSlices` / `pageCampaign`, `campaignId` in `Vio.init`, `origins` on the cart
@@ -245,7 +295,8 @@ src/components/
   product-select.tsx      # picker form component
   action-open-product.tsx # Vio · Open Product Info (action addon)
   vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag),
-                          # slots: useVioSlot / sponsorForSlot / vioAttribution
+                          # slots: useVioSlot / sponsorForSlot / vioAttribution,
+                          # page identity: useVevPage / declareVevPage
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
 ```
