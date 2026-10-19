@@ -181,7 +181,7 @@ forward. A cart line keeps the `origin` of every unit (campaign, slot, article).
 - `Vio.init()` runs with `platform: "vev"` (bootstrap `?platform=vev`, declarations
   tagged `vev`), so the dashboard's assignments for Vev apply here.
 
-The vendored SDK is **0.25.0** (built from `vio-web-sdk` branch `feat/contexto-estandar-0.25.0`, commit `0f904bd`, before its npm publish) (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
+The vendored SDK is **0.25.0** (built from `vio-web-sdk` branch `feat/contexto-estandar-0.25.0`, commit `5e252c8`, before its npm publish) (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
 `content` / `cartSlices` / `pageCampaign`, `campaignId` in `Vio.init`, `origins` on the cart
 lines). The blocks still check for that API before calling it — a block must never throw
 into the editor — so with an older bundle they behave as before, unregistered.

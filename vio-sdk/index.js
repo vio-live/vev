@@ -18,7 +18,7 @@ var MAX_DECLARATIONS_PER_LOAD = 3;
 var SLOT_KIND_MAX_LENGTH = 32;
 function normalizeSlotKind(value) {
   if (typeof value !== "string") return void 0;
-  const kind = value.trim().slice(0, SLOT_KIND_MAX_LENGTH).trim();
+  const kind = value.trim().toLowerCase().slice(0, SLOT_KIND_MAX_LENGTH).trim();
   return kind || void 0;
 }
 function resolveSlotCampaign(boot, slot, now = Date.now(), platform, pageCampaignId, sponsorId) {
@@ -206,7 +206,7 @@ function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_
   });
 }
 function slotKeyId(key) {
-  const cut2 = key.search(/[\u001f\u001e]/);
+  const cut2 = key.search(/[\u001f\u001e\u001d]/);
   return cut2 >= 0 ? key.slice(0, cut2) : key;
 }
 function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
@@ -4469,12 +4469,12 @@ function createCommerceClient(options) {
 }
 
 // src/core/buyer-ref.ts
-var BUYER_REF_MAX_LENGTH = 64;
+var BUYER_REF_MAX_LENGTH = 128;
+var BUYER_REF_PATTERN = /^[A-Za-z0-9._~-]+$/;
 function normalizeBuyerRef(value) {
   if (typeof value !== "string") return void 0;
   const ref = value.trim();
-  if (!ref || ref.length > BUYER_REF_MAX_LENGTH) return void 0;
-  if (ref.includes("@") || /\s/.test(ref)) return void 0;
+  if (!ref || ref.length > BUYER_REF_MAX_LENGTH || !BUYER_REF_PATTERN.test(ref)) return void 0;
   return ref;
 }
 
@@ -5498,7 +5498,9 @@ async function executeCartGraphQL(query, variables, options = {}) {
     const json = await Promise.race([res.json().catch(() => ({})), timedOut]);
     if (!res.ok || json.errors) {
       const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
-      throw Object.assign(new Error(errMsg), { graphql: json });
+      throw Object.assign(new Error(errMsg), {
+        graphql: { hasData: json.data !== void 0 && json.data !== null, errors: json.errors ?? [] }
+      });
     }
     return json;
   } finally {
@@ -5563,10 +5565,13 @@ async function getCheckout(checkoutId, options) {
 }
 var BUYER_REF_FIELD = "buyer_ref";
 var gatewayKnowsBuyerRef = true;
+function gatewayHasBuyerRef() {
+  return gatewayKnowsBuyerRef;
+}
 function isUnknownFieldError(err, field) {
   if (!err || typeof err !== "object") return false;
   const { message, graphql } = err;
-  if (graphql?.data) return false;
+  if (graphql?.hasData) return false;
   const messages = [message, ...(graphql?.errors ?? []).map((e7) => e7?.message)];
   return messages.some(
     (m2) => typeof m2 === "string" && m2.includes(`"${field}"`) && /cannot query field|unknown field/i.test(m2)
@@ -8117,6 +8122,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.paymentMethodsCache = /* @__PURE__ */ new Map();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.paymentMethodsPromises = /* @__PURE__ */ new Map();
+    /** In-flight `getOrderReference` per checkout id (see there). */
+    this.referenceInFlight = /* @__PURE__ */ new Map();
     this.kustomController = null;
     preloadStripeJs();
   }
@@ -8222,12 +8229,20 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    */
   async getOrderReference(checkoutId, sponsorId) {
     if (!checkoutId) return { orderNumber: null, buyerRef: null };
-    try {
-      const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
-      return await getCheckoutReference(checkoutId, opts);
-    } catch {
-      return { orderNumber: null, buyerRef: null };
-    }
+    const inFlight = this.referenceInFlight.get(checkoutId);
+    if (inFlight) return inFlight;
+    const request2 = (async () => {
+      try {
+        const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+        return await getCheckoutReference(checkoutId, opts);
+      } catch {
+        return { orderNumber: null, buyerRef: null };
+      } finally {
+        this.referenceInFlight.delete(checkoutId);
+      }
+    })();
+    this.referenceInFlight.set(checkoutId, request2);
+    return request2;
   }
   /**
    * Payment methods enabled for the sponsor (backend-configured). Memoised per
@@ -10041,10 +10056,12 @@ function defaultClientEnvironment() {
 function resolveLanding(env = defaultClientEnvironment(), persist = true) {
   try {
     const utm = utmOf(env.location?.search);
+    const raw = text2(env.document?.referrer);
+    const internal = isSameHost(raw, env.location?.host);
     const stored = readLanding(env.storage);
-    if (utm === void 0 && stored) return stored;
+    if ((utm === void 0 || internal) && stored) return stored;
     const landing = {};
-    const referrer = cut(text2(env.document?.referrer), CLIENT_REFERRER_MAX_LENGTH);
+    const referrer = internal ? void 0 : landingReferrer(raw);
     if (referrer) landing.referrer = referrer;
     if (utm) landing.utm = utm;
     if (persist) writeLanding(env.storage, landing);
@@ -10053,8 +10070,35 @@ function resolveLanding(env = defaultClientEnvironment(), persist = true) {
     return {};
   }
 }
+function landingReferrer(raw) {
+  const value = text2(raw);
+  if (!value) return void 0;
+  try {
+    const url = new URL(value);
+    return cut(`${url.origin}${url.pathname}`, CLIENT_REFERRER_MAX_LENGTH);
+  } catch {
+    const end = value.search(/[?#]/);
+    return cut(end >= 0 ? value.slice(0, end) : value, CLIENT_REFERRER_MAX_LENGTH);
+  }
+}
+function isSameHost(referrer, host) {
+  const value = text2(referrer);
+  const own = text2(host);
+  if (!value || !own) return false;
+  try {
+    return new URL(value).host.toLowerCase() === own.toLowerCase();
+  } catch {
+    return false;
+  }
+}
 function persistLanding(landing, storage2 = defaultClientEnvironment().storage) {
   writeLanding(storage2, landing);
+}
+function removeLanding(storage2 = defaultClientEnvironment().storage) {
+  try {
+    storage2?.removeItem?.(LANDING_KEY);
+  } catch {
+  }
 }
 function resolveClientContext(env = defaultClientEnvironment(), landing = resolveLanding(env)) {
   const out = {};
@@ -10283,6 +10327,7 @@ var AnalyticsManager = class extends EventTarget {
     }
     safeStorageRemove(ANON_KEY);
     safeStorageRemove(SESSION_KEY);
+    removeLanding();
   }
   /** ¿Podemos escribir en el dispositivo? */
   get canPersist() {
@@ -10472,8 +10517,10 @@ var AnalyticsManager = class extends EventTarget {
       currency: com.currency,
       order_id: com.orderId,
       payment_method: com.paymentMethod,
-      // Only a reference survives — never an email, whatever a host passes.
-      buyer_id: normalizeBuyerRef(com.buyerId)
+      // Only a reference survives — never an email, whatever a host passes —
+      // and only with consent to persist: a visit measured with ephemeral
+      // ids does not carry a stable identifier of a person either.
+      buyer_id: this.canPersist ? normalizeBuyerRef(com.buyerId) : void 0
     }) : void 0;
     const client = this.clientBlock();
     return {
@@ -10946,7 +10993,8 @@ function slotOf(detail) {
   return typeof detail.slot === "string" && detail.slot.trim() ? detail.slot.trim() : void 0;
 }
 function templateOf(detail) {
-  return typeof detail.componentTemplateId === "string" && detail.componentTemplateId.trim() ? detail.componentTemplateId.trim() : void 0;
+  const value = typeof detail.componentTemplateId === "string" ? detail.componentTemplateId.trim() : "";
+  return fitsId(value || void 0);
 }
 function contentOf(detail) {
   const out = {};
@@ -11283,19 +11331,24 @@ var VioFacade = class {
    * whenever a new id, display name, campaign or kind appears. A `displayName` /
    * `campaignId` given later for an id already registered replaces the one
    * kept; `undefined` leaves it alone. The third argument is the campaign id
-   * (as before) or `{ campaignId?, kind? }` — `kind` being what kind of
-   * element holds the slot (`card` | `carousel` | `detail`); the FIRST kind an
-   * id gets stays (the cards a carousel renders share its id: the slot is the
-   * carousel's). The returned function unregisters; removal never re-declares.
+   * (as before) or `{ campaignId?, kind? }`, and a fourth `{ kind? }` may
+   * follow a positional campaign — the elements call
+   * `registerSlot(id, name, campaignId, { kind })` so a facade from an older
+   * bundle, which reads only three arguments, still gets the campaign. `kind`
+   * is what kind of element holds the slot (`card` | `carousel` | `detail`);
+   * the FIRST kind an id gets stays (the cards a carousel renders share its
+   * id: the slot is the carousel's). The returned function unregisters;
+   * removal never re-declares.
    */
-  registerSlot(name, displayName, campaignIdOrOptions) {
+  registerSlot(name, displayName, campaignIdOrOptions, options) {
     const id = normalizeSlotId(name);
     if (!id) return () => {
     };
     const label = typeof displayName === "string" && displayName.trim() ? displayName.trim() : void 0;
-    const options = campaignIdOrOptions !== null && typeof campaignIdOrOptions === "object" ? campaignIdOrOptions : { campaignId: campaignIdOrOptions };
-    const campaign = toCampaignId(options.campaignId);
-    const kind = normalizeSlotKind(options.kind);
+    const positional = campaignIdOrOptions !== null && typeof campaignIdOrOptions === "object" ? campaignIdOrOptions : { campaignId: campaignIdOrOptions };
+    const merged = { ...positional, ...options ?? {} };
+    const campaign = toCampaignId(merged.campaignId);
+    const kind = normalizeSlotKind(merged.kind);
     const entry = this.slotRegistry.get(id);
     let changed = false;
     if (!entry) {
@@ -12279,10 +12332,7 @@ var SlotRegistration = class {
     this.unregister();
     if (!next) return;
     try {
-      this.release = typeof Vio.registerSlot !== "function" ? null : Vio.registerSlot(next.id, next.displayName, {
-        kind: this.kind,
-        ...next.campaignId !== void 0 ? { campaignId: next.campaignId } : {}
-      });
+      this.release = typeof Vio.registerSlot !== "function" ? null : next.campaignId !== void 0 ? Vio.registerSlot(next.id, next.displayName, next.campaignId, { kind: this.kind }) : Vio.registerSlot(next.id, next.displayName, { kind: this.kind });
       this.identity = next;
     } catch {
       this.release = null;
@@ -15994,6 +16044,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.paymentError = detail.method === "klarna" ? `Klarna-betalingen kunne ikke fullf\xF8res: ${detail.error}` : friendlyPaymentError(detail.error, detail.method);
       this.open = true;
     };
+    /** Payment events still waiting for their buyer reference: settled early (without it) when the page hides or the element leaves. */
+    this.pendingSuccessEmits = /* @__PURE__ */ new Set();
   }
   /** A payment is being started or confirmed right now: the overlay must not close under it. */
   get paymentInFlight() {
@@ -17026,6 +17078,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.unmountKlarna();
     this.unmountNexi();
     this.unmountAdyen();
+    for (const settle of [...this.pendingSuccessEmits]) settle();
     super.disconnectedCallback();
   }
   updated(changed) {
@@ -17546,8 +17599,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     );
   }
   static {
-    /** Longest `vio:payment-success` waits for the checkout's buyer reference. */
+    /** Longest `vio:payment-success` waits for the checkout's buyer reference, and when it asks a second time. */
     this.BUYER_REF_WAIT_MS = 2500;
+  }
+  static {
+    this.BUYER_REF_RETRY_AT_MS = 1200;
   }
   /**
    * `vio:payment-success` for the host and analytics — with the buyer
@@ -17555,38 +17611,100 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * `buyer_id`) when the checkout can say it. An emitter whose own answer
    * carried it (Apple Pay, Klarna native) sends at once; the others (a
    * redirect return, Stripe / Adyen / Nexi in the drawer, a provider's
-   * receipt) ask the checkout once, bounded to 2.5 s, and send without it
-   * when the answer is late or empty. Only the event waits — the screen is
-   * already the confirmation. `afterwards` runs right after the event, so a
-   * path keeps the order it always had (the cart is cleared after the event).
+   * receipt) ask the checkout — at once and, while it has neither order nor
+   * reference, again at 1.2 s, since a webhook may write the checkout a
+   * moment after the redirect — within 2.5 s, and
+   * send without it when the answer is late or empty. Nothing is asked when
+   * it cannot help (the gateway has no `buyer_ref` yet; a confirmation that
+   * already answered). Only the event waits — the screen is already the
+   * confirmation — and not past the page: when the page hides (`pagehide`,
+   * `visibilitychange`) or the element leaves, the event goes out at once
+   * without the reference. Exactly one event per call. `afterwards` runs
+   * right after the event, so a path keeps the order it always had (the cart
+   * is cleared after the event).
    */
   async emitPaymentSuccess(detail, checkoutId, sponsorId, afterwards) {
-    let buyerRef = buyerRefOf(detail);
-    if (!buyerRef && checkoutId && typeof Vio.checkout.getOrderReference === "function") {
-      let timer;
-      try {
-        const reference = await Promise.race([
-          Vio.checkout.getOrderReference(checkoutId, sponsorId || void 0),
-          new Promise((resolve) => {
-            timer = setTimeout(() => resolve(null), _VioCheckout.BUYER_REF_WAIT_MS);
-          })
-        ]);
-        buyerRef = reference?.buyerRef ?? void 0;
-      } catch {
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-    this.dispatchEvent(
-      new CustomEvent("vio:payment-success", {
+    let done = false;
+    const finish = (buyerRef) => {
+      if (done) return;
+      done = true;
+      const event = new CustomEvent("vio:payment-success", {
         bubbles: true,
         composed: true,
         detail: buyerRef ? { ...detail, buyerRef } : detail
-      })
-    );
+      });
+      this.dispatchEvent(event);
+      if (!this.isConnected && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("vio:payment-success", { detail: event.detail }));
+      }
+      try {
+        afterwards?.();
+      } catch {
+      }
+    };
+    const known = buyerRefOf(detail);
+    if (known || !checkoutId || !this.shouldAskBuyerRef(detail)) {
+      finish(known);
+      return;
+    }
+    const settleEarly = () => finish();
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") settleEarly();
+    };
+    this.pendingSuccessEmits.add(settleEarly);
+    window.addEventListener("pagehide", settleEarly);
+    document.addEventListener("visibilitychange", onVisibility);
     try {
-      afterwards?.();
+      finish(await this.askBuyerRef(checkoutId, sponsorId, () => done));
     } catch {
+      finish();
+    } finally {
+      this.pendingSuccessEmits.delete(settleEarly);
+      window.removeEventListener("pagehide", settleEarly);
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
+  }
+  /** Whether asking the checkout for the buyer reference can still help. */
+  shouldAskBuyerRef(detail) {
+    if (typeof Vio.checkout.getOrderReference !== "function") return false;
+    if (!gatewayHasBuyerRef()) return false;
+    if ((detail.method === "apple-pay" || detail.method === "klarna") && detail.result) return false;
+    return true;
+  }
+  /**
+   * The buyer reference of a checkout: asked at once and, when that answer
+   * failed or has neither the reference nor an order yet (the webhook has not
+   * written the checkout), again at 1.2 s — all within 2.5 s. An order
+   * without a reference is a settled answer: the backend has none, asking
+   * again cannot help. `undefined` when the time is up, when the answer
+   * stopped mattering (`stopped()`) or on failure.
+   */
+  async askBuyerRef(checkoutId, sponsorId, stopped) {
+    const started = Date.now();
+    const remaining = () => _VioCheckout.BUYER_REF_WAIT_MS - (Date.now() - started);
+    let deadline;
+    const timeUp = new Promise((resolve) => {
+      deadline = setTimeout(() => resolve(null), _VioCheckout.BUYER_REF_WAIT_MS);
+    });
+    try {
+      for (const at of [0, _VioCheckout.BUYER_REF_RETRY_AT_MS]) {
+        const wait = Math.min(at - (Date.now() - started), remaining());
+        if (wait > 0) await Promise.race([new Promise((resolve) => setTimeout(resolve, wait)), timeUp]);
+        if (stopped() || remaining() <= 0) return void 0;
+        try {
+          const reference = await Promise.race([
+            Vio.checkout.getOrderReference(checkoutId, sponsorId || void 0),
+            timeUp
+          ]);
+          if (reference === null) return void 0;
+          if (reference.buyerRef) return reference.buyerRef;
+          if (reference.orderNumber !== null) return void 0;
+        } catch {
+        }
+      }
+      return void 0;
+    } finally {
+      clearTimeout(deadline);
     }
   }
   static {
