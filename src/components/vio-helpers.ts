@@ -887,15 +887,20 @@ const VEV_PAGE_MARK = "data-vio-vev-page";
  *    the surface. The blocks' own slots (`card-<vev key>`…) are per instance
  *    already and do not use it.
  *  - `<meta name="vio:content-title">` with the Vev page title, only while the
- *    document has no `<title>` of its own (a published Vev page ships an empty
- *    one, so `content_title` was '' on every event): `Vio.content()` resolves
- *    the title live — init option → `?vio_content_title=` → this meta →
- *    `og:title` → `document.title` — so every event carries the page without
- *    a re-init, and the SDK's `data-vio-scope-name` and `content_title` agree.
- * Returns the undo. Only what it set itself (marked) is replaced or removed.
+ *    document has neither a `<title>` nor an `og:title` of its own — the host's
+ *    SEO wins (a published Vev page ships an empty `<title>`, so `content_title`
+ *    was '' on every event): `Vio.content()` resolves the title live — init
+ *    option → `?vio_content_title=` → this meta → `og:title` → `document.title`
+ *    — so every event carries the page without a re-init, and the SDK's
+ *    `data-vio-scope-name` and `content_title` agree.
+ * Answers what it put on <body> (`scope` '' when a host's own scope was left in
+ * place, or there is no page key) and the undo. Only what it set itself
+ * (marked) is replaced or removed.
  */
-export function declareVevPage(page: { key?: string; title?: string }): () => void {
-  if (typeof document === "undefined" || !document.body) return () => {};
+export type VevPageDeclaration = { scope: string; scopeName: string; undo: () => void };
+
+export function declareVevPage(page: { key?: string; title?: string }): VevPageDeclaration {
+  if (typeof document === "undefined" || !document.body) return { scope: "", scopeName: "", undo: () => {} };
   const body = document.body;
   const key = typeof page.key === "string" ? page.key.trim() : "";
   const title = typeof page.title === "string" ? page.title.trim() : "";
@@ -913,32 +918,40 @@ export function declareVevPage(page: { key?: string; title?: string }): () => vo
       body.removeAttribute(VEV_PAGE_MARK);
     }
   }
-  // The content title, only for a page that has none: a host's own meta or a
-  // real <title> is the page's business, and the SDK already reads them.
+  // The content title, only for a page that has none: a host's own meta, a
+  // real <title> or an og:title is the page's SEO, and the SDK already reads them.
   let meta: HTMLMetaElement | null = null;
   try {
-    const existing = document.head?.querySelector<HTMLMetaElement>(`meta[name="${CONTENT_TITLE_META}"]`) ?? null;
+    const head = document.head;
+    const existing = head?.querySelector<HTMLMetaElement>(`meta[name="${CONTENT_TITLE_META}"]`) ?? null;
     const ownsMeta = !existing || existing.getAttribute(VEV_PAGE_MARK) === "1";
-    const pageHasTitle = !!(document.title && document.title.trim());
-    if (ownsMeta && title && !pageHasTitle && document.head) {
+    const ogTitle = head?.querySelector('meta[property="og:title"]')?.getAttribute("content") ?? "";
+    const pageHasTitle = !!(document.title && document.title.trim()) || !!ogTitle.trim();
+    if (ownsMeta && title && !pageHasTitle && head) {
       meta = existing ?? document.createElement("meta");
       meta.setAttribute("name", CONTENT_TITLE_META);
       meta.setAttribute("content", title);
       meta.setAttribute(VEV_PAGE_MARK, "1");
-      if (!meta.parentNode) document.head.appendChild(meta);
+      if (!meta.parentNode) head.appendChild(meta);
     } else if (ownsMeta && existing) {
       existing.remove();
     }
   } catch {
     /* the page's identity never breaks the Config */
   }
-  return () => {
-    if (ownsScope && body.getAttribute(VEV_PAGE_MARK) === "1" && body.getAttribute(SCOPE_ATTR) === key) {
-      body.removeAttribute(SCOPE_ATTR);
-      body.removeAttribute(SCOPE_NAME_ATTR);
-      body.removeAttribute(VEV_PAGE_MARK);
-    }
-    if (meta && meta.getAttribute(VEV_PAGE_MARK) === "1") meta.remove();
+  const applied = ownsScope && !!key;
+  return {
+    scope: applied ? key : "",
+    scopeName: applied ? title : "",
+    undo: () => {
+      if (ownsScope && body.getAttribute(VEV_PAGE_MARK) === "1" && body.getAttribute(SCOPE_ATTR) === key) {
+        body.removeAttribute(SCOPE_ATTR);
+        body.removeAttribute(SCOPE_NAME_ATTR);
+        body.removeAttribute(VEV_PAGE_MARK);
+      }
+      // Still ours and still this title: someone may have re-pointed it since.
+      if (meta && meta.getAttribute(VEV_PAGE_MARK) === "1" && meta.getAttribute("content") === title) meta.remove();
+    },
   };
 }
 

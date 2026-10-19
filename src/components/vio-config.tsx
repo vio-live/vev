@@ -252,6 +252,9 @@ export default function VioConfig({
   // init + bootstrap. If the block is placed more than once — or Vev bundles
   // duplicate copies — the others render nothing (avoids N drawers / N inits).
   const [isOwner, setIsOwner] = useState(false);
+  // What `declareVevPage` put on <body> for this page ('' when a host's own
+  // scope was there): the detail gets exactly that, never more.
+  const [pageScope, setPageScope] = useState<{ scope: string; scopeName: string }>({ scope: "", scopeName: "" });
 
   // Active environment selected via Vev inspector prop (or runtime/persisted fallback).
   const activeEnvironment = environment || DEFAULT_ENVIRONMENT;
@@ -356,10 +359,20 @@ export default function VioConfig({
   // the page inherits for its auto slot — the detail below registers as
   // `<page key>-detail-1`, `Detail 1 · <title>` — and the content title every
   // event carries when the document has no <title> (a published Vev page
-  // ships an empty one). Not gated on ownership on purpose: it must be on
-  // <body> before the overlays mount the detail (an element reads its scope
-  // when it connects), and a duplicate Config declares the same page anyway.
-  useEffect(() => declareVevPage(page), [page.key, page.title]);
+  // ships an empty one). Published page only: the editor's canvas body and
+  // head are Vev's, and the overlays only exist on the published page too.
+  // Not gated on ownership on purpose: it must be on <body> before the
+  // overlays mount the detail (an element reads its scope when it connects),
+  // and a duplicate Config declares the same page anyway.
+  useEffect(() => {
+    if (disabled) {
+      setPageScope({ scope: "", scopeName: "" });
+      return;
+    }
+    const declared = declareVevPage(page);
+    setPageScope({ scope: declared.scope, scopeName: declared.scopeName });
+    return declared.undo;
+  }, [disabled, page.key, page.title]);
 
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
   useEffect(() => {
@@ -679,13 +692,14 @@ export default function VioConfig({
       <VioCart ref={cartRef} onCheckoutOpen={onCheckoutOpen} />
       <VioCheckout ref={checkoutRef} />
       {/* Product detail: auto-opens on a product card click (vio:product-click).
-          Its scope is the page's — the same `declareVevPage` put on <body>,
-          given here too so a title the Vev store resolves after the detail
-          connected still reaches it (the element re-registers on a prop
-          change; it does not watch its ancestors). */}
+          Its scope is the page's — exactly what `declareVevPage` put on <body>
+          (nothing when a host declared its own scope there: the element then
+          inherits the host's), given here too so a title the Vev store
+          resolves after the detail connected still reaches it (the element
+          re-registers on a prop change; it does not watch its ancestors). */}
       <VioProductDetail
-        vioScope={page.key ?? ""}
-        vioScopeName={page.title ?? ""}
+        vioScope={pageScope.scope}
+        vioScopeName={pageScope.scopeName}
         onCheckoutOpen={onCheckoutOpen}
         onAddedToCart={() => cartRef.current?.show?.()}
       />

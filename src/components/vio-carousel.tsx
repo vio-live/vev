@@ -138,6 +138,10 @@ export default function VioProductCarousel(props: Props) {
       setList([]);
       return;
     }
+    // Another sponsor (or another pick): the products on screen are the
+    // previous one's — out they go, so the impression, the list event and the
+    // cards never pair sponsor B with sponsor A's products.
+    setList((prev) => (prev.length ? [] : prev));
     let cancelled = false;
     fetchVioProducts(ids, activeSponsor).then((prods) => {
       if (cancelled) return;
