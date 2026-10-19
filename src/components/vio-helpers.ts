@@ -901,7 +901,9 @@ export function useVioSlot({ slot, slotName, kind, title, ready = true, hostRef 
         : autoSlotDisplayName(kind, id, type, own, pageTitle, host);
     let release: (() => void) | undefined;
     try {
-      release = (Vio as any).registerSlot(id, displayName);
+      // 0.25.0: the block says what it is (card / carousel / detail…) so the
+      // slot keeps its kind in Commerce and every event carries the type.
+      release = (Vio as any).registerSlot(id, displayName, { kind });
     } catch (err) {
       if (DEBUG) console.warn("[Vio] registerSlot failed", err);
       return;

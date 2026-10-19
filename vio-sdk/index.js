@@ -15,6 +15,12 @@ var SLOT_DECLARATION_TTL_MS = 24 * 60 * 60 * 1e3;
 var SLOT_DECLARATION_FAILURE_TTL_MS = 60 * 60 * 1e3;
 var MAX_LOCATIONS_PER_DECLARATION = 100;
 var MAX_DECLARATIONS_PER_LOAD = 3;
+var SLOT_KIND_MAX_LENGTH = 32;
+function normalizeSlotKind(value) {
+  if (typeof value !== "string") return void 0;
+  const kind = value.trim().slice(0, SLOT_KIND_MAX_LENGTH).trim();
+  return kind || void 0;
+}
 function resolveSlotCampaign(boot, slot, now = Date.now(), platform, pageCampaignId, sponsorId) {
   if (!boot) return null;
   const page = activeCampaignEntry(boot, pageCampaignId);
@@ -161,9 +167,11 @@ function normalizeSlotLocations(slots) {
     seen.add(id);
     const displayName = raw && typeof raw === "object" && typeof raw.displayName === "string" ? raw.displayName.trim() : "";
     const campaignId = raw && typeof raw === "object" ? toCampaignId(raw.campaignId) : void 0;
+    const kind = raw && typeof raw === "object" ? normalizeSlotKind(raw.kind) : void 0;
     const location2 = { id };
     if (displayName) location2.displayName = displayName;
     if (campaignId !== void 0) location2.campaignId = campaignId;
+    if (kind) location2.kind = kind;
     out.push(location2);
   }
   return out;
@@ -187,7 +195,8 @@ function normalizeScope(scope) {
 var SLOT_DECLARATION_MEMORY_CAP = 500;
 function slotDeclarationKey(location2, pageCampaignId) {
   const campaignId = toCampaignId(location2.campaignId) ?? toCampaignId(pageCampaignId);
-  return location2.id + (location2.displayName ? `${location2.displayName}` : "") + (campaignId !== void 0 ? `${campaignId}` : "");
+  const kind = normalizeSlotKind(location2.kind);
+  return location2.id + (location2.displayName ? `${location2.displayName}` : "") + (campaignId !== void 0 ? `${campaignId}` : "") + (kind !== void 0 ? `${kind}` : "");
 }
 function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
   return keys.filter((key) => {
@@ -197,8 +206,8 @@ function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_
   });
 }
 function slotKeyId(key) {
-  const cut = key.search(/[\u001f\u001e]/);
-  return cut >= 0 ? key.slice(0, cut) : key;
+  const cut2 = key.search(/[\u001f\u001e]/);
+  return cut2 >= 0 ? key.slice(0, cut2) : key;
 }
 function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
   const next = { ...memory ?? {} };
@@ -438,7 +447,7 @@ function createVioApi(options) {
   return new VioApi(options);
 }
 
-// node_modules/graphql-request/build/legacy/classes/ClientError.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/classes/ClientError.js
 var ClientError = class _ClientError extends Error {
   response;
   request;
@@ -460,7 +469,7 @@ var ClientError = class _ClientError extends Error {
   }
 };
 
-// node_modules/graphql-request/build/lib/prelude.js
+// ../web-sdk-0240/node_modules/graphql-request/build/lib/prelude.js
 var uppercase = (str) => str.toUpperCase();
 var callOrIdentity = (value) => {
   return typeof value === `function` ? value() : value;
@@ -516,7 +525,7 @@ var isPlainObject = (value) => {
   return typeof value === `object` && value !== null && !Array.isArray(value);
 };
 
-// node_modules/graphql-request/build/legacy/functions/batchRequests.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/batchRequests.js
 var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   return documentsOrOptions.documents ? documentsOrOptions : {
     documents: documentsOrOptions,
@@ -525,7 +534,7 @@ var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   };
 };
 
-// node_modules/graphql-request/build/legacy/functions/rawRequest.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/rawRequest.js
 var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   return queryOrOptions.query ? queryOrOptions : {
     query: queryOrOptions,
@@ -535,7 +544,7 @@ var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   };
 };
 
-// node_modules/graphql/jsutils/devAssert.mjs
+// ../web-sdk-0240/node_modules/graphql/jsutils/devAssert.mjs
 function devAssert(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -543,12 +552,12 @@ function devAssert(condition, message) {
   }
 }
 
-// node_modules/graphql/jsutils/isObjectLike.mjs
+// ../web-sdk-0240/node_modules/graphql/jsutils/isObjectLike.mjs
 function isObjectLike(value) {
   return typeof value == "object" && value !== null;
 }
 
-// node_modules/graphql/jsutils/invariant.mjs
+// ../web-sdk-0240/node_modules/graphql/jsutils/invariant.mjs
 function invariant(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -558,7 +567,7 @@ function invariant(condition, message) {
   }
 }
 
-// node_modules/graphql/language/location.mjs
+// ../web-sdk-0240/node_modules/graphql/language/location.mjs
 var LineRegExp = /\r\n|[\n\r]/g;
 function getLocation(source, position) {
   let lastLineStart = 0;
@@ -577,7 +586,7 @@ function getLocation(source, position) {
   };
 }
 
-// node_modules/graphql/language/printLocation.mjs
+// ../web-sdk-0240/node_modules/graphql/language/printLocation.mjs
 function printLocation(location2) {
   return printSourceLocation(
     location2.source,
@@ -624,7 +633,7 @@ function printPrefixedLines(lines) {
   return existingLines.map(([prefix, line]) => prefix.padStart(padLen) + (line ? " " + line : "")).join("\n");
 }
 
-// node_modules/graphql/error/GraphQLError.mjs
+// ../web-sdk-0240/node_modules/graphql/error/GraphQLError.mjs
 function toNormalizedOptions(args) {
   const firstArg = args[0];
   if (firstArg == null || "kind" in firstArg || "length" in firstArg) {
@@ -773,7 +782,7 @@ function undefinedIfEmpty(array) {
   return array === void 0 || array.length === 0 ? void 0 : array;
 }
 
-// node_modules/graphql/error/syntaxError.mjs
+// ../web-sdk-0240/node_modules/graphql/error/syntaxError.mjs
 function syntaxError(source, position, description) {
   return new GraphQLError(`Syntax Error: ${description}`, {
     source,
@@ -781,7 +790,7 @@ function syntaxError(source, position, description) {
   });
 }
 
-// node_modules/graphql/language/ast.mjs
+// ../web-sdk-0240/node_modules/graphql/language/ast.mjs
 var Location = class {
   /**
    * The character offset at which this Node begins.
@@ -971,7 +980,7 @@ var OperationTypeNode;
   OperationTypeNode2["SUBSCRIPTION"] = "subscription";
 })(OperationTypeNode || (OperationTypeNode = {}));
 
-// node_modules/graphql/language/directiveLocation.mjs
+// ../web-sdk-0240/node_modules/graphql/language/directiveLocation.mjs
 var DirectiveLocation;
 (function(DirectiveLocation2) {
   DirectiveLocation2["QUERY"] = "QUERY";
@@ -996,7 +1005,7 @@ var DirectiveLocation;
   DirectiveLocation2["DIRECTIVE_DEFINITION"] = "DIRECTIVE_DEFINITION";
 })(DirectiveLocation || (DirectiveLocation = {}));
 
-// node_modules/graphql/language/kinds.mjs
+// ../web-sdk-0240/node_modules/graphql/language/kinds.mjs
 var Kind;
 (function(Kind2) {
   Kind2["NAME"] = "Name";
@@ -1050,7 +1059,7 @@ var Kind;
   Kind2["DIRECTIVE_ARGUMENT_COORDINATE"] = "DirectiveArgumentCoordinate";
 })(Kind || (Kind = {}));
 
-// node_modules/graphql/language/characterClasses.mjs
+// ../web-sdk-0240/node_modules/graphql/language/characterClasses.mjs
 function isWhiteSpace(code) {
   return code === 9 || code === 32;
 }
@@ -1068,7 +1077,7 @@ function isNameContinue(code) {
   return isLetter(code) || isDigit(code) || code === 95;
 }
 
-// node_modules/graphql/language/blockString.mjs
+// ../web-sdk-0240/node_modules/graphql/language/blockString.mjs
 function dedentBlockStringLines(lines) {
   var _firstNonEmptyLine2;
   let commonIndent = Number.MAX_SAFE_INTEGER;
@@ -1122,7 +1131,7 @@ function printBlockString(value, options) {
   return '"""' + result + '"""';
 }
 
-// node_modules/graphql/language/tokenKind.mjs
+// ../web-sdk-0240/node_modules/graphql/language/tokenKind.mjs
 var TokenKind;
 (function(TokenKind2) {
   TokenKind2["SOF"] = "<SOF>";
@@ -1150,7 +1159,7 @@ var TokenKind;
   TokenKind2["COMMENT"] = "Comment";
 })(TokenKind || (TokenKind = {}));
 
-// node_modules/graphql/language/lexer.mjs
+// ../web-sdk-0240/node_modules/graphql/language/lexer.mjs
 var Lexer = class {
   /**
    * The previously focused non-ignored token.
@@ -1682,7 +1691,7 @@ function readName(lexer, start) {
   );
 }
 
-// node_modules/graphql/jsutils/inspect.mjs
+// ../web-sdk-0240/node_modules/graphql/jsutils/inspect.mjs
 var MAX_ARRAY_LENGTH = 10;
 var MAX_RECURSIVE_DEPTH = 2;
 function inspect(value) {
@@ -1765,7 +1774,7 @@ function getObjectTag(object) {
   return tag;
 }
 
-// node_modules/graphql/jsutils/instanceOf.mjs
+// ../web-sdk-0240/node_modules/graphql/jsutils/instanceOf.mjs
 var isProduction = globalThis.process && // eslint-disable-next-line no-undef
 false;
 var instanceOf = (
@@ -1804,7 +1813,7 @@ spurious results.`);
   }
 );
 
-// node_modules/graphql/language/source.mjs
+// ../web-sdk-0240/node_modules/graphql/language/source.mjs
 var Source = class {
   constructor(body, name = "GraphQL request", locationOffset = {
     line: 1,
@@ -1831,7 +1840,7 @@ function isSource(source) {
   return instanceOf(source, Source);
 }
 
-// node_modules/graphql/language/parser.mjs
+// ../web-sdk-0240/node_modules/graphql/language/parser.mjs
 function parse(source, options) {
   const parser = new Parser(source, options);
   const document2 = parser.parseDocument();
@@ -3189,7 +3198,7 @@ function getTokenKindDesc(kind) {
   return isPunctuatorTokenKind(kind) ? `"${kind}"` : kind;
 }
 
-// node_modules/graphql/language/printString.mjs
+// ../web-sdk-0240/node_modules/graphql/language/printString.mjs
 function printString(str) {
   return `"${str.replace(escapedRegExp, escapedReplacer)}"`;
 }
@@ -3365,7 +3374,7 @@ var escapeSequences = [
   "\\u009F"
 ];
 
-// node_modules/graphql/language/visitor.mjs
+// ../web-sdk-0240/node_modules/graphql/language/visitor.mjs
 var BREAK = Object.freeze({});
 function visit(root, visitor, visitorKeys = QueryDocumentKeys) {
   const enterLeaveMap = /* @__PURE__ */ new Map();
@@ -3494,7 +3503,7 @@ function getEnterLeaveForKind(visitor, kind) {
   };
 }
 
-// node_modules/graphql/language/printer.mjs
+// ../web-sdk-0240/node_modules/graphql/language/printer.mjs
 function print(ast) {
   return visit(ast, printDocASTReducer);
 }
@@ -3768,13 +3777,13 @@ function hasMultilineItems(maybeArray) {
   return (_maybeArray$some = maybeArray === null || maybeArray === void 0 ? void 0 : maybeArray.some((str) => str.includes("\n"))) !== null && _maybeArray$some !== void 0 ? _maybeArray$some : false;
 }
 
-// node_modules/graphql-request/build/lib/http.js
+// ../web-sdk-0240/node_modules/graphql-request/build/lib/http.js
 var ACCEPT_HEADER = `Accept`;
 var CONTENT_TYPE_HEADER = `Content-Type`;
 var CONTENT_TYPE_JSON = `application/json`;
 var CONTENT_TYPE_GQL = `application/graphql-response+json`;
 
-// node_modules/graphql-request/build/legacy/lib/graphql.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/lib/graphql.js
 var cleanQuery = (str) => str.replace(/([\s,]|#[^\n\r]+)+/g, ` `).trim();
 var isGraphQLContentType = (contentType) => {
   const contentTypeLower = contentType.toLowerCase();
@@ -3837,7 +3846,7 @@ var isOperationDefinitionNode = (definition) => {
   return typeof definition === `object` && definition !== null && `kind` in definition && definition.kind === Kind.OPERATION_DEFINITION;
 };
 
-// node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
 var extractOperationName = (document2) => {
   let operationName = void 0;
   const defs = document2.definitions.filter(isOperationDefinitionNode);
@@ -3871,10 +3880,10 @@ var analyzeDocument = (document2, excludeOperationName) => {
   return { expression, operationName, isMutation };
 };
 
-// node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
 var defaultJsonSerializer = JSON;
 
-// node_modules/graphql-request/build/legacy/helpers/runRequest.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/runRequest.js
 var runRequest = async (input) => {
   const config = {
     ...input,
@@ -3948,11 +3957,11 @@ var executionResultClientResponseFields = ($params) => (executionResult) => {
     errors: $params.fetchOptions.errorPolicy === `all` ? executionResult.errors : void 0
   };
 };
-var parseResultFromText = (text2, contentType, jsonSerializer) => {
+var parseResultFromText = (text3, contentType, jsonSerializer) => {
   if (contentType && isGraphQLContentType(contentType)) {
-    return parseGraphQLExecutionResult(jsonSerializer.parse(text2));
+    return parseGraphQLExecutionResult(jsonSerializer.parse(text3));
   } else {
-    return parseGraphQLExecutionResult(text2);
+    return parseGraphQLExecutionResult(text3);
   }
 };
 var createFetcher = (method) => async (params) => {
@@ -4039,7 +4048,7 @@ var buildQueryParams = (params) => {
   }
 };
 
-// node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
 var GraphQLClient = class {
   url;
   requestConfig;
@@ -4189,7 +4198,7 @@ var GraphQLClient = class {
   }
 };
 
-// node_modules/graphql-request/build/legacy/functions/request.js
+// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/request.js
 var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
   return documentOrOptions.document ? documentOrOptions : {
     document: documentOrOptions,
@@ -4457,6 +4466,16 @@ var CommerceClient = class {
 };
 function createCommerceClient(options) {
   return new CommerceClient(options);
+}
+
+// src/core/buyer-ref.ts
+var BUYER_REF_MAX_LENGTH = 64;
+function normalizeBuyerRef(value) {
+  if (typeof value !== "string") return void 0;
+  const ref = value.trim();
+  if (!ref || ref.length > BUYER_REF_MAX_LENGTH) return void 0;
+  if (ref.includes("@") || /\s/.test(ref)) return void 0;
+  return ref;
 }
 
 // src/core/checkout/payments/vipps.ts
@@ -5479,7 +5498,7 @@ async function executeCartGraphQL(query, variables, options = {}) {
     const json = await Promise.race([res.json().catch(() => ({})), timedOut]);
     if (!res.ok || json.errors) {
       const errMsg = json.errors?.[0]?.message || `GraphQL request failed (HTTP ${res.status})`;
-      throw new Error(errMsg);
+      throw Object.assign(new Error(errMsg), { graphql: json });
     }
     return json;
   } finally {
@@ -5542,20 +5561,54 @@ async function getCheckout(checkoutId, options) {
   const json = await executeCartGraphQL(GET_CHECKOUT_QUERY, { checkoutId }, options);
   return json?.data?.Checkout?.GetCheckout;
 }
-var GET_CHECKOUT_ORDER_NUMBER_QUERY = `
+var BUYER_REF_FIELD = "buyer_ref";
+var gatewayKnowsBuyerRef = true;
+function isUnknownFieldError(err, field) {
+  if (!err || typeof err !== "object") return false;
+  const { message, graphql } = err;
+  if (graphql?.data) return false;
+  const messages = [message, ...(graphql?.errors ?? []).map((e7) => e7?.message)];
+  return messages.some(
+    (m2) => typeof m2 === "string" && m2.includes(`"${field}"`) && /cannot query field|unknown field/i.test(m2)
+  );
+}
+async function withBuyerRef(request2) {
+  if (!gatewayKnowsBuyerRef) return request2(false);
+  try {
+    return await request2(true);
+  } catch (err) {
+    if (!isUnknownFieldError(err, BUYER_REF_FIELD)) throw err;
+    gatewayKnowsBuyerRef = false;
+    return request2(false);
+  }
+}
+var orderNumberQuery = (withRef) => `
 query GetCheckoutOrderNumber($checkoutId: String!) {
   Checkout {
     GetCheckout(checkout_id: $checkoutId) {
       id
-      order_id
+      order_id${withRef ? `
+      ${BUYER_REF_FIELD}` : ""}
     }
   }
 }
 `;
-async function getCheckoutOrderNumber(checkoutId, options) {
-  const json = await executeCartGraphQL(GET_CHECKOUT_ORDER_NUMBER_QUERY, { checkoutId }, options);
-  const n6 = Number(json?.data?.Checkout?.GetCheckout?.order_id);
-  return Number.isInteger(n6) && n6 > 0 ? n6 : null;
+var GET_CHECKOUT_ORDER_NUMBER_QUERY = orderNumberQuery(true);
+var GET_CHECKOUT_ORDER_NUMBER_QUERY_LEGACY = orderNumberQuery(false);
+async function getCheckoutReference(checkoutId, options) {
+  const json = await withBuyerRef(
+    (withRef) => executeCartGraphQL(
+      withRef ? GET_CHECKOUT_ORDER_NUMBER_QUERY : GET_CHECKOUT_ORDER_NUMBER_QUERY_LEGACY,
+      { checkoutId },
+      options
+    )
+  );
+  const checkout = json?.data?.Checkout?.GetCheckout;
+  const n6 = Number(checkout?.order_id);
+  return {
+    orderNumber: Number.isInteger(n6) && n6 > 0 ? n6 : null,
+    buyerRef: normalizeBuyerRef(checkout?.[BUYER_REF_FIELD]) ?? null
+  };
 }
 async function getAvailablePaymentMethods(options) {
   const json = await executeCartGraphQL(GET_AVAILABLE_PAYMENT_METHODS_QUERY, {}, options);
@@ -5589,18 +5642,27 @@ async function createPaymentApplePay(variables, options) {
   const json = await executeCartGraphQL(CREATE_PAYMENT_APPLE_PAY_MUTATION, variables, options);
   return json?.data?.Payment?.CreatePaymentApplePay;
 }
-var CONFIRM_PAYMENT_APPLE_PAY_MUTATION = `
+var confirmApplePayMutation = (withRef) => `
 mutation ConfirmPaymentApplePay($checkoutId: String!, $applePayToken: String!, $email: String, $shippingAddress: ApplePayAddressInput) {
   Payment {
     ConfirmPaymentApplePay(checkout_id: $checkoutId, apple_pay_token: $applePayToken, email: $email, shipping_address: $shippingAddress) {
       order_id
-      status
+      status${withRef ? `
+      ${BUYER_REF_FIELD}` : ""}
     }
   }
 }
 `;
+var CONFIRM_PAYMENT_APPLE_PAY_MUTATION = confirmApplePayMutation(true);
+var CONFIRM_PAYMENT_APPLE_PAY_MUTATION_LEGACY = confirmApplePayMutation(false);
 async function confirmPaymentApplePay(variables, options) {
-  const json = await executeCartGraphQL(CONFIRM_PAYMENT_APPLE_PAY_MUTATION, variables, options);
+  const json = await withBuyerRef(
+    (withRef) => executeCartGraphQL(
+      withRef ? CONFIRM_PAYMENT_APPLE_PAY_MUTATION : CONFIRM_PAYMENT_APPLE_PAY_MUTATION_LEGACY,
+      variables,
+      options
+    )
+  );
   return json?.data?.Payment?.ConfirmPaymentApplePay;
 }
 
@@ -7762,7 +7824,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.24.0";
+var SDK_VERSION = "0.25.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -7824,13 +7886,14 @@ mutation CreatePaymentKlarnaNative($checkoutId: String!, $countryCode: String, $
   }
 }
 `;
-var CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION = `
+var confirmPaymentKlarnaNativeMutation = (withRef) => `
 mutation ConfirmPaymentKlarnaNative($checkoutId: String!, $authorizationToken: String!, $autoCapture: Boolean, $billingAddress: KlarnaNativeAddressInput, $shippingAddress: KlarnaNativeAddressInput, $customer: KlarnaNativeCustomerInput) {
   Payment {
     ConfirmPaymentKlarnaNative(checkout_id: $checkoutId, authorization_token: $authorizationToken, auto_capture: $autoCapture, billing_address: $billingAddress, shipping_address: $shippingAddress, customer: $customer) {
       order_id
       checkout_id
-      fraud_status
+      fraud_status${withRef ? `
+      ${BUYER_REF_FIELD}` : ""}
       order {
         order_id
         status
@@ -8149,12 +8212,21 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * receipt, and a receipt does not fail for it.
    */
   async getOrderNumber(checkoutId, sponsorId) {
-    if (!checkoutId) return null;
+    return (await this.getOrderReference(checkoutId, sponsorId)).orderNumber;
+  }
+  /**
+   * What a paid checkout says of itself: the order number (as above) and the
+   * buyer reference — shopcart's keyed hash of the buyer's email, what the
+   * `vio:payment-success` detail carries as `buyerRef` and analytics sends as
+   * `buyer_id`. Never throws; `null` for whatever the API does not say.
+   */
+  async getOrderReference(checkoutId, sponsorId) {
+    if (!checkoutId) return { orderNumber: null, buyerRef: null };
     try {
       const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
-      return await getCheckoutOrderNumber(checkoutId, opts);
+      return await getCheckoutReference(checkoutId, opts);
     } catch {
-      return null;
+      return { orderNumber: null, buyerRef: null };
     }
   }
   /**
@@ -9302,7 +9374,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
           `[VioCheckout] Apple Pay confirmation failed (status: ${confirmRes?.status ?? "none"})`
         );
       }
-      return { orderId: confirmRes?.order_id, status: confirmRes?.status };
+      const buyerRef = normalizeBuyerRef(confirmRes?.[BUYER_REF_FIELD]);
+      return { orderId: confirmRes?.order_id, status: confirmRes?.status, ...buyerRef ? { buyerRef } : {} };
     };
   }
   static {
@@ -9805,16 +9878,19 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         shippingAddress: buildKlarnaAddress(address),
         customer: buildKlarnaCustomer(address)
       };
-      const json = await executeKlarnaGraphQL(
-        CONFIRM_PAYMENT_KLARNA_NATIVE_MUTATION,
-        variables,
-        ctx?.sponsorId ?? this.state?.sponsorId
+      const json = await withBuyerRef(
+        (withRef) => executeKlarnaGraphQL(
+          confirmPaymentKlarnaNativeMutation(withRef),
+          variables,
+          ctx?.sponsorId ?? this.state?.sponsorId
+        )
       );
       const confirmRes = json?.data?.Payment?.ConfirmPaymentKlarnaNative;
       if (!confirmRes) {
         throw new Error("Klarna order confirmation failed: missing response data");
       }
       const orderData = confirmRes.order || confirmRes;
+      const buyerRef = normalizeBuyerRef(confirmRes[BUYER_REF_FIELD]);
       if (typeof sessionStorage !== "undefined") {
         sessionStorage.setItem("vio.klarna.confirmed.v1", authorizationToken);
         sessionStorage.removeItem(KLARNA_PENDING_KEY);
@@ -9832,7 +9908,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
             result: {
               ...result,
               order: orderData,
-              chargedTotal: typeof orderData?.order_amount === "number" ? orderData.order_amount / 100 : ctx.orderAmount / 100
+              chargedTotal: typeof orderData?.order_amount === "number" ? orderData.order_amount / 100 : ctx.orderAmount / 100,
+              ...buyerRef ? { buyerRef } : {}
             }
           }
         })
@@ -9938,9 +10015,146 @@ function attr(doc, selector, name) {
 }
 function stripQueryAndHash(url) {
   if (!url) return void 0;
-  const cut = url.search(/[?#]/);
-  const clean = cut >= 0 ? url.slice(0, cut) : url;
+  const cut2 = url.search(/[?#]/);
+  const clean = cut2 >= 0 ? url.slice(0, cut2) : url;
   return clean.trim() || void 0;
+}
+
+// src/core/analytics/client-context.ts
+var UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+var CLIENT_LANGUAGE_MAX_LENGTH = 16;
+var CLIENT_REFERRER_MAX_LENGTH = 2048;
+var CLIENT_UTM_MAX_LENGTH = 128;
+var CLIENT_TZ_MAX_LENGTH = 64;
+var CLIENT_SCREEN_MAX = 65535;
+var LANDING_KEY = "vio.landing.v1";
+function defaultClientEnvironment() {
+  return {
+    navigator: typeof navigator !== "undefined" ? navigator : null,
+    document: typeof document !== "undefined" ? document : null,
+    location: typeof location !== "undefined" ? location : null,
+    screen: typeof screen !== "undefined" ? screen : null,
+    storage: sessionStorageOrNull(),
+    timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone
+  };
+}
+function resolveLanding(env = defaultClientEnvironment(), persist = true) {
+  try {
+    const utm = utmOf(env.location?.search);
+    const stored = readLanding(env.storage);
+    if (utm === void 0 && stored) return stored;
+    const landing = {};
+    const referrer = cut(text2(env.document?.referrer), CLIENT_REFERRER_MAX_LENGTH);
+    if (referrer) landing.referrer = referrer;
+    if (utm) landing.utm = utm;
+    if (persist) writeLanding(env.storage, landing);
+    return landing;
+  } catch {
+    return {};
+  }
+}
+function persistLanding(landing, storage2 = defaultClientEnvironment().storage) {
+  writeLanding(storage2, landing);
+}
+function resolveClientContext(env = defaultClientEnvironment(), landing = resolveLanding(env)) {
+  const out = {};
+  try {
+    const language = cut(text2(env.navigator?.language), CLIENT_LANGUAGE_MAX_LENGTH);
+    if (language) out.language = language;
+    const referrer = cut(landing.referrer, CLIENT_REFERRER_MAX_LENGTH);
+    if (referrer) out.referrer = referrer;
+    for (const key of UTM_KEYS) {
+      const value = cut(landing.utm?.[key], CLIENT_UTM_MAX_LENGTH);
+      if (value) out[key] = value;
+    }
+    const w2 = dimension(env.screen?.width);
+    const h3 = dimension(env.screen?.height);
+    if (w2 !== void 0) out.screen_w = w2;
+    if (h3 !== void 0) out.screen_h = h3;
+    const tz = cut(text2(safeCall(env.timeZone)), CLIENT_TZ_MAX_LENGTH);
+    if (tz) out.tz = tz;
+  } catch {
+  }
+  return out;
+}
+function utmOf(search) {
+  let params;
+  try {
+    params = new URLSearchParams(typeof search === "string" ? search : "");
+  } catch {
+    return void 0;
+  }
+  const out = {};
+  let any = false;
+  for (const key of UTM_KEYS) {
+    const value = cut(text2(params.get(key)), CLIENT_UTM_MAX_LENGTH);
+    if (value) {
+      out[key] = value;
+      any = true;
+    }
+  }
+  return any ? out : void 0;
+}
+function readLanding(storage2) {
+  try {
+    const raw = storage2?.getItem(LANDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const p3 = parsed;
+    const landing = {};
+    const referrer = cut(text2(p3.referrer), CLIENT_REFERRER_MAX_LENGTH);
+    if (referrer) landing.referrer = referrer;
+    if (p3.utm && typeof p3.utm === "object") {
+      const utm = {};
+      let any = false;
+      for (const key of UTM_KEYS) {
+        const value = cut(text2(p3.utm[key]), CLIENT_UTM_MAX_LENGTH);
+        if (value) {
+          utm[key] = value;
+          any = true;
+        }
+      }
+      if (any) landing.utm = utm;
+    }
+    return landing;
+  } catch {
+    return null;
+  }
+}
+function writeLanding(storage2, landing) {
+  try {
+    storage2?.setItem(LANDING_KEY, JSON.stringify(landing));
+  } catch {
+  }
+}
+function sessionStorageOrNull() {
+  try {
+    return typeof sessionStorage !== "undefined" && sessionStorage ? sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
+function text2(value) {
+  if (value === void 0 || value === null) return void 0;
+  const s4 = String(value).trim();
+  return s4 ? s4 : void 0;
+}
+function cut(value, max) {
+  if (value === void 0) return void 0;
+  return value.length > max ? value.slice(0, max) : value;
+}
+function dimension(value) {
+  const n6 = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n6) || n6 < 0) return void 0;
+  return Math.min(Math.floor(n6), CLIENT_SCREEN_MAX);
+}
+function safeCall(fn) {
+  try {
+    return fn ? fn() : void 0;
+  } catch {
+    return void 0;
+  }
 }
 
 // src/core/cart/slices.ts
@@ -10041,6 +10255,10 @@ var AnalyticsManager = class extends EventTarget {
     /** Last NON-EMPTY cart snapshot — `purchase` uses it because several flows
      * (Apple Pay) clear the cart BEFORE `vio:payment-success` fires. */
     this.lastCartSnapshot = null;
+    /** The `client` block (language, landing referrer / utm, screen, tz): read once per page load, reused on every event. */
+    this.client = null;
+    /** The landing it was read from — persisted later when consent arrives after the first event. */
+    this.landing = null;
     this.teardown = [];
   }
   // MARK: - Public API
@@ -10060,6 +10278,7 @@ var AnalyticsManager = class extends EventTarget {
     if (granted) {
       if (this.anonIdCache) safeStorageSet(ANON_KEY, this.anonIdCache);
       if (this.sessionId) this.persistSession();
+      if (this.landing) persistLanding(this.landing);
       return;
     }
     safeStorageRemove(ANON_KEY);
@@ -10252,8 +10471,11 @@ var AnalyticsManager = class extends EventTarget {
       value: com.value,
       currency: com.currency,
       order_id: com.orderId,
-      payment_method: com.paymentMethod
+      payment_method: com.paymentMethod,
+      // Only a reference survives — never an email, whatever a host passes.
+      buyer_id: normalizeBuyerRef(com.buyerId)
     }) : void 0;
+    const client = this.clientBlock();
     return {
       event_id: uuid(),
       name,
@@ -10266,8 +10488,21 @@ var AnalyticsManager = class extends EventTarget {
       ...this.externalUserId ? { external_user_id: this.externalUserId } : {},
       ...Object.keys(context).length ? { context } : {},
       ...commerce ? { commerce } : {},
+      ...client ? { client } : {},
       ...opts.props ? { props: opts.props } : {}
     };
+  }
+  /**
+   * The `client` block: read once — the landing is remembered for the session
+   * only when we may persist — then the same (frozen) object on every event.
+   * `null` when there is nothing to say (no browser).
+   */
+  clientBlock() {
+    if (!this.client) {
+      this.landing = resolveLanding(void 0, this.canPersist);
+      this.client = Object.freeze(resolveClientContext(void 0, this.landing));
+    }
+    return Object.keys(this.client).length ? this.client : null;
   }
   /** Guarda la sesión solo si podemos escribir en el dispositivo. */
   persistSession(now = Date.now()) {
@@ -10382,7 +10617,7 @@ var AnalyticsManager = class extends EventTarget {
       const d3 = ev.detail ?? {};
       const line = this.findLine(d3.productId, d3.variantId);
       this.track("add_to_cart", {
-        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), componentTemplateId: templateOf(d3), ...contentOf(d3) },
         commerce: {
           items: [
             {
@@ -10432,7 +10667,7 @@ var AnalyticsManager = class extends EventTarget {
       if (d3.productId === void 0) return;
       const price = Number(d3.price);
       this.track("select_item", {
-        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
+        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), componentTemplateId: templateOf(d3), ...contentOf(d3) },
         commerce: {
           items: [
             {
@@ -10451,13 +10686,15 @@ var AnalyticsManager = class extends EventTarget {
     });
     on("vio:checkout-open", (ev) => {
       const d3 = ev.detail ?? {};
-      const base = { sponsorId: d3.sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
+      const base = { sponsorId: d3.sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), componentTemplateId: templateOf(d3), ...contentOf(d3) };
+      const buyerId = buyerRefOf(d3);
+      const buyer = buyerId !== void 0 ? { buyerId } : {};
       const { slices, explicit } = this.cartSlices(d3.sponsorId);
       if (slices.length > 1) {
         for (const slice of slices) {
           this.track("begin_checkout", {
             context: this.sliceContext(slice, base),
-            commerce: sliceCommerce(slice),
+            commerce: { ...sliceCommerce(slice), ...buyer },
             props: { slice: slice.slice, slices: slice.slices }
           });
         }
@@ -10466,7 +10703,7 @@ var AnalyticsManager = class extends EventTarget {
       const snap = this.cartCommerce(d3.sponsorId);
       this.track("begin_checkout", {
         context: this.singleSliceContext(slices[0], explicit, base),
-        ...snap ? { commerce: snap } : {}
+        ...snap || buyerId !== void 0 ? { commerce: { ...snap ?? {}, ...buyer } } : {}
       });
     });
     on("vio:payment-success", (ev) => {
@@ -10698,8 +10935,8 @@ var CONTENT_URL_MAX_LENGTH = 2048;
 function capUrl(value) {
   if (!value) return void 0;
   if (value.length <= CONTENT_URL_MAX_LENGTH) return value;
-  const cut = value.search(/[?#]/);
-  const withoutQuery = cut >= 0 ? value.slice(0, cut) : value;
+  const cut2 = value.search(/[?#]/);
+  const withoutQuery = cut2 >= 0 ? value.slice(0, cut2) : value;
   return withoutQuery.length <= CONTENT_URL_MAX_LENGTH ? withoutQuery : withoutQuery.slice(0, CONTENT_URL_MAX_LENGTH);
 }
 function sliceCommerce(slice) {
@@ -10708,6 +10945,9 @@ function sliceCommerce(slice) {
 function slotOf(detail) {
   return typeof detail.slot === "string" && detail.slot.trim() ? detail.slot.trim() : void 0;
 }
+function templateOf(detail) {
+  return typeof detail.componentTemplateId === "string" && detail.componentTemplateId.trim() ? detail.componentTemplateId.trim() : void 0;
+}
 function contentOf(detail) {
   const out = {};
   if (typeof detail.contentId === "number" && Number.isFinite(detail.contentId)) out.contentId = detail.contentId;
@@ -10715,10 +10955,33 @@ function contentOf(detail) {
   if (typeof detail.contentTitle === "string" && detail.contentTitle.trim()) out.contentTitle = detail.contentTitle.trim();
   return out;
 }
+function buyerRefOf(d3) {
+  if (!d3) return void 0;
+  const r6 = d3.result ?? {};
+  const candidates = [
+    d3.buyerRef,
+    d3.buyer_ref,
+    r6.buyerRef,
+    r6.buyer_ref,
+    r6.confirmation?.buyerRef,
+    r6.confirmation?.buyer_ref,
+    r6.checkout?.buyerRef,
+    r6.checkout?.buyer_ref
+  ];
+  for (const candidate of candidates) {
+    const ref = normalizeBuyerRef(candidate);
+    if (ref) return ref;
+  }
+  return void 0;
+}
 function purchaseFromPaymentSuccess(d3) {
   const r6 = d3.result ?? {};
   const orderId = firstId(d3.orderId, r6.confirmation?.orderId, d3.checkoutId);
-  return orderId !== void 0 ? { orderId } : {};
+  const buyerId = buyerRefOf(d3);
+  return {
+    ...orderId !== void 0 ? { orderId } : {},
+    ...buyerId !== void 0 ? { buyerId } : {}
+  };
 }
 function firstId(...candidates) {
   for (const c4 of candidates) {
@@ -10778,7 +11041,7 @@ var VioFacade = class {
      * (another key or environment) is still in flight after a re-init; its answer
      * belongs to that configuration and must not land in this one. */
     this.generation = 0;
-    /** Slot ids present on the page (`Vio.registerSlot`): how many elements hold each, its display name and its own campaign. */
+    /** Slot ids present on the page (`Vio.registerSlot`): how many elements hold each, its display name, its own campaign and its kind. */
     this.slotRegistry = /* @__PURE__ */ new Map();
     /** Slots already warned about (`dashboard`: the dashboard's assignment stands; `replaced`: this page moved it). */
     this.warnedDashboardSlots = /* @__PURE__ */ new Set();
@@ -11017,21 +11280,26 @@ var VioFacade = class {
    * the optional display name, and the element's own campaign when it has
    * one: `vio-campaign` or an ancestor's `data-vio-campaign`). The registry is
    * declared ONCE, debounced, after the first successful bootstrap — and again
-   * whenever a new id, display name or campaign appears. A `displayName` /
+   * whenever a new id, display name, campaign or kind appears. A `displayName` /
    * `campaignId` given later for an id already registered replaces the one
-   * kept; `undefined` leaves it alone. The returned function unregisters;
-   * removal never re-declares.
+   * kept; `undefined` leaves it alone. The third argument is the campaign id
+   * (as before) or `{ campaignId?, kind? }` — `kind` being what kind of
+   * element holds the slot (`card` | `carousel` | `detail`); the FIRST kind an
+   * id gets stays (the cards a carousel renders share its id: the slot is the
+   * carousel's). The returned function unregisters; removal never re-declares.
    */
-  registerSlot(name, displayName, campaignId) {
+  registerSlot(name, displayName, campaignIdOrOptions) {
     const id = normalizeSlotId(name);
     if (!id) return () => {
     };
     const label = typeof displayName === "string" && displayName.trim() ? displayName.trim() : void 0;
-    const campaign = toCampaignId(campaignId);
+    const options = campaignIdOrOptions !== null && typeof campaignIdOrOptions === "object" ? campaignIdOrOptions : { campaignId: campaignIdOrOptions };
+    const campaign = toCampaignId(options.campaignId);
+    const kind = normalizeSlotKind(options.kind);
     const entry = this.slotRegistry.get(id);
     let changed = false;
     if (!entry) {
-      this.slotRegistry.set(id, { count: 1, displayName: label, campaignId: campaign });
+      this.slotRegistry.set(id, { count: 1, displayName: label, campaignId: campaign, kind });
       changed = true;
     } else {
       entry.count++;
@@ -11041,6 +11309,10 @@ var VioFacade = class {
       }
       if (campaign !== void 0 && campaign !== entry.campaignId) {
         entry.campaignId = campaign;
+        changed = true;
+      }
+      if (kind !== void 0 && entry.kind === void 0) {
+        entry.kind = kind;
         changed = true;
       }
     }
@@ -11217,10 +11489,11 @@ var VioFacade = class {
       this.slotDeclareTimer = null;
       this.slotsDirty = false;
       void this.declareSlots(
-        [...this.slotRegistry.entries()].map(([id, { displayName, campaignId }]) => ({
+        [...this.slotRegistry.entries()].map(([id, { displayName, campaignId, kind }]) => ({
           id,
           ...displayName ? { displayName } : {},
-          ...campaignId !== void 0 ? { campaignId } : {}
+          ...campaignId !== void 0 ? { campaignId } : {},
+          ...kind ? { kind } : {}
         }))
       );
     }, SLOT_DECLARATION_DEBOUNCE_MS);
@@ -11303,7 +11576,7 @@ function vippsButtonAttributes(verb = "buy", opts = {}) {
 // src/react/index.ts
 import * as React from "react";
 
-// node_modules/@lit/react/create-component.js
+// ../web-sdk-0240/node_modules/@lit/react/create-component.js
 var e = /* @__PURE__ */ new Set(["children", "localName", "ref", "style", "className"]);
 var n = /* @__PURE__ */ new WeakMap();
 var t = (e7, t4, o7, l3, a3) => {
@@ -11334,7 +11607,7 @@ var o = ({ react: n6, tagName: o7, elementClass: l3, events: a3, displayName: s4
   return r6.displayName = s4 ?? l3.name, r6;
 };
 
-// node_modules/@lit/reactive-element/css-tag.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/css-tag.js
 var t2 = globalThis;
 var e2 = t2.ShadowRoot && (void 0 === t2.ShadyCSS || t2.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
 var s = Symbol();
@@ -11379,7 +11652,7 @@ var c = e2 ? (t4) => t4 : (t4) => t4 instanceof CSSStyleSheet ? ((t5) => {
   return r(e7);
 })(t4) : t4;
 
-// node_modules/@lit/reactive-element/reactive-element.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e3, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o3, getPrototypeOf: n3 } = Object;
 var a = globalThis;
 var c2 = a.trustedTypes;
@@ -11601,7 +11874,7 @@ var y = class extends HTMLElement {
 };
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = /* @__PURE__ */ new Map(), y[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
-// node_modules/lit-html/lit-html.js
+// ../web-sdk-0240/node_modules/lit-html/lit-html.js
 var t3 = globalThis;
 var i3 = (t4) => t4;
 var s2 = t3.trustedTypes;
@@ -11855,7 +12128,7 @@ var D = (t4, i5, s4) => {
   return h3._$AI(t4), h3;
 };
 
-// node_modules/lit-element/lit-element.js
+// ../web-sdk-0240/node_modules/lit-element/lit-element.js
 var s3 = globalThis;
 var i4 = class extends y {
   constructor() {
@@ -11884,7 +12157,7 @@ var o5 = s3.litElementPolyfillSupport;
 o5?.({ LitElement: i4 });
 (s3.litElementVersions ??= []).push("4.2.2");
 
-// node_modules/@lit/reactive-element/decorators/property.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/property.js
 var o6 = { attribute: true, type: String, converter: u, reflect: false, hasChanged: f };
 var r4 = (t4 = o6, e7, r6) => {
   const { kind: n6, metadata: i5 } = r6;
@@ -11914,15 +12187,15 @@ function n5(t4) {
   })(t4, e7, o7);
 }
 
-// node_modules/@lit/reactive-element/decorators/state.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/state.js
 function r5(r6) {
   return n5({ ...r6, state: true, attribute: false });
 }
 
-// node_modules/@lit/reactive-element/decorators/base.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/base.js
 var e5 = (e7, t4, c4) => (c4.configurable = true, c4.enumerable = true, Reflect.decorate && "object" != typeof t4 && Object.defineProperty(e7, t4, c4), c4);
 
-// node_modules/@lit/reactive-element/decorators/query.js
+// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/query.js
 function e6(e7, r6) {
   return (n6, s4, i5) => {
     const o7 = (t4) => t4.renderRoot?.querySelector(e7) ?? null;
@@ -12006,7 +12279,10 @@ var SlotRegistration = class {
     this.unregister();
     if (!next) return;
     try {
-      this.release = typeof Vio.registerSlot !== "function" ? null : next.campaignId !== void 0 ? Vio.registerSlot(next.id, next.displayName, next.campaignId) : Vio.registerSlot(next.id, next.displayName);
+      this.release = typeof Vio.registerSlot !== "function" ? null : Vio.registerSlot(next.id, next.displayName, {
+        kind: this.kind,
+        ...next.campaignId !== void 0 ? { campaignId: next.campaignId } : {}
+      });
       this.identity = next;
     } catch {
       this.release = null;
@@ -12119,6 +12395,7 @@ var VioProduct = class extends i4 {
     this.vioCampaign = "";
     this.vioContentId = "";
     this.vioContentTitle = "";
+    this.componentTemplateId = "";
     this.slotRegistration = new SlotRegistration(this, "card");
     this.hasVariants = false;
     this.variants = void 0;
@@ -12163,6 +12440,7 @@ var VioProduct = class extends i4 {
     }) : { slot: this.effectiveSlot || void 0 };
     return {
       ...base,
+      componentTemplateId: this.componentTemplateId || "product-card",
       ...this.vioContentId ? { contentId: this.vioContentId } : {},
       ...this.vioContentTitle ? { contentTitle: this.vioContentTitle } : {}
     };
@@ -12456,6 +12734,9 @@ __decorateClass([
   n5({ type: String, attribute: "vio-content-title" })
 ], VioProduct.prototype, "vioContentTitle", 2);
 __decorateClass([
+  n5({ type: String, attribute: "component-template-id" })
+], VioProduct.prototype, "componentTemplateId", 2);
+__decorateClass([
   n5({ type: Boolean, attribute: "has-variants" })
 ], VioProduct.prototype, "hasVariants", 2);
 __decorateClass([
@@ -12535,6 +12816,7 @@ var VioProductCarousel = class extends i4 {
     }) : { slot: this.effectiveSlot || void 0 };
     return {
       ...base,
+      componentTemplateId: "product-carousel",
       ...this.vioContentId ? { contentId: this.vioContentId } : {},
       ...this.vioContentTitle ? { contentTitle: this.vioContentTitle } : {}
     };
@@ -12776,7 +13058,6 @@ var VioProductCarousel = class extends i4 {
         this,
         {
           sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
-          componentTemplateId: "product-carousel",
           // The slot is the real location id; the label only stands in for it.
           locationId: this.effectiveSlot || this.label || void 0,
           ...this.attribution()
@@ -12804,7 +13085,6 @@ var VioProductCarousel = class extends i4 {
       Vio.analytics.track("view_item_list", {
         context: {
           sponsorId: sponsorId > 0 ? sponsorId : void 0,
-          componentTemplateId: "product-carousel",
           locationId: this.effectiveSlot || this.label || void 0,
           ...this.attribution()
         },
@@ -12863,6 +13143,7 @@ var VioProductCarousel = class extends i4 {
             image-url=${img}
             ?has-variants=${(p3.variants?.length ?? 0) > 1}
             .vioSlot=${this.effectiveSlot}
+            .componentTemplateId=${"product-carousel"}
             .vioCampaign=${this.effectiveCampaignId !== void 0 ? String(this.effectiveCampaignId) : ""}
             .vioContentId=${this.vioContentId}
             .vioContentTitle=${this.vioContentTitle}
@@ -13301,6 +13582,7 @@ var VioProductDetail = class extends i4 {
     const contentTitle = this.fromCard && this.eventContentTitle || this.vioContentTitle;
     return {
       ...base,
+      componentTemplateId: "product-detail",
       ...contentId ? { contentId } : {},
       ...contentTitle ? { contentTitle } : {}
     };
@@ -13837,7 +14119,6 @@ var VioProductDetail = class extends i4 {
         Vio.analytics.track("view_item", {
           context: {
             sponsorId: this.sponsorId > 0 ? Number(this.sponsorId) : void 0,
-            componentTemplateId: "product-detail",
             ...this.attribution()
           },
           commerce: {
@@ -15137,11 +15418,12 @@ var VioCart = class extends i4 {
       for (const sponsorId of [...this.carts.keys()]) {
         Vio.cart.clearSponsorCart(sponsorId);
       }
+      const buyerRef = buyerRefOf({ result });
       this.dispatchEvent(
         new CustomEvent("vio:payment-success", {
           bubbles: true,
           composed: true,
-          detail: { method: "apple-pay", result }
+          detail: { method: "apple-pay", result, ...buyerRef ? { buyerRef } : {} }
         })
       );
     });
@@ -15483,24 +15765,24 @@ var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen
 var SHIPS_APART = "kan ikke sendes sammen";
 function friendlyPaymentError(raw, method) {
   void method;
-  const text2 = String(raw ?? "");
-  const lower = text2.toLowerCase();
+  const text3 = String(raw ?? "");
+  const lower = text3.toLowerCase();
   if (lower.includes("got 0") || lower.includes("amount must be a positive")) {
     return EMPTY_CART_MESSAGE;
   }
-  if (lower.includes("replaced by a newer") || text2.includes("CHECKOUT_SUPERSEDED")) {
+  if (lower.includes("replaced by a newer") || text3.includes("CHECKOUT_SUPERSEDED")) {
     return CART_CHANGED_MESSAGE;
   }
-  if (lower.includes("already been paid") || text2.includes("CART_ALREADY_PAID")) {
+  if (lower.includes("already been paid") || text3.includes("CART_ALREADY_PAID")) {
     return CART_PAID_MESSAGE;
   }
-  if (text2.includes(SHIPS_APART)) return norwegianSentence(text2);
+  if (text3.includes(SHIPS_APART)) return norwegianSentence(text3);
   return PAYMENT_START_FAILED_MESSAGE;
 }
-function norwegianSentence(text2) {
-  const at = text2.indexOf(SHIPS_APART);
-  const prefixEnd = text2.lastIndexOf(": ", at);
-  return (prefixEnd === -1 ? text2 : text2.slice(prefixEnd + 2)).trim();
+function norwegianSentence(text3) {
+  const at = text3.indexOf(SHIPS_APART);
+  const prefixEnd = text3.lastIndexOf(": ", at);
+  return (prefixEnd === -1 ? text3 : text3.slice(prefixEnd + 2)).trim();
 }
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
@@ -16402,13 +16684,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.orderConfirmed = true;
       this.open = true;
       void this.fillOrderNumber(checkoutId, sponsorId);
-      this.dispatchEvent(
-        new CustomEvent("vio:payment-success", {
-          bubbles: true,
-          composed: true,
-          detail: { method: vioMethod, sponsorId, orderId: checkoutId }
-        })
-      );
+      void this.emitPaymentSuccess({ method: vioMethod, sponsorId, orderId: checkoutId }, checkoutId, sponsorId);
     } else if (outcome === "duplicate") {
       this.paymentError = CART_PAID_MESSAGE;
       this.open = true;
@@ -17261,18 +17537,57 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.confirmedMethod = method;
     this.orderConfirmed = true;
     this.open = true;
+    void this.fillOrderNumber(checkoutId, sponsorId);
+    void this.emitPaymentSuccess(
+      { method, sponsorId, result, checkoutId },
+      checkoutId,
+      sponsorId,
+      () => Vio.cart.clearSponsorCart(sponsorId)
+    );
+  }
+  static {
+    /** Longest `vio:payment-success` waits for the checkout's buyer reference. */
+    this.BUYER_REF_WAIT_MS = 2500;
+  }
+  /**
+   * `vio:payment-success` for the host and analytics — with the buyer
+   * reference (`buyerRef`: shopcart's keyed hash of the email → analytics
+   * `buyer_id`) when the checkout can say it. An emitter whose own answer
+   * carried it (Apple Pay, Klarna native) sends at once; the others (a
+   * redirect return, Stripe / Adyen / Nexi in the drawer, a provider's
+   * receipt) ask the checkout once, bounded to 2.5 s, and send without it
+   * when the answer is late or empty. Only the event waits — the screen is
+   * already the confirmation. `afterwards` runs right after the event, so a
+   * path keeps the order it always had (the cart is cleared after the event).
+   */
+  async emitPaymentSuccess(detail, checkoutId, sponsorId, afterwards) {
+    let buyerRef = buyerRefOf(detail);
+    if (!buyerRef && checkoutId && typeof Vio.checkout.getOrderReference === "function") {
+      let timer;
+      try {
+        const reference = await Promise.race([
+          Vio.checkout.getOrderReference(checkoutId, sponsorId || void 0),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve(null), _VioCheckout.BUYER_REF_WAIT_MS);
+          })
+        ]);
+        buyerRef = reference?.buyerRef ?? void 0;
+      } catch {
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     this.dispatchEvent(
       new CustomEvent("vio:payment-success", {
         bubbles: true,
         composed: true,
-        // `checkoutId` is Vio's own reference for the purchase — what the
-        // redirect path already sends as `orderId`; analytics falls back to it
-        // when the provider's result carries no order id.
-        detail: { method, sponsorId, result, checkoutId }
+        detail: buyerRef ? { ...detail, buyerRef } : detail
       })
     );
-    Vio.cart.clearSponsorCart(sponsorId);
-    void this.fillOrderNumber(checkoutId, sponsorId);
+    try {
+      afterwards?.();
+    } catch {
+    }
   }
   static {
     /** Waits between asks for the Vio order number: the order is often born a
@@ -17423,19 +17738,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.confirmedMethod = method;
     this.open = true;
     const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
-    this.dispatchEvent(
-      new CustomEvent("vio:payment-success", {
-        bubbles: true,
-        composed: true,
-        detail: { method, sponsorId, result, checkoutId }
-      })
-    );
-    if (sponsorId) {
-      try {
-        Vio.cart.clearSponsorCart(sponsorId);
-      } catch {
+    void this.emitPaymentSuccess(
+      { method, sponsorId, result, checkoutId },
+      checkoutId,
+      sponsorId,
+      () => {
+        if (sponsorId) Vio.cart.clearSponsorCart(sponsorId);
       }
-    }
+    );
   }
   /** Back from the payment page, asking whether it was paid — and nothing
    * else on screen while we do. */
@@ -19099,6 +19409,7 @@ var VioCheckout2 = o({
 export {
   ADD_ITEM_MUTATION,
   AnalyticsManager,
+  BUYER_REF_MAX_LENGTH,
   CREATE_CART_MUTATION,
   CREATE_CHECKOUT_MUTATION,
   CREATE_PAYMENT_STRIPE_MUTATION,
@@ -19133,6 +19444,7 @@ export {
   applyVioTheme,
   autoSlotDisplayName,
   autoSlotId,
+  buyerRefOf,
   campaignCandidates,
   cartSlicesFrom,
   checkApplePayAvailability,
@@ -19151,17 +19463,22 @@ export {
   getCart,
   getCartGraphQLOptions,
   getCheckout,
+  getCheckoutReference,
   getCustomerSessionId,
   getGlobalCurrency,
   getLineItemsBySupplier,
   getVippsStatus,
   lineOrigins,
+  normalizeBuyerRef,
   normalizeOrigin,
   normalizeScope,
+  normalizeSlotKind,
   primaryImageUrl,
   purchaseFromPaymentSuccess,
   resolveCampaignId,
+  resolveClientContext,
   resolveContent,
+  resolveLanding,
   resolveSlotCampaign,
   sameOrigin,
   showApplePaySheet,
