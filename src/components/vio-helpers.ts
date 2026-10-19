@@ -137,12 +137,14 @@ function toCampaignId(value: unknown): number | null {
 }
 
 /** Pure. The campaigns of a `/v2/mobile/config` answer for the selector: every
- * `campaigns[]` entry (the default one marked), active ones first, the
- * backend's order otherwise. The default campaign is listed even when
- * `campaigns[]` does not carry it. */
+ * `campaigns[]` entry, active ones first, the backend's order otherwise. A
+ * campaign is the default only when the backend says so (`isDefault`): the
+ * answer's `campaign` is the one the key serves NOW — the default while it is
+ * active, else the most recently started active one (ADR-0027, point 2) — so
+ * its id must not be read as "the default". A paused or finished default is
+ * simply not in the list. */
 export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
   const b = (boot ?? {}) as { campaign?: any; campaigns?: any[] };
-  const defaultId = toCampaignId(b.campaign?.id);
   const list: CampaignListItem[] = [];
   for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) {
     const id = toCampaignId(c?.id);
@@ -151,11 +153,12 @@ export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
       id,
       name: String(c?.name ?? `Campaign ${id}`),
       status: String(c?.status ?? ""),
-      isDefault: c?.isDefault === true || id === defaultId,
+      isDefault: c?.isDefault === true,
     });
   }
-  if (defaultId != null && !list.some((x) => x.id === defaultId)) {
-    list.unshift({ id: defaultId, name: String(b.campaign?.name ?? `Campaign ${defaultId}`), status: "active", isDefault: true });
+  const headId = toCampaignId(b.campaign?.id);
+  if (headId != null && !list.some((x) => x.id === headId)) {
+    list.push({ id: headId, name: String(b.campaign?.name ?? `Campaign ${headId}`), status: "active", isDefault: b.campaign?.isDefault === true });
   }
   return [...list.filter((c) => c.status === "active"), ...list.filter((c) => c.status !== "active")];
 }

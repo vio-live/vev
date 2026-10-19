@@ -919,14 +919,16 @@ export function VioCampaignSelector({ value, onChange, context }: CampaignSelect
         value={verdict.effective}
         onChange={(v: number) => onChange(Number(v) || 0)}
         items={[
-          { value: 0, label: defaultCampaign ? `Default campaign — ${defaultCampaign.name}` : "Default campaign" },
+          { value: 0, label: defaultCampaign ? `Default campaign — ${defaultCampaign.name}` : "Default campaign (not active now)" },
           ...selectable.map((c) => ({ value: c.id, label: c.name })),
         ]}
       />
       <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
         {verdict.effective > 0
           ? "Blocks sell through this campaign's primary sponsor, overriding Active Sponsor; products picked under another sponsor show as unavailable. The dashboard can still reassign any slot."
-          : "Blocks on this page register under the default campaign; the dashboard can reassign any of them."}
+          : defaultCampaign
+            ? "Blocks on this page register under the default campaign; the dashboard can reassign any of them."
+            : "The default campaign is paused or outside its dates: blocks on this page show whatever campaign the key serves now until you choose one here."}
       </SilkeBox>
       {verdict.reason === "unknown" ? (
         <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
