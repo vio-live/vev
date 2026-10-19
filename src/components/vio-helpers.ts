@@ -136,27 +136,26 @@ function toCampaignId(value: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** Pure. The campaigns of a `/v2/mobile/config` answer for the selector: every
- * `campaigns[]` entry (the default one marked), active ones first, the
- * backend's order otherwise. The default campaign is listed even when
- * `campaigns[]` does not carry it. */
+/** Pure. The campaigns of a `/v2/mobile/config` answer for the selector.
+ * `availableCampaigns[]` (campaigns micro, ADR-0034 amendment 4): every
+ * campaign of the surface that has not ended, with its `status` — the editor
+ * may put a page under a paused or scheduled one. `campaigns[]`: the active
+ * ones (an older micro lists only these). Active ones first, the backend's
+ * order otherwise. A campaign is the default only when the backend says so
+ * (`isDefault`): the answer's `campaign` is the one the key serves NOW — the
+ * default while it is active, else the most recently started active one
+ * (ADR-0027, point 2) — so its id must not be read as "the default". */
 export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
-  const b = (boot ?? {}) as { campaign?: any; campaigns?: any[] };
-  const defaultId = toCampaignId(b.campaign?.id);
+  const b = (boot ?? {}) as { campaign?: any; campaigns?: any[]; availableCampaigns?: any[] };
   const list: CampaignListItem[] = [];
-  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) {
+  const add = (c: any, status: string) => {
     const id = toCampaignId(c?.id);
-    if (id == null || list.some((x) => x.id === id)) continue;
-    list.push({
-      id,
-      name: String(c?.name ?? `Campaign ${id}`),
-      status: String(c?.status ?? ""),
-      isDefault: c?.isDefault === true || id === defaultId,
-    });
-  }
-  if (defaultId != null && !list.some((x) => x.id === defaultId)) {
-    list.unshift({ id: defaultId, name: String(b.campaign?.name ?? `Campaign ${defaultId}`), status: "active", isDefault: true });
-  }
+    if (id == null || list.some((x) => x.id === id)) return;
+    list.push({ id, name: String(c?.name ?? `Campaign ${id}`), status, isDefault: c?.isDefault === true });
+  };
+  for (const c of Array.isArray(b.availableCampaigns) ? b.availableCampaigns : []) add(c, String(c?.status ?? ""));
+  for (const c of Array.isArray(b.campaigns) ? b.campaigns : []) add(c, String(c?.status ?? "active"));
+  if (b.campaign && typeof b.campaign === "object") add(b.campaign, "active");
   return [...list.filter((c) => c.status === "active"), ...list.filter((c) => c.status !== "active")];
 }
 
@@ -189,21 +188,25 @@ export type PageCampaignVerdict = {
   effective: number;
   entry?: CampaignListItem;
   /** `default`: nothing chosen (or the default itself); `unknown`: not one of
-   *  this key's; `inactive`: listed but paused / ended / scheduled; `ok`. */
+   *  this key's; `inactive`: listed but paused / scheduled (`effective` kept)
+   *  or ended (`effective: 0`); `ok`: listed and active. */
   reason: "default" | "unknown" | "inactive" | "ok";
 };
 
-/** Pure. What a saved `campaignId` means against a key's campaign list: only
- * an ACTIVE campaign counts (the SDK's `activeCampaignEntry`); the default
- * campaign's own id is the same as choosing none. */
+/** Pure. What a saved `campaignId` means against a key's campaign list: a
+ * listed campaign that has not ended counts — paused or scheduled too (the
+ * page is prepared before the window opens; the SDK shows it only while it
+ * is active, so `reason` says `inactive` with `effective` still set); an
+ * ended one is `inactive` with `effective: 0`; the default campaign's own id
+ * is the same as choosing none. */
 export function validatePageCampaign(list: readonly CampaignListItem[], wanted: unknown): PageCampaignVerdict {
   const id = toCampaignId(wanted);
   if (id == null) return { effective: 0, reason: "default" };
   const entry = list.find((c) => c.id === id);
   if (entry?.isDefault) return { effective: 0, entry, reason: "default" };
   if (!entry) return { effective: 0, reason: "unknown" };
-  if (!isActiveCampaign(entry)) return { effective: 0, entry, reason: "inactive" };
-  return { effective: id, entry, reason: "ok" };
+  if (entry.status === "ended") return { effective: 0, entry, reason: "inactive" };
+  return { effective: id, entry, reason: isActiveCampaign(entry) ? "ok" : "inactive" };
 }
 
 /**
@@ -732,17 +735,22 @@ export function slotAssignedCampaign(slot?: string | null): any | null {
 export function pageCampaign(): any | null {
   if (!sdkHas("pageCampaign")) return null;
   try {
-    return nonDefaultCampaign((Vio as any).pageCampaign());
+    // Chosen explicitly: never the fallback, even when it is also the
+    // campaign the key serves now.
+    const campaign = (Vio as any).pageCampaign();
+    return campaign && campaign.isDefault !== true ? campaign : null;
   } catch {
     return null;
   }
 }
 
-/** `campaign` unless it is the surface's default one (or nothing). */
+/** `campaign` unless it is the surface's default one, or the campaign the key
+ * serves now (`config.campaign`: the fallback of every slot without an
+ * assignment) when the page did not choose it explicitly. */
 function nonDefaultCampaign(campaign: any): any | null {
   if (!campaign || campaign.isDefault === true) return null;
-  const defaultId = Number((Vio as any).bootstrapCache?.campaign?.id);
-  if (Number.isFinite(defaultId) && Number(campaign.id) === defaultId) return null;
+  const headId = Number((Vio as any).bootstrapCache?.campaign?.id);
+  if (Number.isFinite(headId) && Number(campaign.id) === headId && resolvePageCampaignId() !== Number(campaign.id)) return null;
   return campaign;
 }
 
