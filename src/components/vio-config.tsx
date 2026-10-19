@@ -580,7 +580,9 @@ export default function VioConfig({
         </div>
       ) : savedCampaignInactive ? (
         <div style={{ fontSize: 11, color: "#b45309", lineHeight: 1.4, marginBottom: 4 }}>
-          {savedCampaignInactive.name} is {savedCampaignInactive.status || "not active"}: blocks use the default until it is active.
+          {savedCampaignInactive.status === "ended"
+            ? `${savedCampaignInactive.name} has ended: the page declares no campaign until you choose another.`
+            : `${savedCampaignInactive.name} is ${savedCampaignInactive.status || "not active"}: this page's slots register under it; blocks show it once it is active.`}
         </div>
       ) : pageCampaignId > 0 ? (
         <div style={{ fontSize: 11, color: "#444", lineHeight: 1.4, marginBottom: 4 }}>
@@ -891,11 +893,14 @@ export function VioCampaignSelector({ value, onChange, context }: CampaignSelect
   // empty list from a connected key is "no campaigns yet", not "not connected".
   const connected = connection != null && (expected == null || connection === expected);
   const defaultCampaign = campaigns.find((c) => c.isDefault);
-  // Only ACTIVE campaigns can be chosen (the SDK's rule); the default's own id
-  // is the same as choosing none.
+  // Any campaign that has not ended can be chosen — paused or scheduled too:
+  // the page is prepared before the window opens and its slots register under
+  // it now; the SDK shows it only while it is active. The default's own id is
+  // the same as choosing none.
   const verdict = validatePageCampaign(campaigns, value);
   const saved = Number(value) > 0 ? Number(value) : 0;
-  const selectable = campaigns.filter((c) => !c.isDefault && isActiveCampaign(c));
+  const selectable = campaigns.filter((c) => !c.isDefault && c.status !== "ended");
+  const withStatus = (c: CampaignListItem) => (isActiveCampaign(c) ? c.name : `${c.name} · ${c.status || "not active"}`);
   const sdkReady = sdkSupportsPageCampaign();
 
   if (!connected || campaigns.length === 0) {
@@ -919,24 +924,24 @@ export function VioCampaignSelector({ value, onChange, context }: CampaignSelect
         value={verdict.effective}
         onChange={(v: number) => onChange(Number(v) || 0)}
         items={[
-          { value: 0, label: defaultCampaign ? `Default campaign — ${defaultCampaign.name}` : "Default campaign (not active now)" },
-          ...selectable.map((c) => ({ value: c.id, label: c.name })),
+          { value: 0, label: defaultCampaign ? `None — default campaign (${withStatus(defaultCampaign)})` : "None — this key has no default campaign" },
+          ...selectable.map((c) => ({ value: c.id, label: withStatus(c) })),
         ]}
       />
       <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
-        {verdict.effective > 0
+        {verdict.effective > 0 && verdict.reason === "ok"
           ? "Blocks sell through this campaign's primary sponsor, overriding Active Sponsor; products picked under another sponsor show as unavailable. The dashboard can still reassign any slot."
-          : defaultCampaign
-            ? "Blocks on this page register under the default campaign; the dashboard can reassign any of them."
-            : "The default campaign is paused or outside its dates: blocks on this page show whatever campaign the key serves now until you choose one here."}
+          : verdict.effective > 0 && verdict.entry
+            ? `${verdict.entry.name} is ${verdict.entry.status || "not active"}: this page's slots register under it now; blocks show it once it is active (until then, the campaign the key serves).`
+            : "No campaign chosen: this page's slots are registered but not assigned to any campaign (the dashboard can assign them); blocks show the campaign the key serves now."}
       </SilkeBox>
       {verdict.reason === "unknown" ? (
         <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
-          {`The saved campaign (#${saved}) is not one of this key's campaigns. The page uses the default campaign.`}
+          {`The saved campaign (#${saved}) is not one of this key's campaigns. The page declares none.`}
         </SilkeBox>
-      ) : verdict.reason === "inactive" && verdict.entry ? (
+      ) : verdict.effective === 0 && verdict.reason === "inactive" && verdict.entry ? (
         <SilkeBox style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>
-          {`${verdict.entry.name} is ${verdict.entry.status || "not active"}: blocks use the default until it is active.`}
+          {`${verdict.entry.name} has ended: the page declares no campaign until you choose another.`}
         </SilkeBox>
       ) : null}
       {!sdkReady ? (
