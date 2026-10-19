@@ -618,6 +618,23 @@ const SLOT_KIND_LABEL: Record<SlotKind, string> = {
   open: "Open product",
 };
 
+/**
+ * What a block is, in the SDK's component vocabulary (0.25.0:
+ * `component_template_id` on every event, the same words its own elements
+ * use): the single card is a `product-card`; a carousel / grid and the cards
+ * it renders are one `product-carousel` / `product-grid`, so the block's
+ * impressions and its clicks count under one type; the Open Product Info
+ * addon and interaction have no surface of their own — what opens is the
+ * SDK's detail, which calls itself `product-detail`, so their `view_item`
+ * says the same.
+ */
+export const COMPONENT_TEMPLATE_ID: Record<SlotKind, string> = {
+  card: "product-card",
+  carousel: "product-carousel",
+  grid: "product-grid",
+  open: "product-detail",
+};
+
 /** The server keeps display names up to 255 characters. */
 const SLOT_NAME_MAX_LENGTH = 255;
 /** The server keeps slot ids up to 100 characters (the SDK cuts, not drops). */
@@ -637,6 +654,9 @@ export type VioAttribution = {
   sponsorId?: number;
   contentId?: string;
   contentTitle?: string;
+  /** What emitted it (`COMPONENT_TEMPLATE_ID`): `component_template_id` on
+   *  the wire — on every event of the block, not only its impression. */
+  componentTemplateId?: string;
 };
 
 function sdkHas(method: string): boolean {
@@ -668,12 +688,20 @@ function slotState(): SlotState {
  * campaign the slot shows now (its open assignment, else the sponsor's active
  * campaign, else the default), the sponsor, and the page's content
  * (`Vio.content()`). The sponsor hint is the block's effective sponsor, so
- * what the cart remembers matches what the events say. Without the helper
- * (an older bundle), only what this side knows: the slot and the sponsor.
+ * what the cart remembers matches what the events say. `componentTemplateId`
+ * is what the block is (`COMPONENT_TEMPLATE_ID`), carried on every event it
+ * emits. Without the helper (an older bundle), only what this side knows: the
+ * slot, the sponsor and the type.
  */
-export function vioAttribution(slot?: string | null, sponsorId?: number | null): VioAttribution {
+export function vioAttribution(
+  slot?: string | null,
+  sponsorId?: number | null,
+  componentTemplateId?: string | null
+): VioAttribution {
   const name = normalizeSlotId(slot) || undefined;
   const sid = toSponsorId(sponsorId) ?? undefined;
+  const component =
+    typeof componentTemplateId === "string" && componentTemplateId.trim() ? componentTemplateId.trim() : undefined;
   // A slot whose campaign the block could NOT follow (its sponsor is not one
   // of the key's — see resolveSlotSponsor) must not attribute to that
   // campaign: the events then carry the slot by name and the campaign the
@@ -683,8 +711,10 @@ export function vioAttribution(slot?: string | null, sponsorId?: number | null):
   if (sdkHas("attribution")) {
     try {
       const hint = sid != null ? { sponsorId: sid } : undefined;
-      const out = (Vio as any).attribution(followed ? name ?? null : null, hint) ?? {};
-      return name ? { ...out, slot: name } : { ...out };
+      const out: VioAttribution = { ...((Vio as any).attribution(followed ? name ?? null : null, hint) ?? {}) };
+      if (name) out.slot = name;
+      if (component) out.componentTemplateId = component;
+      return out;
     } catch {
       /* attribution never breaks a render or a click */
     }
@@ -692,6 +722,7 @@ export function vioAttribution(slot?: string | null, sponsorId?: number | null):
   const out: VioAttribution = {};
   if (name) out.slot = name;
   if (sid != null) out.sponsorId = sid;
+  if (component) out.componentTemplateId = component;
   return out;
 }
 
@@ -837,6 +868,78 @@ export function useVevPage(): { key?: string; title?: string } {
   }
   if (!title && typeof document !== "undefined") title = document.title?.trim() || undefined;
   return { key, title };
+}
+
+/** The SDK's page-scope attributes (web-sdk `slot-registration.ts`) and the content-title meta (`content.ts`). */
+const SCOPE_ATTR = "data-vio-scope";
+const SCOPE_NAME_ATTR = "data-vio-scope-name";
+const CONTENT_TITLE_META = "vio:content-title";
+/** Marks what `declareVevPage` wrote, so it never replaces or removes a host's own value. */
+const VEV_PAGE_MARK = "data-vio-vev-page";
+
+/**
+ * The page's identity for the SDK (0.25.0), declared ONCE by Vio Config:
+ *  - `<body data-vio-scope="<page key>" data-vio-scope-name="<title>">` — the
+ *    scope every SDK element on the page inherits for its auto slot id, the
+ *    standard a Vev page and a Replit article share (web-sdk README, "Scope"):
+ *    the product detail Vio Config mounts registers as `<page key>-detail-1`,
+ *    named `Detail 1 · <title>`, instead of one `detail-1` for every page of
+ *    the surface. The blocks' own slots (`card-<vev key>`…) are per instance
+ *    already and do not use it.
+ *  - `<meta name="vio:content-title">` with the Vev page title, only while the
+ *    document has no `<title>` of its own (a published Vev page ships an empty
+ *    one, so `content_title` was '' on every event): `Vio.content()` resolves
+ *    the title live — init option → `?vio_content_title=` → this meta →
+ *    `og:title` → `document.title` — so every event carries the page without
+ *    a re-init, and the SDK's `data-vio-scope-name` and `content_title` agree.
+ * Returns the undo. Only what it set itself (marked) is replaced or removed.
+ */
+export function declareVevPage(page: { key?: string; title?: string }): () => void {
+  if (typeof document === "undefined" || !document.body) return () => {};
+  const body = document.body;
+  const key = typeof page.key === "string" ? page.key.trim() : "";
+  const title = typeof page.title === "string" ? page.title.trim() : "";
+  // The scope: ours when nothing else set one, or when we set the last one.
+  const ownsScope = body.getAttribute(VEV_PAGE_MARK) === "1" || !body.hasAttribute(SCOPE_ATTR);
+  if (ownsScope) {
+    if (key) {
+      body.setAttribute(SCOPE_ATTR, key);
+      body.setAttribute(VEV_PAGE_MARK, "1");
+      if (title) body.setAttribute(SCOPE_NAME_ATTR, title);
+      else body.removeAttribute(SCOPE_NAME_ATTR);
+    } else {
+      body.removeAttribute(SCOPE_ATTR);
+      body.removeAttribute(SCOPE_NAME_ATTR);
+      body.removeAttribute(VEV_PAGE_MARK);
+    }
+  }
+  // The content title, only for a page that has none: a host's own meta or a
+  // real <title> is the page's business, and the SDK already reads them.
+  let meta: HTMLMetaElement | null = null;
+  try {
+    const existing = document.head?.querySelector<HTMLMetaElement>(`meta[name="${CONTENT_TITLE_META}"]`) ?? null;
+    const ownsMeta = !existing || existing.getAttribute(VEV_PAGE_MARK) === "1";
+    const pageHasTitle = !!(document.title && document.title.trim());
+    if (ownsMeta && title && !pageHasTitle && document.head) {
+      meta = existing ?? document.createElement("meta");
+      meta.setAttribute("name", CONTENT_TITLE_META);
+      meta.setAttribute("content", title);
+      meta.setAttribute(VEV_PAGE_MARK, "1");
+      if (!meta.parentNode) document.head.appendChild(meta);
+    } else if (ownsMeta && existing) {
+      existing.remove();
+    }
+  } catch {
+    /* the page's identity never breaks the Config */
+  }
+  return () => {
+    if (ownsScope && body.getAttribute(VEV_PAGE_MARK) === "1" && body.getAttribute(SCOPE_ATTR) === key) {
+      body.removeAttribute(SCOPE_ATTR);
+      body.removeAttribute(SCOPE_NAME_ATTR);
+      body.removeAttribute(VEV_PAGE_MARK);
+    }
+    if (meta && meta.getAttribute(VEV_PAGE_MARK) === "1") meta.remove();
+  };
 }
 
 /**

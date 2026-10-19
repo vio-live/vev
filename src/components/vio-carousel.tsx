@@ -6,7 +6,7 @@ import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { SLOT_PROPS } from "./slot-props";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
-import { fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
+import { COMPONENT_TEMPLATE_ID, fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 
 /**
  * Vio Product Carousel — a horizontal, scroll-snapped row of product cards (like
@@ -103,9 +103,10 @@ export default function VioProductCarousel(props: Props) {
   // — unless a campaign is assigned to this slot: then that campaign's sponsor.
   const activeSponsor = useActiveSponsorId(undefined, slot);
   // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
-  // sesión). Cuenta el CONTENEDOR, no cada tarjeta de adentro: eso sería
-  // doble conteo. Corre cuando hay productos, porque recién ahí se monta
-  // la raíz real (sin productos se renderiza el estado vacío).
+  // carga), con los productos que muestra. Cuenta el CONTENEDOR, no cada
+  // tarjeta de adentro: eso sería doble conteo. Corre cuando hay productos,
+  // porque recién ahí se monta la raíz real (sin productos se renderiza el
+  // estado vacío).
   const rootRef = useRef<HTMLDivElement | null>(null);
   // Editor only: the frame Vev gives this block cuts it (see editor-fit).
   const cutByFrame = useCutByFrame(rootRef, true, list.length);
@@ -115,13 +116,14 @@ export default function VioProductCarousel(props: Props) {
       rootRef.current,
       {
         sponsorId: activeSponsor ?? undefined,
-        componentTemplateId: "vev-carousel",
+        componentTemplateId: COMPONENT_TEMPLATE_ID.carousel,
         locationId: heading || kicker || "Vio Carousel",
-        ...vioAttribution(slot, activeSponsor),
+        ...vioAttribution(slot, activeSponsor, COMPONENT_TEMPLATE_ID.carousel),
       },
       `vev-carousel:${activeSponsor}:${slot || heading || kicker || "Vio Carousel"}`,
+      list.map((p) => productToItem(p)),
     );
-  }, [list.length, activeSponsor, heading, kicker, slot]);
+  }, [list, activeSponsor, heading, kicker, slot]);
   const ids = parseIds(products?.ids);
   const idsKey = ids.join(",");
 
@@ -143,7 +145,7 @@ export default function VioProductCarousel(props: Props) {
       trackViewItemList(
         prods.map((p) => productToItem(p)),
         heading || kicker || "Vio Carousel",
-        vioAttribution(slot, activeSponsor),
+        vioAttribution(slot, activeSponsor, COMPONENT_TEMPLATE_ID.carousel),
       );
     });
     return () => {
@@ -194,7 +196,13 @@ export default function VioProductCarousel(props: Props) {
         <div className="vio-carousel-track" ref={trackRef} style={{ gap }}>
           {list.map((p, idx) => (
             <div key={p?.id ?? idx} className="vio-carousel-item" style={{ width: itemWidth }}>
-              <ProductCardFromDTO product={p} sponsorId={activeSponsor} config={cardConfig} slot={slot} />
+              <ProductCardFromDTO
+                product={p}
+                sponsorId={activeSponsor}
+                config={cardConfig}
+                slot={slot}
+                componentTemplateId={COMPONENT_TEMPLATE_ID.carousel}
+              />
             </div>
           ))}
         </div>

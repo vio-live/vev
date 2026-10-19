@@ -2,7 +2,14 @@ import React from "react";
 import { registerVevComponent } from "@vev/react";
 import ProductSelect from "./product-picker";
 import { SLOT_PROPS } from "./slot-props";
-import { openProductInfo, sponsorForCommerce, sponsorForSlot, useVioSlot, vioAttribution } from "./vio-helpers";
+import {
+  COMPONENT_TEMPLATE_ID,
+  openProductInfo,
+  sponsorForCommerce,
+  sponsorForSlot,
+  useVioSlot,
+  vioAttribution,
+} from "./vio-helpers";
 import { trackViewItem } from "./analytics";
 
 /**
@@ -34,7 +41,9 @@ export default function VioOpenProduct({ product, className, children, slot, slo
     // page's active one (sponsorForCommerce) — or the slot's campaign sponsor
     // when one is assigned. The detail then carries this slot on its events.
     const sponsorId = sponsorForSlot(slotId, sponsorForCommerce(product?.sponsorId));
-    trackViewItem({ productId }, vioAttribution(slotId, sponsorId)); // detail opens → product view (id only here)
+    // detail opens → product view (id only here); typed as the detail, the
+    // component the reader actually sees (COMPONENT_TEMPLATE_ID.open).
+    trackViewItem({ productId }, vioAttribution(slotId, sponsorId, COMPONENT_TEMPLATE_ID.open));
     openProductInfo(Number(productId), product?.sponsorId, undefined, slotId);
   };
 

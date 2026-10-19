@@ -6,6 +6,8 @@ import { Vio, VioCart, VioCheckout, VioProductDetail, applyVioTheme } from "../.
 import { configureAnalytics, initVioAnalytics } from "./analytics";
 import AnalyticsInspector from "./analytics-inspector";
 import {
+  COMPONENT_TEMPLATE_ID,
+  declareVevPage,
   ensureVioInit,
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
@@ -35,6 +37,7 @@ import {
   resolveSponsorId,
   sponsorForCommerce,
   sponsorForSlot,
+  useVevPage,
   vioAttribution,
   VIO_CONNECTION_STORAGE,
   VIO_SPONSORS_STORAGE,
@@ -51,6 +54,8 @@ import { trackViewItem } from "./analytics";
  *  - mounts <VioCart> + <VioCheckout> + <VioProductDetail> → the SDK's global drawers
  *  - floating cart button + badge count
  *  - wires vio:open-cart and vio:checkout-open (Klarna express)
+ *  - declares the page to the SDK: `<body data-vio-scope data-vio-scope-name>`
+ *    and the content title when the page has none (declareVevPage)
  *  - editor-only connection panel: status dot + API key + Save + Disconnect
  * Place ONE of these + your product blocks/addons.
  */
@@ -234,6 +239,9 @@ export default function VioConfig({
   sendToVio = true,
 }: Props) {
   const { disabled } = useEditorState(); // true in the editor, false on the published page
+  // The Vev page this Config is on — its key and title (the same source the
+  // blocks name their slots with).
+  const page = useVevPage();
   const cartRef = useRef<any>(null);
   const checkoutRef = useRef<any>(null);
   const [count, setCount] = useState(0);
@@ -344,6 +352,15 @@ export default function VioConfig({
     [activeEnvironment, disabled]
   );
 
+  // The page's identity for the SDK (0.25.0): the scope every SDK element on
+  // the page inherits for its auto slot — the detail below registers as
+  // `<page key>-detail-1`, `Detail 1 · <title>` — and the content title every
+  // event carries when the document has no <title> (a published Vev page
+  // ships an empty one). Not gated on ownership on purpose: it must be on
+  // <body> before the overlays mount the detail (an element reads its scope
+  // when it connects), and a duplicate Config declares the same page anyway.
+  useEffect(() => declareVevPage(page), [page.key, page.title]);
+
   // Claim overlay ownership (idempotent via globalThis) + inject FAB styles.
   useEffect(() => {
     injectConfigStyles();
@@ -440,7 +457,8 @@ export default function VioConfig({
       // (openProductInfo → sponsorForCommerce).
       const slot = typeof payload?.slot === "string" && payload.slot.trim() ? payload.slot.trim() : undefined;
       const sponsorId = sponsorForSlot(slot, sponsorForCommerce(payload?.product?.sponsorId));
-      trackViewItem({ productId: Number(productId) }, vioAttribution(slot, sponsorId));
+      // Typed as the detail — the component the reader sees (COMPONENT_TEMPLATE_ID.open).
+      trackViewItem({ productId: Number(productId) }, vioAttribution(slot, sponsorId, COMPONENT_TEMPLATE_ID.open));
       openProductInfo(Number(productId), payload?.product?.sponsorId, undefined, slot);
     },
   );
@@ -660,8 +678,14 @@ export default function VioConfig({
       ) : null}
       <VioCart ref={cartRef} onCheckoutOpen={onCheckoutOpen} />
       <VioCheckout ref={checkoutRef} />
-      {/* Product detail: auto-opens on a product card click (vio:product-click). */}
+      {/* Product detail: auto-opens on a product card click (vio:product-click).
+          Its scope is the page's — the same `declareVevPage` put on <body>,
+          given here too so a title the Vev store resolves after the detail
+          connected still reaches it (the element re-registers on a prop
+          change; it does not watch its ancestors). */}
       <VioProductDetail
+        vioScope={page.key ?? ""}
+        vioScopeName={page.title ?? ""}
         onCheckoutOpen={onCheckoutOpen}
         onAddedToCart={() => cartRef.current?.show?.()}
       />
