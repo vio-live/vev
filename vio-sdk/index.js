@@ -16,6 +16,13 @@ var SLOT_DECLARATION_FAILURE_TTL_MS = 60 * 60 * 1e3;
 var MAX_LOCATIONS_PER_DECLARATION = 100;
 var MAX_DECLARATIONS_PER_LOAD = 3;
 var SLOT_KIND_MAX_LENGTH = 32;
+function componentKindOf(templateId, slot) {
+  const hint = typeof templateId === "string" ? templateId.trim().toLowerCase() : "";
+  if (hint) return hint.replace(/^(product|vev)-/, "").slice(0, SLOT_KIND_MAX_LENGTH) || void 0;
+  const id = typeof slot === "string" ? slot.toLowerCase() : "";
+  const m2 = id.match(/(?:^|-)(card|carousel|grid|detail|banner|list|hero|stepper)(?:-|$)/);
+  return m2?.[1];
+}
 function normalizeSlotKind(value) {
   if (typeof value !== "string") return void 0;
   const kind = value.trim().toLowerCase().slice(0, SLOT_KIND_MAX_LENGTH).trim();
@@ -206,8 +213,8 @@ function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_
   });
 }
 function slotKeyId(key) {
-  const cut2 = key.search(/[\u001f\u001e\u001d]/);
-  return cut2 >= 0 ? key.slice(0, cut2) : key;
+  const cut4 = key.search(/[\u001f\u001e\u001d]/);
+  return cut4 >= 0 ? key.slice(0, cut4) : key;
 }
 function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
   const next = { ...memory ?? {} };
@@ -297,6 +304,8 @@ var ConfigurationSingleton = class {
       contentTitle: input.contentTitle,
       campaignId: toCampaignId(input.campaignId),
       debug: input.debug === true,
+      // Only the two words the backend knows; anything else is "not said".
+      privacyMode: input.privacyMode === "minimal" || input.privacyMode === "standard" ? input.privacyMode : void 0,
       apiBase: input.apiBase ?? defaults.apiBase,
       graphQLBase: input.graphQLBase ?? defaults.graphQLBase,
       eventsBase: input.eventsBase ?? defaults.eventsBase,
@@ -387,6 +396,14 @@ var VioApi = class {
     return this.post("/v2/mobile/components/manifest", body);
   }
   /**
+   * The surface of the key (`GET /v2/mobile/surface`): its id, name, status
+   * and `privacyMode` — what decides whether the order attribution may carry
+   * the entry context (ADR-0035). A 404 means a service that predates it.
+   */
+  async surface() {
+    return this.get("/v2/mobile/surface");
+  }
+  /**
    * Get placement components for a campaign. Used by the carousel auto-fetch
    * mode (`<vio-product-carousel campaign-id="36" location="news-favorites">`).
    */
@@ -447,7 +464,7 @@ function createVioApi(options) {
   return new VioApi(options);
 }
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/classes/ClientError.js
+// node_modules/graphql-request/build/legacy/classes/ClientError.js
 var ClientError = class _ClientError extends Error {
   response;
   request;
@@ -469,7 +486,7 @@ var ClientError = class _ClientError extends Error {
   }
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/lib/prelude.js
+// node_modules/graphql-request/build/lib/prelude.js
 var uppercase = (str) => str.toUpperCase();
 var callOrIdentity = (value) => {
   return typeof value === `function` ? value() : value;
@@ -525,7 +542,7 @@ var isPlainObject = (value) => {
   return typeof value === `object` && value !== null && !Array.isArray(value);
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/batchRequests.js
+// node_modules/graphql-request/build/legacy/functions/batchRequests.js
 var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   return documentsOrOptions.documents ? documentsOrOptions : {
     documents: documentsOrOptions,
@@ -534,7 +551,7 @@ var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   };
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/rawRequest.js
+// node_modules/graphql-request/build/legacy/functions/rawRequest.js
 var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   return queryOrOptions.query ? queryOrOptions : {
     query: queryOrOptions,
@@ -544,7 +561,7 @@ var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   };
 };
 
-// ../web-sdk-0240/node_modules/graphql/jsutils/devAssert.mjs
+// node_modules/graphql/jsutils/devAssert.mjs
 function devAssert(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -552,12 +569,12 @@ function devAssert(condition, message) {
   }
 }
 
-// ../web-sdk-0240/node_modules/graphql/jsutils/isObjectLike.mjs
+// node_modules/graphql/jsutils/isObjectLike.mjs
 function isObjectLike(value) {
   return typeof value == "object" && value !== null;
 }
 
-// ../web-sdk-0240/node_modules/graphql/jsutils/invariant.mjs
+// node_modules/graphql/jsutils/invariant.mjs
 function invariant(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -567,7 +584,7 @@ function invariant(condition, message) {
   }
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/location.mjs
+// node_modules/graphql/language/location.mjs
 var LineRegExp = /\r\n|[\n\r]/g;
 function getLocation(source, position) {
   let lastLineStart = 0;
@@ -586,7 +603,7 @@ function getLocation(source, position) {
   };
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/printLocation.mjs
+// node_modules/graphql/language/printLocation.mjs
 function printLocation(location2) {
   return printSourceLocation(
     location2.source,
@@ -633,7 +650,7 @@ function printPrefixedLines(lines) {
   return existingLines.map(([prefix, line]) => prefix.padStart(padLen) + (line ? " " + line : "")).join("\n");
 }
 
-// ../web-sdk-0240/node_modules/graphql/error/GraphQLError.mjs
+// node_modules/graphql/error/GraphQLError.mjs
 function toNormalizedOptions(args) {
   const firstArg = args[0];
   if (firstArg == null || "kind" in firstArg || "length" in firstArg) {
@@ -665,9 +682,7 @@ var GraphQLError = class _GraphQLError extends Error {
    *
    * Enumerable, and appears in the result of JSON.stringify().
    */
-  /**
-   * An array of GraphQL AST Nodes corresponding to this error.
-   */
+  /** An array of GraphQL AST Nodes corresponding to this error. */
   /**
    * The source GraphQL document for the first location of this error.
    *
@@ -678,13 +693,89 @@ var GraphQLError = class _GraphQLError extends Error {
    * An array of character offsets within the source GraphQL document
    * which correspond to this error.
    */
+  /** Original error that caused this GraphQLError, if one exists. */
+  /** Extension fields to add to the formatted error. */
   /**
-   * The original error thrown from a field resolver during execution.
+   * Creates a GraphQLError instance.
+   * @param message - Human-readable error message.
+   * @param options - Error metadata such as source locations, response path, original error, and extensions.
+   * This positional-arguments constructor overload is deprecated. Use the
+   * `GraphQLError(message, options)` overload instead.
+   * @example
+   * ```ts
+   * // Create an error from AST nodes and response metadata.
+   * import { parse } from 'graphql/language';
+   * import { GraphQLError } from 'graphql/error';
+   *
+   * const document = parse('{ greeting }');
+   * const fieldNode = document.definitions[0].selectionSet.selections[0];
+   * const error = new GraphQLError('Cannot query this field.', {
+   *   nodes: fieldNode,
+   *   path: ['greeting'],
+   *   extensions: { code: 'FORBIDDEN' },
+   * });
+   *
+   * error.message; // => 'Cannot query this field.'
+   * error.locations; // => [{ line: 1, column: 3 }]
+   * error.path; // => ['greeting']
+   * error.extensions; // => { code: 'FORBIDDEN' }
+   * ```
+   * @example
+   * ```ts
+   * // This variant derives locations from source positions and preserves the original error.
+   * import { Source } from 'graphql/language';
+   * import { GraphQLError } from 'graphql/error';
+   *
+   * const source = new Source('{ greeting }');
+   * const originalError = new Error('Database unavailable.');
+   * const error = new GraphQLError('Resolver failed.', {
+   *   source,
+   *   positions: [2],
+   *   path: ['greeting'],
+   *   originalError,
+   * });
+   *
+   * error.locations; // => [{ line: 1, column: 3 }]
+   * error.path; // => ['greeting']
+   * error.originalError; // => originalError
+   * ```
    */
   /**
-   * Extension fields to add to the formatted error.
-   */
-  /**
+   * Creates a GraphQLError instance using the legacy positional constructor.
+   * This deprecated overload will be removed in v17. Prefer the
+   * `GraphQLErrorOptions` object overload, which keeps optional error metadata
+   * in a single options bag.
+   * @param message - Human-readable error message.
+   * @param nodes - AST node or nodes associated with this error.
+   * @param source - Source document used to derive error locations.
+   * @param positions - Character offsets in the source document associated with
+   * this error.
+   * @param path - Response path where this error occurred during execution.
+   * @param originalError - Original error that caused this GraphQLError, if one
+   * exists.
+   * @param extensions - Extension fields to include in the formatted error.
+   * @example
+   * ```ts
+   * import { Source } from 'graphql/language';
+   * import { GraphQLError } from 'graphql/error';
+   *
+   * const source = new Source('{ greeting }');
+   * const originalError = new Error('Database unavailable.');
+   * const error = new GraphQLError(
+   *   'Resolver failed.',
+   *   undefined,
+   *   source,
+   *   [2],
+   *   ['greeting'],
+   *   originalError,
+   *   { code: 'INTERNAL' },
+   * );
+   *
+   * error.locations; // => [{ line: 1, column: 3 }]
+   * error.path; // => ['greeting']
+   * error.originalError; // => originalError
+   * error.extensions; // => { code: 'INTERNAL' }
+   * ```
    * @deprecated Please use the `GraphQLErrorOptions` constructor overload instead.
    */
   constructor(message, ...rawArgs) {
@@ -744,9 +835,29 @@ var GraphQLError = class _GraphQLError extends Error {
       });
     }
   }
+  /**
+   * Returns the value used by `Object.prototype.toString`.
+   * @returns The built-in string tag for this object.
+   */
   get [Symbol.toStringTag]() {
     return "GraphQLError";
   }
+  /**
+   * Returns this error as a human-readable message with source locations.
+   * @returns The formatted error string.
+   * @example
+   * ```ts
+   * import { Source } from 'graphql/language';
+   * import { GraphQLError } from 'graphql/error';
+   *
+   * const error = new GraphQLError('Cannot query field "name".', {
+   *   source: new Source('{ name }'),
+   *   positions: [2],
+   * });
+   *
+   * error.toString(); // => 'Cannot query field "name".\n\nGraphQL request:1:3\n1 | { name }\n  |   ^'
+   * ```
+   */
   toString() {
     let output = this.message;
     if (this.nodes) {
@@ -762,6 +873,21 @@ var GraphQLError = class _GraphQLError extends Error {
     }
     return output;
   }
+  /**
+   * Returns the JSON representation used when this object is serialized.
+   * @returns The JSON-serializable representation.
+   * @example
+   * ```ts
+   * import { GraphQLError } from 'graphql/error';
+   *
+   * const error = new GraphQLError('Resolver failed.', {
+   *   path: ['viewer', 'name'],
+   *   extensions: { code: 'INTERNAL' },
+   * });
+   *
+   * error.toJSON(); // => { message: 'Resolver failed.', path: ['viewer', 'name'], extensions: { code: 'INTERNAL' } }
+   * ```
+   */
   toJSON() {
     const formattedError = {
       message: this.message
@@ -782,7 +908,7 @@ function undefinedIfEmpty(array) {
   return array === void 0 || array.length === 0 ? void 0 : array;
 }
 
-// ../web-sdk-0240/node_modules/graphql/error/syntaxError.mjs
+// node_modules/graphql/error/syntaxError.mjs
 function syntaxError(source, position, description) {
   return new GraphQLError(`Syntax Error: ${description}`, {
     source,
@@ -790,22 +916,31 @@ function syntaxError(source, position, description) {
   });
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/ast.mjs
+// node_modules/graphql/language/ast.mjs
 var Location = class {
+  /** The character offset at which this Node begins. */
+  /** The character offset at which this Node ends. */
+  /** The Token at which this Node begins. */
+  /** The Token at which this Node ends. */
+  /** The Source document the AST represents. */
   /**
-   * The character offset at which this Node begins.
-   */
-  /**
-   * The character offset at which this Node ends.
-   */
-  /**
-   * The Token at which this Node begins.
-   */
-  /**
-   * The Token at which this Node ends.
-   */
-  /**
-   * The Source document the AST represents.
+   * Creates a Location instance.
+   * @param startToken - The start token.
+   * @param endToken - The end token.
+   * @param source - Source document used to derive error locations.
+   * @example
+   * ```ts
+   * import { Location, Source, Token, TokenKind } from 'graphql/language';
+   *
+   * const source = new Source('{ hello }');
+   * const startToken = new Token(TokenKind.BRACE_L, 0, 1, 1, 1);
+   * const endToken = new Token(TokenKind.BRACE_R, 8, 9, 1, 9);
+   * const location = new Location(startToken, endToken, source);
+   *
+   * location.start; // => 0
+   * location.end; // => 9
+   * location.source.body; // => '{ hello }'
+   * ```
    */
   constructor(startToken, endToken, source) {
     this.start = startToken.start;
@@ -814,9 +949,26 @@ var Location = class {
     this.endToken = endToken;
     this.source = source;
   }
+  /**
+   * Returns the value used by `Object.prototype.toString`.
+   * @returns The built-in string tag for this object.
+   */
   get [Symbol.toStringTag]() {
     return "Location";
   }
+  /**
+   * Returns a JSON representation of this location.
+   * @returns The JSON-serializable representation.
+   * @example
+   * ```ts
+   * import { parse } from 'graphql/language';
+   *
+   * const document = parse('{ hello }');
+   * const location = document.loc?.toJSON();
+   *
+   * location; // => { start: 0, end: 9 }
+   * ```
+   */
   toJSON() {
     return {
       start: this.start,
@@ -825,21 +977,11 @@ var Location = class {
   }
 };
 var Token = class {
-  /**
-   * The kind of Token.
-   */
-  /**
-   * The character offset at which this Node begins.
-   */
-  /**
-   * The character offset at which this Node ends.
-   */
-  /**
-   * The 1-indexed line number on which this Token appears.
-   */
-  /**
-   * The 1-indexed column number at which this Token begins.
-   */
+  /** The kind of Token. */
+  /** The character offset at which this Node begins. */
+  /** The character offset at which this Node ends. */
+  /** The 1-indexed line number on which this Token appears. */
+  /** The 1-indexed column number at which this Token begins. */
   /**
    * For non-punctuation tokens, represents the interpreted value of the token.
    *
@@ -851,6 +993,26 @@ var Token = class {
    * including ignored tokens. <SOF> is always the first node and <EOF>
    * the last.
    */
+  /** Next token in the token stream, including ignored tokens. */
+  /**
+   * Creates a Token instance.
+   * @param kind - Token kind produced by lexical analysis.
+   * @param start - Character offset where this token begins.
+   * @param end - Character offset where this token ends.
+   * @param line - One-indexed line number where this token begins.
+   * @param column - One-indexed column number where this token begins.
+   * @param value - Interpreted value for non-punctuation tokens.
+   * @example
+   * ```ts
+   * import { Token, TokenKind } from 'graphql/language';
+   *
+   * const token = new Token(TokenKind.NAME, 2, 7, 1, 3, 'hello');
+   *
+   * token.kind; // => TokenKind.NAME
+   * token.value; // => 'hello'
+   * token.toJSON(); // => { kind: 'Name', value: 'hello', line: 1, column: 3 }
+   * ```
+   */
   constructor(kind, start, end, line, column, value) {
     this.kind = kind;
     this.start = start;
@@ -861,9 +1023,26 @@ var Token = class {
     this.prev = null;
     this.next = null;
   }
+  /**
+   * Returns the value used by `Object.prototype.toString`.
+   * @returns The built-in string tag for this object.
+   */
   get [Symbol.toStringTag]() {
     return "Token";
   }
+  /**
+   * Returns a JSON representation of this token.
+   * @returns The JSON-serializable representation.
+   * @example
+   * ```ts
+   * import { Lexer, Source } from 'graphql/language';
+   *
+   * const lexer = new Lexer(new Source('{ hello }'));
+   * const token = lexer.advance().toJSON();
+   *
+   * token; // => { kind: '{', value: undefined, line: 1, column: 1 }
+   * ```
+   */
   toJSON() {
     return {
       kind: this.kind,
@@ -980,7 +1159,7 @@ var OperationTypeNode;
   OperationTypeNode2["SUBSCRIPTION"] = "subscription";
 })(OperationTypeNode || (OperationTypeNode = {}));
 
-// ../web-sdk-0240/node_modules/graphql/language/directiveLocation.mjs
+// node_modules/graphql/language/directiveLocation.mjs
 var DirectiveLocation;
 (function(DirectiveLocation2) {
   DirectiveLocation2["QUERY"] = "QUERY";
@@ -1005,7 +1184,7 @@ var DirectiveLocation;
   DirectiveLocation2["DIRECTIVE_DEFINITION"] = "DIRECTIVE_DEFINITION";
 })(DirectiveLocation || (DirectiveLocation = {}));
 
-// ../web-sdk-0240/node_modules/graphql/language/kinds.mjs
+// node_modules/graphql/language/kinds.mjs
 var Kind;
 (function(Kind2) {
   Kind2["NAME"] = "Name";
@@ -1059,7 +1238,7 @@ var Kind;
   Kind2["DIRECTIVE_ARGUMENT_COORDINATE"] = "DirectiveArgumentCoordinate";
 })(Kind || (Kind = {}));
 
-// ../web-sdk-0240/node_modules/graphql/language/characterClasses.mjs
+// node_modules/graphql/language/characterClasses.mjs
 function isWhiteSpace(code) {
   return code === 9 || code === 32;
 }
@@ -1077,7 +1256,7 @@ function isNameContinue(code) {
   return isLetter(code) || isDigit(code) || code === 95;
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/blockString.mjs
+// node_modules/graphql/language/blockString.mjs
 function dedentBlockStringLines(lines) {
   var _firstNonEmptyLine2;
   let commonIndent = Number.MAX_SAFE_INTEGER;
@@ -1131,7 +1310,7 @@ function printBlockString(value, options) {
   return '"""' + result + '"""';
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/tokenKind.mjs
+// node_modules/graphql/language/tokenKind.mjs
 var TokenKind;
 (function(TokenKind2) {
   TokenKind2["SOF"] = "<SOF>";
@@ -1159,19 +1338,27 @@ var TokenKind;
   TokenKind2["COMMENT"] = "Comment";
 })(TokenKind || (TokenKind = {}));
 
-// ../web-sdk-0240/node_modules/graphql/language/lexer.mjs
+// node_modules/graphql/language/lexer.mjs
 var Lexer = class {
+  /** Source document used to derive error locations. */
+  /** Most recent non-ignored token returned by the lexer. */
+  /** Current non-ignored token at the lexer cursor. */
+  /** The (1-indexed) line containing the current token. */
+  /** Character offset where the current line starts. */
   /**
-   * The previously focused non-ignored token.
-   */
-  /**
-   * The currently focused non-ignored token.
-   */
-  /**
-   * The (1-indexed) line containing the current token.
-   */
-  /**
-   * The character offset at which the current line begins.
+   * Creates a Lexer instance.
+   * @param source - Source document used to derive error locations.
+   * @example
+   * ```ts
+   * import { Lexer, Source, TokenKind } from 'graphql/language';
+   *
+   * const lexer = new Lexer(new Source('{ hello }'));
+   *
+   * lexer.token.kind; // => TokenKind.SOF
+   * lexer.advance().kind; // => TokenKind.BRACE_L
+   * lexer.advance().value; // => 'hello'
+   * lexer.advance().kind; // => TokenKind.BRACE_R
+   * ```
    */
   constructor(source) {
     const startOfFileToken = new Token(TokenKind.SOF, 0, 0, 0, 0);
@@ -1181,11 +1368,26 @@ var Lexer = class {
     this.line = 1;
     this.lineStart = 0;
   }
+  /**
+   * Returns the value used by `Object.prototype.toString`.
+   * @returns The built-in string tag for this object.
+   */
   get [Symbol.toStringTag]() {
     return "Lexer";
   }
   /**
    * Advances the token stream to the next non-ignored token.
+   * @returns The next non-ignored token.
+   * @example
+   * ```ts
+   * import { Lexer, Source } from 'graphql/language';
+   *
+   * const lexer = new Lexer(new Source('{ hello }'));
+   * const token = lexer.advance();
+   *
+   * token.kind; // => '{'
+   * lexer.token; // => token
+   * ```
    */
   advance() {
     this.lastToken = this.token;
@@ -1195,6 +1397,17 @@ var Lexer = class {
   /**
    * Looks ahead and returns the next non-ignored token, but does not change
    * the state of Lexer.
+   * @returns The next non-ignored token without advancing the lexer.
+   * @example
+   * ```ts
+   * import { Lexer, Source } from 'graphql/language';
+   *
+   * const lexer = new Lexer(new Source('{ hello }'));
+   * const token = lexer.lookahead();
+   *
+   * token.kind; // => '{'
+   * lexer.token.kind; // => '<SOF>'
+   * ```
    */
   lookahead() {
     let token = this.token;
@@ -1691,7 +1904,7 @@ function readName(lexer, start) {
   );
 }
 
-// ../web-sdk-0240/node_modules/graphql/jsutils/inspect.mjs
+// node_modules/graphql/jsutils/inspect.mjs
 var MAX_ARRAY_LENGTH = 10;
 var MAX_RECURSIVE_DEPTH = 2;
 function inspect(value) {
@@ -1774,7 +1987,7 @@ function getObjectTag(object) {
   return tag;
 }
 
-// ../web-sdk-0240/node_modules/graphql/jsutils/instanceOf.mjs
+// node_modules/graphql/jsutils/instanceOf.mjs
 var isProduction = globalThis.process && // eslint-disable-next-line no-undef
 false;
 var instanceOf = (
@@ -1813,8 +2026,31 @@ spurious results.`);
   }
 );
 
-// ../web-sdk-0240/node_modules/graphql/language/source.mjs
+// node_modules/graphql/language/source.mjs
 var Source = class {
+  /** The GraphQL source text. */
+  /** Name used in diagnostics for this source, such as a file path or request name. */
+  /** One-indexed line and column where this source begins. */
+  /**
+   * Creates a Source instance.
+   * @param body - The GraphQL source text.
+   * @param name - Name used in diagnostics for this source.
+   * @param locationOffset - One-indexed line and column where this source begins.
+   * @example
+   * ```ts
+   * import { Source } from 'graphql/language';
+   *
+   * const source = new Source(
+   *   'type Query { greeting: String }',
+   *   'schema.graphql',
+   *   { line: 10, column: 1 },
+   * );
+   *
+   * source.body; // => 'type Query { greeting: String }'
+   * source.name; // => 'schema.graphql'
+   * source.locationOffset; // => { line: 10, column: 1 }
+   * ```
+   */
   constructor(body, name = "GraphQL request", locationOffset = {
     line: 1,
     column: 1
@@ -1832,6 +2068,10 @@ var Source = class {
       "column in locationOffset is 1-indexed and must be positive."
     );
   }
+  /**
+   * Returns the value used by `Object.prototype.toString`.
+   * @returns The built-in string tag for this object.
+   */
   get [Symbol.toStringTag]() {
     return "Source";
   }
@@ -1840,7 +2080,7 @@ function isSource(source) {
   return instanceOf(source, Source);
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/parser.mjs
+// node_modules/graphql/language/parser.mjs
 function parse(source, options) {
   const parser = new Parser(source, options);
   const document2 = parser.parseDocument();
@@ -1867,6 +2107,8 @@ var Parser = class {
   }
   /**
    * Converts a name lex token into a name parse node.
+   *
+   * @internal
    */
   parseName() {
     const token = this.expectToken(TokenKind.NAME);
@@ -1878,6 +2120,8 @@ var Parser = class {
   // Implements the parsing rules in the Document section.
   /**
    * Document : Definition+
+   *
+   * @internal
    */
   parseDocument() {
     return this.node(this._lexer.token, {
@@ -1911,6 +2155,8 @@ var Parser = class {
    *   - UnionTypeDefinition
    *   - EnumTypeDefinition
    *   - InputObjectTypeDefinition
+   *
+   * @internal
    */
   parseDefinition() {
     if (this.peek(TokenKind.BRACE_L)) {
@@ -1971,6 +2217,8 @@ var Parser = class {
    * OperationDefinition :
    *  - SelectionSet
    *  - OperationType Name? VariableDefinitions? Directives? SelectionSet
+   *
+   * @internal
    */
   parseOperationDefinition() {
     const start = this._lexer.token;
@@ -2003,6 +2251,8 @@ var Parser = class {
   }
   /**
    * OperationType : one of query mutation subscription
+   *
+   * @internal
    */
   parseOperationType() {
     const operationToken = this.expectToken(TokenKind.NAME);
@@ -2018,6 +2268,8 @@ var Parser = class {
   }
   /**
    * VariableDefinitions : ( VariableDefinition+ )
+   *
+   * @internal
    */
   parseVariableDefinitions() {
     return this.optionalMany(
@@ -2028,6 +2280,8 @@ var Parser = class {
   }
   /**
    * VariableDefinition : Variable : Type DefaultValue? Directives[Const]?
+   *
+   * @internal
    */
   parseVariableDefinition() {
     return this.node(this._lexer.token, {
@@ -2041,6 +2295,8 @@ var Parser = class {
   }
   /**
    * Variable : $ Name
+   *
+   * @internal
    */
   parseVariable() {
     const start = this._lexer.token;
@@ -2054,6 +2310,8 @@ var Parser = class {
    * ```
    * SelectionSet : { Selection+ }
    * ```
+   *
+   * @internal
    */
   parseSelectionSet() {
     return this.node(this._lexer.token, {
@@ -2070,6 +2328,8 @@ var Parser = class {
    *   - Field
    *   - FragmentSpread
    *   - InlineFragment
+   *
+   * @internal
    */
   parseSelection() {
     return this.peek(TokenKind.SPREAD) ? this.parseFragment() : this.parseField();
@@ -2078,6 +2338,8 @@ var Parser = class {
    * Field : Alias? Name Arguments? Directives? SelectionSet?
    *
    * Alias : Name :
+   *
+   * @internal
    */
   parseField() {
     const start = this._lexer.token;
@@ -2101,6 +2363,8 @@ var Parser = class {
   }
   /**
    * Arguments[Const] : ( Argument[?Const]+ )
+   *
+   * @internal
    */
   parseArguments(isConst) {
     const item = isConst ? this.parseConstArgument : this.parseArgument;
@@ -2108,6 +2372,8 @@ var Parser = class {
   }
   /**
    * Argument[Const] : Name : Value[?Const]
+   *
+   * @internal
    */
   parseArgument(isConst = false) {
     const start = this._lexer.token;
@@ -2129,6 +2395,8 @@ var Parser = class {
    * FragmentSpread : ... FragmentName Directives?
    *
    * InlineFragment : ... TypeCondition? Directives? SelectionSet
+   *
+   * @internal
    */
   parseFragment() {
     const start = this._lexer.token;
@@ -2153,6 +2421,8 @@ var Parser = class {
    *   - fragment FragmentName on TypeCondition Directives? SelectionSet
    *
    * TypeCondition : NamedType
+   *
+   * @internal
    */
   parseFragmentDefinition() {
     const start = this._lexer.token;
@@ -2180,6 +2450,8 @@ var Parser = class {
   }
   /**
    * FragmentName : Name but not `on`
+   *
+   * @internal
    */
   parseFragmentName() {
     if (this._lexer.token.value === "on") {
@@ -2205,6 +2477,8 @@ var Parser = class {
    * NullValue : `null`
    *
    * EnumValue : Name but not `true`, `false` or `null`
+   *
+   * @internal
    */
   parseValueLiteral(isConst) {
     const token = this._lexer.token;
@@ -2286,6 +2560,8 @@ var Parser = class {
    * ListValue[Const] :
    *   - [ ]
    *   - [ Value[?Const]+ ]
+   *
+   * @internal
    */
   parseList(isConst) {
     const item = () => this.parseValueLiteral(isConst);
@@ -2300,6 +2576,8 @@ var Parser = class {
    *   - { }
    *   - { ObjectField[?Const]+ }
    * ```
+   *
+   * @internal
    */
   parseObject(isConst) {
     const item = () => this.parseObjectField(isConst);
@@ -2310,6 +2588,8 @@ var Parser = class {
   }
   /**
    * ObjectField[Const] : Name : Value[?Const]
+   *
+   * @internal
    */
   parseObjectField(isConst) {
     const start = this._lexer.token;
@@ -2324,6 +2604,8 @@ var Parser = class {
   // Implements the parsing rules in the Directives section.
   /**
    * Directives[Const] : Directive[?Const]+
+   *
+   * @internal
    */
   parseDirectives(isConst) {
     const directives = [];
@@ -2339,6 +2621,8 @@ var Parser = class {
    * ```
    * Directive[Const] : @ Name Arguments[?Const]?
    * ```
+   *
+   * @internal
    */
   parseDirective(isConst) {
     const start = this._lexer.token;
@@ -2355,6 +2639,8 @@ var Parser = class {
    *   - NamedType
    *   - ListType
    *   - NonNullType
+   *
+   * @internal
    */
   parseTypeReference() {
     const start = this._lexer.token;
@@ -2379,6 +2665,8 @@ var Parser = class {
   }
   /**
    * NamedType : Name
+   *
+   * @internal
    */
   parseNamedType() {
     return this.node(this._lexer.token, {
@@ -2392,6 +2680,8 @@ var Parser = class {
   }
   /**
    * Description : StringValue
+   *
+   * @internal
    */
   parseDescription() {
     if (this.peekDescription()) {
@@ -2402,6 +2692,8 @@ var Parser = class {
    * ```
    * SchemaDefinition : Description? schema Directives[Const]? { OperationTypeDefinition+ }
    * ```
+   *
+   * @internal
    */
   parseSchemaDefinition() {
     const start = this._lexer.token;
@@ -2422,6 +2714,8 @@ var Parser = class {
   }
   /**
    * OperationTypeDefinition : OperationType : NamedType
+   *
+   * @internal
    */
   parseOperationTypeDefinition() {
     const start = this._lexer.token;
@@ -2436,6 +2730,8 @@ var Parser = class {
   }
   /**
    * ScalarTypeDefinition : Description? scalar Name Directives[Const]?
+   *
+   * @internal
    */
   parseScalarTypeDefinition() {
     const start = this._lexer.token;
@@ -2454,6 +2750,8 @@ var Parser = class {
    * ObjectTypeDefinition :
    *   Description?
    *   type Name ImplementsInterfaces? Directives[Const]? FieldsDefinition?
+   *
+   * @internal
    */
   parseObjectTypeDefinition() {
     const start = this._lexer.token;
@@ -2476,6 +2774,8 @@ var Parser = class {
    * ImplementsInterfaces :
    *   - implements `&`? NamedType
    *   - ImplementsInterfaces & NamedType
+   *
+   * @internal
    */
   parseImplementsInterfaces() {
     return this.expectOptionalKeyword("implements") ? this.delimitedMany(TokenKind.AMP, this.parseNamedType) : [];
@@ -2484,6 +2784,8 @@ var Parser = class {
    * ```
    * FieldsDefinition : { FieldDefinition+ }
    * ```
+   *
+   * @internal
    */
   parseFieldsDefinition() {
     return this.optionalMany(
@@ -2495,6 +2797,8 @@ var Parser = class {
   /**
    * FieldDefinition :
    *   - Description? Name ArgumentsDefinition? : Type Directives[Const]?
+   *
+   * @internal
    */
   parseFieldDefinition() {
     const start = this._lexer.token;
@@ -2515,6 +2819,8 @@ var Parser = class {
   }
   /**
    * ArgumentsDefinition : ( InputValueDefinition+ )
+   *
+   * @internal
    */
   parseArgumentDefs() {
     return this.optionalMany(
@@ -2526,6 +2832,8 @@ var Parser = class {
   /**
    * InputValueDefinition :
    *   - Description? Name : Type DefaultValue? Directives[Const]?
+   *
+   * @internal
    */
   parseInputValueDef() {
     const start = this._lexer.token;
@@ -2550,6 +2858,8 @@ var Parser = class {
   /**
    * InterfaceTypeDefinition :
    *   - Description? interface Name Directives[Const]? FieldsDefinition?
+   *
+   * @internal
    */
   parseInterfaceTypeDefinition() {
     const start = this._lexer.token;
@@ -2571,6 +2881,8 @@ var Parser = class {
   /**
    * UnionTypeDefinition :
    *   - Description? union Name Directives[Const]? UnionMemberTypes?
+   *
+   * @internal
    */
   parseUnionTypeDefinition() {
     const start = this._lexer.token;
@@ -2591,6 +2903,8 @@ var Parser = class {
    * UnionMemberTypes :
    *   - = `|`? NamedType
    *   - UnionMemberTypes | NamedType
+   *
+   * @internal
    */
   parseUnionMemberTypes() {
     return this.expectOptionalToken(TokenKind.EQUALS) ? this.delimitedMany(TokenKind.PIPE, this.parseNamedType) : [];
@@ -2598,6 +2912,8 @@ var Parser = class {
   /**
    * EnumTypeDefinition :
    *   - Description? enum Name Directives[Const]? EnumValuesDefinition?
+   *
+   * @internal
    */
   parseEnumTypeDefinition() {
     const start = this._lexer.token;
@@ -2618,6 +2934,8 @@ var Parser = class {
    * ```
    * EnumValuesDefinition : { EnumValueDefinition+ }
    * ```
+   *
+   * @internal
    */
   parseEnumValuesDefinition() {
     return this.optionalMany(
@@ -2628,6 +2946,8 @@ var Parser = class {
   }
   /**
    * EnumValueDefinition : Description? EnumValue Directives[Const]?
+   *
+   * @internal
    */
   parseEnumValueDefinition() {
     const start = this._lexer.token;
@@ -2643,6 +2963,8 @@ var Parser = class {
   }
   /**
    * EnumValue : Name but not `true`, `false` or `null`
+   *
+   * @internal
    */
   parseEnumValueName() {
     if (this._lexer.token.value === "true" || this._lexer.token.value === "false" || this._lexer.token.value === "null") {
@@ -2659,6 +2981,8 @@ var Parser = class {
   /**
    * InputObjectTypeDefinition :
    *   - Description? input Name Directives[Const]? InputFieldsDefinition?
+   *
+   * @internal
    */
   parseInputObjectTypeDefinition() {
     const start = this._lexer.token;
@@ -2679,6 +3003,8 @@ var Parser = class {
    * ```
    * InputFieldsDefinition : { InputValueDefinition+ }
    * ```
+   *
+   * @internal
    */
   parseInputFieldsDefinition() {
     return this.optionalMany(
@@ -2700,6 +3026,8 @@ var Parser = class {
    *   - EnumTypeExtension
    *   - InputObjectTypeDefinition
    *   - DirectiveDefinitionExtension
+   *
+   * @internal
    */
   parseTypeSystemExtension() {
     const keywordToken = this._lexer.lookahead();
@@ -2734,6 +3062,8 @@ var Parser = class {
    *  - extend schema Directives[Const]? { OperationTypeDefinition+ }
    *  - extend schema Directives[Const]
    * ```
+   *
+   * @internal
    */
   parseSchemaExtension() {
     const start = this._lexer.token;
@@ -2757,6 +3087,8 @@ var Parser = class {
   /**
    * ScalarTypeExtension :
    *   - extend scalar Name Directives[Const]
+   *
+   * @internal
    */
   parseScalarTypeExtension() {
     const start = this._lexer.token;
@@ -2778,6 +3110,8 @@ var Parser = class {
    *  - extend type Name ImplementsInterfaces? Directives[Const]? FieldsDefinition
    *  - extend type Name ImplementsInterfaces? Directives[Const]
    *  - extend type Name ImplementsInterfaces
+   *
+   * @internal
    */
   parseObjectTypeExtension() {
     const start = this._lexer.token;
@@ -2803,6 +3137,8 @@ var Parser = class {
    *  - extend interface Name ImplementsInterfaces? Directives[Const]? FieldsDefinition
    *  - extend interface Name ImplementsInterfaces? Directives[Const]
    *  - extend interface Name ImplementsInterfaces
+   *
+   * @internal
    */
   parseInterfaceTypeExtension() {
     const start = this._lexer.token;
@@ -2827,6 +3163,8 @@ var Parser = class {
    * UnionTypeExtension :
    *   - extend union Name Directives[Const]? UnionMemberTypes
    *   - extend union Name Directives[Const]
+   *
+   * @internal
    */
   parseUnionTypeExtension() {
     const start = this._lexer.token;
@@ -2849,6 +3187,8 @@ var Parser = class {
    * EnumTypeExtension :
    *   - extend enum Name Directives[Const]? EnumValuesDefinition
    *   - extend enum Name Directives[Const]
+   *
+   * @internal
    */
   parseEnumTypeExtension() {
     const start = this._lexer.token;
@@ -2871,6 +3211,8 @@ var Parser = class {
    * InputObjectTypeExtension :
    *   - extend input Name Directives[Const]? InputFieldsDefinition
    *   - extend input Name Directives[Const]
+   *
+   * @internal
    */
   parseInputObjectTypeExtension() {
     const start = this._lexer.token;
@@ -2910,6 +3252,8 @@ var Parser = class {
    * DirectiveDefinition :
    *   - Description? directive @ Name ArgumentsDefinition? `repeatable`? on DirectiveLocations
    * ```
+   *
+   * @internal
    */
   parseDirectiveDefinition() {
     const start = this._lexer.token;
@@ -2936,6 +3280,8 @@ var Parser = class {
    * DirectiveLocations :
    *   - `|`? DirectiveLocation
    *   - DirectiveLocations | DirectiveLocation
+   *
+   * @internal
    */
   parseDirectiveLocations() {
     return this.delimitedMany(TokenKind.PIPE, this.parseDirectiveLocation);
@@ -2984,6 +3330,19 @@ var Parser = class {
    *   - Name . Name ( Name : )
    *   - \@ Name
    *   - \@ Name ( Name : )
+   * @returns Parsed schema coordinate AST.
+   * @example
+   * ```ts
+   * import { Parser, Source } from 'graphql/language';
+   *
+   * const typeCoordinate = new Parser(new Source('User.name')).parseSchemaCoordinate();
+   * const directiveCoordinate = new Parser(new Source('@include(if:)')).parseSchemaCoordinate();
+   *
+   * typeCoordinate.name.value; // => 'User'
+   * typeCoordinate.memberName?.value; // => 'name'
+   * directiveCoordinate.name.value; // => 'deprecated'
+   * directiveCoordinate.argumentName?.value; // => 'reason'
+   * ```
    */
   parseSchemaCoordinate() {
     const start = this._lexer.token;
@@ -3036,6 +3395,8 @@ var Parser = class {
    * Returns a node that, if configured to do so, sets a "loc" field as a
    * location object, used to identify the place in the source that created a
    * given parsed object.
+   *
+   * @internal
    */
   node(startToken, node) {
     if (this._options.noLocation !== true) {
@@ -3049,6 +3410,8 @@ var Parser = class {
   }
   /**
    * Determines if the next token is of a given kind
+   *
+   * @internal
    */
   peek(kind) {
     return this._lexer.token.kind === kind;
@@ -3056,6 +3419,8 @@ var Parser = class {
   /**
    * If the next token is of the given kind, return that token after advancing the lexer.
    * Otherwise, do not change the parser state and throw an error.
+   *
+   * @internal
    */
   expectToken(kind) {
     const token = this._lexer.token;
@@ -3072,6 +3437,8 @@ var Parser = class {
   /**
    * If the next token is of the given kind, return "true" after advancing the lexer.
    * Otherwise, do not change the parser state and return "false".
+   *
+   * @internal
    */
   expectOptionalToken(kind) {
     const token = this._lexer.token;
@@ -3084,6 +3451,8 @@ var Parser = class {
   /**
    * If the next token is a given keyword, advance the lexer.
    * Otherwise, do not change the parser state and throw an error.
+   *
+   * @internal
    */
   expectKeyword(value) {
     const token = this._lexer.token;
@@ -3100,6 +3469,8 @@ var Parser = class {
   /**
    * If the next token is a given keyword, return "true" after advancing the lexer.
    * Otherwise, do not change the parser state and return "false".
+   *
+   * @internal
    */
   expectOptionalKeyword(value) {
     const token = this._lexer.token;
@@ -3111,6 +3482,8 @@ var Parser = class {
   }
   /**
    * Helper function for creating an error when an unexpected lexed token is encountered.
+   *
+   * @internal
    */
   unexpected(atToken) {
     const token = atToken !== null && atToken !== void 0 ? atToken : this._lexer.token;
@@ -3124,6 +3497,8 @@ var Parser = class {
    * Returns a possibly empty list of parse nodes, determined by the parseFn.
    * This list begins with a lex token of openKind and ends with a lex token of closeKind.
    * Advances the parser to the next lex token after the closing token.
+   *
+   * @internal
    */
   any(openKind, parseFn, closeKind) {
     this.expectToken(openKind);
@@ -3138,6 +3513,8 @@ var Parser = class {
    * It can be empty only if open token is missing otherwise it will always return non-empty list
    * that begins with a lex token of openKind and ends with a lex token of closeKind.
    * Advances the parser to the next lex token after the closing token.
+   *
+   * @internal
    */
   optionalMany(openKind, parseFn, closeKind) {
     if (this.expectOptionalToken(openKind)) {
@@ -3153,6 +3530,8 @@ var Parser = class {
    * Returns a non-empty list of parse nodes, determined by the parseFn.
    * This list begins with a lex token of openKind and ends with a lex token of closeKind.
    * Advances the parser to the next lex token after the closing token.
+   *
+   * @internal
    */
   many(openKind, parseFn, closeKind) {
     this.expectToken(openKind);
@@ -3166,6 +3545,8 @@ var Parser = class {
    * Returns a non-empty list of parse nodes, determined by the parseFn.
    * This list may begin with a lex token of delimiterKind followed by items separated by lex tokens of tokenKind.
    * Advances the parser to the next lex token after last item in the list.
+   *
+   * @internal
    */
   delimitedMany(delimiterKind, parseFn) {
     this.expectOptionalToken(delimiterKind);
@@ -3198,7 +3579,7 @@ function getTokenKindDesc(kind) {
   return isPunctuatorTokenKind(kind) ? `"${kind}"` : kind;
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/printString.mjs
+// node_modules/graphql/language/printString.mjs
 function printString(str) {
   return `"${str.replace(escapedRegExp, escapedReplacer)}"`;
 }
@@ -3374,7 +3755,7 @@ var escapeSequences = [
   "\\u009F"
 ];
 
-// ../web-sdk-0240/node_modules/graphql/language/visitor.mjs
+// node_modules/graphql/language/visitor.mjs
 var BREAK = Object.freeze({});
 function visit(root, visitor, visitorKeys = QueryDocumentKeys) {
   const enterLeaveMap = /* @__PURE__ */ new Map();
@@ -3503,7 +3884,7 @@ function getEnterLeaveForKind(visitor, kind) {
   };
 }
 
-// ../web-sdk-0240/node_modules/graphql/language/printer.mjs
+// node_modules/graphql/language/printer.mjs
 function print(ast) {
   return visit(ast, printDocASTReducer);
 }
@@ -3777,13 +4158,13 @@ function hasMultilineItems(maybeArray) {
   return (_maybeArray$some = maybeArray === null || maybeArray === void 0 ? void 0 : maybeArray.some((str) => str.includes("\n"))) !== null && _maybeArray$some !== void 0 ? _maybeArray$some : false;
 }
 
-// ../web-sdk-0240/node_modules/graphql-request/build/lib/http.js
+// node_modules/graphql-request/build/lib/http.js
 var ACCEPT_HEADER = `Accept`;
 var CONTENT_TYPE_HEADER = `Content-Type`;
 var CONTENT_TYPE_JSON = `application/json`;
 var CONTENT_TYPE_GQL = `application/graphql-response+json`;
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/lib/graphql.js
+// node_modules/graphql-request/build/legacy/lib/graphql.js
 var cleanQuery = (str) => str.replace(/([\s,]|#[^\n\r]+)+/g, ` `).trim();
 var isGraphQLContentType = (contentType) => {
   const contentTypeLower = contentType.toLowerCase();
@@ -3846,7 +4227,7 @@ var isOperationDefinitionNode = (definition) => {
   return typeof definition === `object` && definition !== null && `kind` in definition && definition.kind === Kind.OPERATION_DEFINITION;
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
+// node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
 var extractOperationName = (document2) => {
   let operationName = void 0;
   const defs = document2.definitions.filter(isOperationDefinitionNode);
@@ -3880,10 +4261,10 @@ var analyzeDocument = (document2, excludeOperationName) => {
   return { expression, operationName, isMutation };
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
+// node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
 var defaultJsonSerializer = JSON;
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/helpers/runRequest.js
+// node_modules/graphql-request/build/legacy/helpers/runRequest.js
 var runRequest = async (input) => {
   const config = {
     ...input,
@@ -4048,7 +4429,7 @@ var buildQueryParams = (params) => {
   }
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
+// node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
 var GraphQLClient = class {
   url;
   requestConfig;
@@ -4198,7 +4579,7 @@ var GraphQLClient = class {
   }
 };
 
-// ../web-sdk-0240/node_modules/graphql-request/build/legacy/functions/request.js
+// node_modules/graphql-request/build/legacy/functions/request.js
 var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
   return documentOrOptions.document ? documentOrOptions : {
     document: documentOrOptions,
@@ -4468,6 +4849,145 @@ function createCommerceClient(options) {
   return new CommerceClient(options);
 }
 
+// src/core/content.ts
+var CONTENT_ID_QUERY = "vio_content";
+var CONTENT_TITLE_QUERY = "vio_content_title";
+var CONTENT_ID_MAX_LENGTH = 128;
+var CONTENT_TITLE_MAX_LENGTH = 255;
+var CONTENT_URL_MAX_LENGTH = 2048;
+function originAndPath(raw, max = CONTENT_URL_MAX_LENGTH) {
+  const value = text(raw);
+  if (!value) return void 0;
+  try {
+    const url = new URL(value);
+    return cutTo(`${url.origin}${url.pathname}`, max);
+  } catch {
+    const end = value.search(/[?#]/);
+    return cutTo(end >= 0 ? value.slice(0, end) : value, max);
+  }
+}
+function cutTo(value, max) {
+  const out = value.length > max ? value.slice(0, max) : value;
+  return out || void 0;
+}
+function capContentUrl(value) {
+  const url = text(value);
+  if (!url) return void 0;
+  if (url.length <= CONTENT_URL_MAX_LENGTH) return url;
+  const cut4 = url.search(/[?#]/);
+  const withoutQuery = cut4 >= 0 ? url.slice(0, cut4) : url;
+  return withoutQuery.length <= CONTENT_URL_MAX_LENGTH ? withoutQuery : withoutQuery.slice(0, CONTENT_URL_MAX_LENGTH);
+}
+function resolveContent(init, doc = typeof document !== "undefined" ? document : null, loc = typeof location !== "undefined" ? location : null) {
+  const out = {};
+  try {
+    const url = originAndPath(loc?.href);
+    if (url !== void 0) out.url = url;
+  } catch {
+  }
+  try {
+    const query = parseQuery(loc?.search);
+    const id = fits(text(init?.contentId)) ?? fits(text(query.get(CONTENT_ID_QUERY))) ?? fits(text(meta(doc, "name", "vio:content-id"))) ?? fits(stripQueryAndHash(text(attr(doc, 'link[rel="canonical"]', "href")))) ?? fits(stripQueryAndHash(text(meta(doc, "property", "og:url")))) ?? fits(text(loc?.pathname));
+    const title = text(init?.contentTitle) ?? text(query.get(CONTENT_TITLE_QUERY)) ?? text(meta(doc, "name", "vio:content-title")) ?? text(meta(doc, "property", "og:title")) ?? text(doc?.title);
+    if (id !== void 0) out.id = id;
+    if (title !== void 0) out.title = title.slice(0, CONTENT_TITLE_MAX_LENGTH);
+    return out;
+  } catch {
+    return out;
+  }
+}
+function fits(value) {
+  return value !== void 0 && value.length <= CONTENT_ID_MAX_LENGTH ? value : void 0;
+}
+function text(value) {
+  if (value === void 0 || value === null) return void 0;
+  const s4 = String(value).trim();
+  return s4 ? s4 : void 0;
+}
+function parseQuery(search) {
+  try {
+    return new URLSearchParams(typeof search === "string" ? search : "");
+  } catch {
+    return new URLSearchParams();
+  }
+}
+function meta(doc, key, value) {
+  return attr(doc, `meta[${key}="${value}"]`, "content");
+}
+function attr(doc, selector, name) {
+  try {
+    if (!doc || typeof doc.querySelector !== "function") return void 0;
+    const el = doc.querySelector(selector);
+    const v2 = el?.getAttribute?.(name);
+    return typeof v2 === "string" ? v2 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function stripQueryAndHash(url) {
+  if (!url) return void 0;
+  const cut4 = url.search(/[?#]/);
+  const clean = cut4 >= 0 ? url.slice(0, cut4) : url;
+  return clean.trim() || void 0;
+}
+
+// src/core/cart/origin-wire.ts
+var GRAPHQL_INT_MAX = 2147483647;
+var LINE_ORIGIN_CAPS = Object.freeze({
+  locationId: SLOT_ID_MAX_LENGTH,
+  componentKind: SLOT_KIND_MAX_LENGTH,
+  contentUrl: 2048,
+  contentTitle: CONTENT_TITLE_MAX_LENGTH
+});
+function lineOriginWire(origin, options = {}) {
+  if (!origin || typeof origin !== "object") return void 0;
+  const page = options.page ?? {};
+  const standard = options.privacyMode === "standard";
+  const out = {};
+  const campaignId = Number(origin.campaignId);
+  if (Number.isInteger(campaignId) && campaignId > 0 && campaignId <= GRAPHQL_INT_MAX) out.campaign_id = campaignId;
+  const locationId = cut(origin.slot, LINE_ORIGIN_CAPS.locationId);
+  if (locationId && standard) out.location_id = locationId;
+  const kind = cut(origin.componentKind, LINE_ORIGIN_CAPS.componentKind) ?? componentKindOf(void 0, origin.slot);
+  if (kind) out.component_kind = kind;
+  if (!out.campaign_id && !out.location_id && !out.component_kind) return void 0;
+  if (!standard) return out;
+  const url = originAndPath(origin.contentUrl, LINE_ORIGIN_CAPS.contentUrl) ?? originAndPath(page.contentUrl, LINE_ORIGIN_CAPS.contentUrl);
+  if (url) out.content_url = url;
+  const title = cut(origin.contentTitle, LINE_ORIGIN_CAPS.contentTitle) ?? cut(page.contentTitle, LINE_ORIGIN_CAPS.contentTitle);
+  if (title) out.content_title = title;
+  return out;
+}
+function currentOriginPage() {
+  const out = {};
+  try {
+    const facade = globalThis.__VIO_FACADE__;
+    const content = typeof facade?.content === "function" ? facade.content() : resolveContent();
+    const url = originAndPath(content?.url, LINE_ORIGIN_CAPS.contentUrl);
+    if (url) out.contentUrl = url;
+    const title = cut(content?.title, LINE_ORIGIN_CAPS.contentTitle);
+    if (title) out.contentTitle = title;
+  } catch {
+  }
+  return out;
+}
+function cut(value, max) {
+  if (typeof value !== "string" && typeof value !== "number") return void 0;
+  const text3 = String(value).trim();
+  if (!text3) return void 0;
+  return text3.length > max ? text3.slice(0, max).trim() || void 0 : text3;
+}
+async function currentPrivacyMode() {
+  try {
+    const facade = globalThis.__VIO_FACADE__;
+    if (typeof facade?.privacyMode !== "function") return "unknown";
+    const mode = await facade.privacyMode();
+    return mode === "standard" || mode === "minimal" ? mode : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 // src/core/buyer-ref.ts
 var BUYER_REF_MAX_LENGTH = 128;
 var BUYER_REF_PATTERN = /^[A-Za-z0-9._~-]+$/;
@@ -4476,6 +4996,65 @@ function normalizeBuyerRef(value) {
   const ref = value.trim();
   if (!ref || ref.length > BUYER_REF_MAX_LENGTH || !BUYER_REF_PATTERN.test(ref)) return void 0;
   return ref;
+}
+
+// src/core/api/gateway-features.ts
+var FEATURE_TOKENS = {
+  buyer_ref: ["buyer_ref"],
+  line_origin: ["origin", "CartLineOriginInput"],
+  checkout_attribution: ["attribution", "CheckoutAttributionInput", "CheckoutAttributionEntryInput"]
+};
+var UNKNOWN_PATTERN = /cannot query field|unknown field|unknown argument|unknown type|is not defined by type|not defined by type|field "[^"]+" is not defined/i;
+var refused = /* @__PURE__ */ new Set();
+var warned = /* @__PURE__ */ new Set();
+function gatewayHas(feature) {
+  return !refused.has(feature);
+}
+function resetGatewayFeatures(feature) {
+  if (feature) {
+    refused.delete(feature);
+    warned.delete(feature);
+    return;
+  }
+  refused.clear();
+  warned.clear();
+}
+function messagesOf(err) {
+  if (!err || typeof err !== "object") return [];
+  const { message, graphql } = err;
+  return [message, ...(graphql?.errors ?? []).map((e7) => e7?.message)].filter(
+    (m2) => typeof m2 === "string"
+  );
+}
+function ranSomething(err) {
+  if (!err || typeof err !== "object") return false;
+  const graphql = err.graphql;
+  if (graphql?.hasData === true) return true;
+  return (graphql?.errors ?? []).some((e7) => Array.isArray(e7?.path) && e7.path.length > 0);
+}
+function isUnknownTokenError(err, token) {
+  if (ranSomething(err)) return false;
+  return messagesOf(err).some((m2) => m2.includes(`"${token}"`) && UNKNOWN_PATTERN.test(m2));
+}
+function isUnknownFeatureError(err, feature) {
+  return FEATURE_TOKENS[feature].some((token) => isUnknownTokenError(err, token));
+}
+async function withGatewayFeature(feature, request2) {
+  if (!gatewayHas(feature)) return request2(false);
+  try {
+    return await request2(true);
+  } catch (err) {
+    if (!isUnknownFeatureError(err, feature)) throw err;
+    refused.add(feature);
+    if (!warned.has(feature) && typeof console !== "undefined") {
+      warned.add(feature);
+      console.warn(
+        `[Vio] the commerce gateway does not know "${FEATURE_TOKENS[feature][0]}" (${feature}) yet \u2014 sent without it on this page load:`,
+        messagesOf(err)[0] ?? ""
+      );
+    }
+    return request2(false);
+  }
 }
 
 // src/core/checkout/payments/vipps.ts
@@ -4727,10 +5306,10 @@ mutation DeleteItem($cartId: String!, $cartItemId: String!) {
   }
 }
 `;
-var UPDATE_ITEM_MUTATION = `
-mutation UpdateItem($cartId: String!, $cartItemId: String!, $shippingId: String, $qty: Int) {
+var updateItemMutation = (withExtra) => `
+mutation UpdateItem($cartId: String!, $cartItemId: String!, $shippingId: String, $qty: Int${withExtra ? ", $origin: CartLineOriginInput" : ""}) {
   Cart {
-    UpdateItem(cart_id: $cartId, cart_item_id: $cartItemId, shipping_id: $shippingId, qty: $qty) {
+    UpdateItem(cart_id: $cartId, cart_item_id: $cartItemId, shipping_id: $shippingId, qty: $qty${withExtra ? ", origin: $origin" : ""}) {
       cart_id
       customer_session_id
       shipping_country
@@ -4799,6 +5378,8 @@ mutation UpdateItem($cartId: String!, $cartItemId: String!, $shippingId: String,
   }
 }
 `;
+var UPDATE_ITEM_MUTATION = updateItemMutation(false);
+var UPDATE_ITEM_WITH_ORIGIN_MUTATION = updateItemMutation(true);
 var GET_CART_QUERY = `
 query GetCart($cartId: String!) {
   Cart {
@@ -5012,10 +5593,10 @@ mutation UpdateShippingsBySupplier($cartId: String!, $data: [DataUpdateShippings
   }
 }
 `;
-var CREATE_CHECKOUT_MUTATION = `
-mutation CreateCheckout($cartId: String!) {
+var createCheckoutMutation = (withExtra) => `
+mutation CreateCheckout($cartId: String!${withExtra ? ", $attribution: CheckoutAttributionInput" : ""}) {
   Checkout {
-    CreateCheckout(cart_id: $cartId) {
+    CreateCheckout(cart_id: $cartId${withExtra ? ", attribution: $attribution" : ""}) {
       buyer_accepts_purchase_conditions
       buyer_accepts_terms_conditions
       created_at
@@ -5144,10 +5725,12 @@ mutation CreateCheckout($cartId: String!) {
   }
 }
 `;
-var UPDATE_CHECKOUT_MUTATION = `
-mutation UpdateCheckout($checkoutId: String!, $status: String, $successUrl: String, $email: String, $cancelUrl: String, $paymentMethod: String, $shippingAddress: AddressArgs, $billingAddress: AddressArgs, $buyerAcceptsPurchaseConditions: Boolean, $buyerAcceptsTermsConditions: Boolean) {
+var CREATE_CHECKOUT_MUTATION = createCheckoutMutation(false);
+var CREATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION = createCheckoutMutation(true);
+var updateCheckoutMutation = (withExtra) => `
+mutation UpdateCheckout($checkoutId: String!, $status: String, $successUrl: String, $email: String, $cancelUrl: String, $paymentMethod: String, $shippingAddress: AddressArgs, $billingAddress: AddressArgs, $buyerAcceptsPurchaseConditions: Boolean, $buyerAcceptsTermsConditions: Boolean${withExtra ? ", $attribution: CheckoutAttributionInput" : ""}) {
   Checkout {
-    UpdateCheckout(checkout_id: $checkoutId, status: $status, success_url: $successUrl, email: $email, cancel_url: $cancelUrl, payment_method: $paymentMethod, shipping_address: $shippingAddress, billing_address: $billingAddress, buyer_accepts_purchase_conditions: $buyerAcceptsPurchaseConditions, buyer_accepts_terms_conditions: $buyerAcceptsTermsConditions) {
+    UpdateCheckout(checkout_id: $checkoutId, status: $status, success_url: $successUrl, email: $email, cancel_url: $cancelUrl, payment_method: $paymentMethod, shipping_address: $shippingAddress, billing_address: $billingAddress, buyer_accepts_purchase_conditions: $buyerAcceptsPurchaseConditions, buyer_accepts_terms_conditions: $buyerAcceptsTermsConditions${withExtra ? ", attribution: $attribution" : ""}) {
       buyer_accepts_purchase_conditions
       buyer_accepts_terms_conditions
       created_at
@@ -5276,6 +5859,8 @@ mutation UpdateCheckout($checkoutId: String!, $status: String, $successUrl: Stri
   }
 }
 `;
+var UPDATE_CHECKOUT_MUTATION = updateCheckoutMutation(false);
+var UPDATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION = updateCheckoutMutation(true);
 var GET_CHECKOUT_QUERY = `
 query GetCheckout($checkoutId: String!) {
   Checkout {
@@ -5520,19 +6105,37 @@ async function createCart(customerSessionId, currency, shippingCountry, options)
   return json?.data?.Cart?.CreateCart;
 }
 async function addItem(cartId, lineItems, options) {
-  const json = await executeCartGraphQL(ADD_ITEM_MUTATION, { cartId, lineItems }, options);
+  const attributed = lineItems.some((li) => !!li?.origin);
+  const json = attributed ? await withGatewayFeature(
+    "line_origin",
+    (supported) => executeCartGraphQL(
+      ADD_ITEM_MUTATION,
+      { cartId, lineItems: supported ? lineItems : lineItems.map(withoutOrigin) },
+      options
+    )
+  ) : await executeCartGraphQL(ADD_ITEM_MUTATION, { cartId, lineItems }, options);
   return json?.data?.Cart?.AddItem;
+}
+function withoutOrigin(lineItem) {
+  if (!lineItem || typeof lineItem !== "object") return lineItem;
+  const { origin: _origin, ...rest } = lineItem;
+  return rest;
 }
 async function deleteItem(cartId, cartItemId, options) {
   const json = await executeCartGraphQL(DELETE_ITEM_MUTATION, { cartId, cartItemId }, options);
   return json?.data?.Cart?.DeleteItem;
 }
-async function updateItem(cartId, cartItemId, shippingId, qty, options) {
-  const json = await executeCartGraphQL(
-    UPDATE_ITEM_MUTATION,
-    { cartId, cartItemId, shippingId: shippingId || null, qty: qty != null ? qty : null },
-    options
-  );
+async function updateItem(cartId, cartItemId, shippingId, qty, options, extra = {}) {
+  const variables = { cartId, cartItemId, shippingId: shippingId || null, qty: qty != null ? qty : null };
+  const origin = extra.origin;
+  const json = origin ? await withGatewayFeature(
+    "line_origin",
+    (supported) => executeCartGraphQL(
+      supported ? UPDATE_ITEM_WITH_ORIGIN_MUTATION : UPDATE_ITEM_MUTATION,
+      supported ? { ...variables, origin } : variables,
+      options
+    )
+  ) : await executeCartGraphQL(UPDATE_ITEM_MUTATION, variables, options);
   return json?.data?.Cart?.UpdateItem;
 }
 async function getCart(cartId, options) {
@@ -5551,12 +6154,28 @@ async function updateShippingsBySupplier(cartId, data, options) {
   );
   return json?.data?.Cart?.UpdateShippingsBySupplier;
 }
-async function createCheckout(cartId, options) {
-  const json = await executeCartGraphQL(CREATE_CHECKOUT_MUTATION, { cartId }, options);
+async function createCheckout(cartId, options, extra = {}) {
+  const attribution = extra.attribution;
+  const json = attribution ? await withGatewayFeature(
+    "checkout_attribution",
+    (supported) => executeCartGraphQL(
+      supported ? CREATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION : CREATE_CHECKOUT_MUTATION,
+      supported ? { cartId, attribution } : { cartId },
+      options
+    )
+  ) : await executeCartGraphQL(CREATE_CHECKOUT_MUTATION, { cartId }, options);
   return json?.data?.Checkout?.CreateCheckout;
 }
 async function updateCheckout(variables, options) {
-  const json = await executeCartGraphQL(UPDATE_CHECKOUT_MUTATION, variables, options);
+  const { attribution, ...legacy } = variables;
+  const json = attribution ? await withGatewayFeature(
+    "checkout_attribution",
+    (supported) => executeCartGraphQL(
+      supported ? UPDATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION : UPDATE_CHECKOUT_MUTATION,
+      supported ? variables : legacy,
+      options
+    )
+  ) : await executeCartGraphQL(UPDATE_CHECKOUT_MUTATION, legacy, options);
   return json?.data?.Checkout?.UpdateCheckout;
 }
 async function getCheckout(checkoutId, options) {
@@ -5564,28 +6183,11 @@ async function getCheckout(checkoutId, options) {
   return json?.data?.Checkout?.GetCheckout;
 }
 var BUYER_REF_FIELD = "buyer_ref";
-var gatewayKnowsBuyerRef = true;
 function gatewayHasBuyerRef() {
-  return gatewayKnowsBuyerRef;
+  return gatewayHas("buyer_ref");
 }
-function isUnknownFieldError(err, field) {
-  if (!err || typeof err !== "object") return false;
-  const { message, graphql } = err;
-  if (graphql?.hasData) return false;
-  const messages = [message, ...(graphql?.errors ?? []).map((e7) => e7?.message)];
-  return messages.some(
-    (m2) => typeof m2 === "string" && m2.includes(`"${field}"`) && /cannot query field|unknown field/i.test(m2)
-  );
-}
-async function withBuyerRef(request2) {
-  if (!gatewayKnowsBuyerRef) return request2(false);
-  try {
-    return await request2(true);
-  } catch (err) {
-    if (!isUnknownFieldError(err, BUYER_REF_FIELD)) throw err;
-    gatewayKnowsBuyerRef = false;
-    return request2(false);
-  }
+function withBuyerRef(request2) {
+  return withGatewayFeature("buyer_ref", request2);
 }
 var orderNumberQuery = (withRef) => `
 query GetCheckoutOrderNumber($checkoutId: String!) {
@@ -5673,6 +6275,33 @@ async function confirmPaymentApplePay(variables, options) {
 
 // src/core/cart/cart-manager.ts
 var STORAGE_KEY = "vio.cart.v1";
+function finalTarget(sync) {
+  return sync.steps.reduce((quantity, step) => quantity + step.delta, sync.sent);
+}
+function queueStep(sync, target, origin) {
+  const delta = target - finalTarget(sync);
+  if (delta === 0) return;
+  if (delta > 0) {
+    const last = sync.steps[sync.steps.length - 1];
+    if (last && last.delta > 0 && sameOrigin(last.origin ?? {}, origin ?? {})) last.delta += delta;
+    else sync.steps.push({ delta, origin });
+    return;
+  }
+  let left = -delta;
+  while (left > 0 && sync.steps.length > 0) {
+    const last = sync.steps[sync.steps.length - 1];
+    if (last.delta <= 0) break;
+    const take = Math.min(last.delta, left);
+    last.delta -= take;
+    left -= take;
+    if (last.delta === 0) sync.steps.pop();
+  }
+  if (left > 0) {
+    const last = sync.steps[sync.steps.length - 1];
+    if (last && last.delta < 0) last.delta -= left;
+    else sync.steps.push({ delta: -left });
+  }
+}
 function lineId() {
   return "li_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
@@ -5764,7 +6393,7 @@ var CartManager = class extends EventTarget {
    * undefined when no quantity sync is active for it. */
   intendedQuantity(sponsorId, cartItemId) {
     const sync = this.qtySyncs.get(this.qtySyncKey(sponsorId, cartItemId));
-    return sync ? sync.pending ?? sync.sent : void 0;
+    return sync ? finalTarget(sync) : void 0;
   }
   /** Apply a backend response only if no newer response was applied already.
    * Returns false when it was discarded as stale. */
@@ -5927,7 +6556,8 @@ var CartManager = class extends EventTarget {
           currency: li.price?.currency_code || backendCart.currency || matchedLocal?.currency || "NOK",
           imageUrl,
           quantity: intended ?? li.quantity,
-          // The server knows nothing about origins: keep the local ones. They
+          // The server keeps its own copy of the origins (per request); the
+          // cart read model does not answer them, so keep the local ones. They
           // are squared with its quantity (a stock clamp) only when no OTHER
           // mutation is in flight for this sponsor — an AddItem answering
           // while another is pending reports a quantity that is already old
@@ -6042,11 +6672,16 @@ var CartManager = class extends EventTarget {
         const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0);
         if (cartId) {
           const gqlOpts = await getCartGraphQLOptions(opts.sponsorId);
+          const origin = opts.origin ? lineOriginWire(normalizeOrigin(opts.origin), {
+            page: currentOriginPage(),
+            privacyMode: await currentPrivacyMode()
+          }) : void 0;
           const lineItemsInput = [
             {
               product_id: Number(opts.productId || 0),
               quantity: qty,
-              variant_id: opts.variantId != null ? Number(opts.variantId) : null
+              variant_id: opts.variantId != null ? Number(opts.variantId) : null,
+              ...origin ? { origin } : {}
             }
           ];
           const resCart = await addItem(cartId, lineItemsInput, gqlOpts);
@@ -6099,8 +6734,10 @@ var CartManager = class extends EventTarget {
     if (target === item.quantity) return;
     const targetItemId = item.cartItemId;
     const removedOrigin = latestOrigin(item);
-    if (target > item.quantity) addOriginQuantity(item, opts.origin, target - item.quantity);
+    const increase = target > item.quantity;
+    if (increase) addOriginQuantity(item, opts.origin, target - item.quantity);
     else removeOriginQuantity(item, item.quantity - target);
+    const addedOrigin = increase ? latestOrigin(item) : void 0;
     if (target <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
       if (typeof document !== "undefined") {
@@ -6135,37 +6772,47 @@ var CartManager = class extends EventTarget {
       this.pendingQtyIntents.set(this.intentKey(item.productId, item.variantId), target);
       return;
     }
-    this.syncQuantity(sponsorId, cart.cartId, targetItemId, target);
+    this.syncQuantity(sponsorId, cart.cartId, targetItemId, target, addedOrigin);
   }
   /** Send a line's target quantity to the backend — ONE request in flight per
-   * line. A target that arrives while one is in flight replaces any earlier
-   * waiting one and goes out when the current request settles, so the server
-   * ends on the last intent and never sees two updates racing each other.
-   * While the sync is active the line keeps its optimistic quantity through
-   * any backend response (see `updateFromBackendCart`); a rejection drops
-   * what was queued and reconciles the cart from the server. */
-  syncQuantity(sponsorId, backendCartId, cartItemId, target) {
+   * line. Targets that arrive while one is in flight queue behind it as
+   * steps (`queueStep`): reduced like the line's origins, sent in order once
+   * the current request settles — one request per queued increase from a
+   * different origin, one for a net decrease — so the server ends on the
+   * last intent, credits every increase to its own origin, and never sees two
+   * updates racing each other. While the sync is active the line keeps its
+   * optimistic quantity through any backend response (see
+   * `updateFromBackendCart`); a rejection drops what was queued and
+   * reconciles the cart from the server. */
+  syncQuantity(sponsorId, backendCartId, cartItemId, target, origin) {
     const key = this.qtySyncKey(sponsorId, cartItemId);
     const active = this.qtySyncs.get(key);
     if (active) {
-      active.pending = target;
+      queueStep(active, target, origin);
       return;
     }
-    const sync = { sent: target };
+    const sync = { sent: target, steps: [] };
     this.qtySyncs.set(key, sync);
     let settling;
     const run = (async () => {
       let next = target;
+      let nextOrigin = origin;
       let removalRetried = false;
       while (next !== void 0) {
-        sync.sent = next;
-        sync.pending = void 0;
         const seq = this.nextSeq(sponsorId);
         try {
           const gqlOpts = await getCartGraphQLOptions(sponsorId);
-          const resCart = next <= 0 ? await deleteItem(backendCartId, cartItemId, gqlOpts) : await updateItem(backendCartId, cartItemId, null, next, gqlOpts);
-          next = sync.pending;
-          if (next === sync.sent) next = void 0;
+          const originWire = next > 0 && nextOrigin ? lineOriginWire(nextOrigin, { page: currentOriginPage(), privacyMode: await currentPrivacyMode() }) : void 0;
+          const resCart = next <= 0 ? await deleteItem(backendCartId, cartItemId, gqlOpts) : originWire ? await updateItem(backendCartId, cartItemId, null, next, gqlOpts, { origin: originWire }) : await updateItem(backendCartId, cartItemId, null, next, gqlOpts);
+          const step = sync.steps.shift();
+          if (step) {
+            next = sync.sent + step.delta;
+            nextOrigin = step.delta > 0 ? step.origin : void 0;
+            sync.sent = next;
+          } else {
+            next = void 0;
+            nextOrigin = void 0;
+          }
           if (next === void 0) this.qtySyncs.delete(key);
           if (resCart && Array.isArray(resCart.line_items)) {
             const applied = this.applyBackendCart(sponsorId, resCart, seq, settling);
@@ -6174,12 +6821,13 @@ var CartManager = class extends EventTarget {
             }
           }
         } catch (err) {
-          const retryRemoval = !removalRetried && sync.pending !== void 0 && sync.pending <= 0;
+          const retryRemoval = !removalRetried && sync.steps.length > 0 && finalTarget(sync) <= 0;
+          sync.steps = [];
           next = void 0;
+          nextOrigin = void 0;
           if (retryRemoval) {
             removalRetried = true;
             sync.sent = 0;
-            sync.pending = void 0;
             next = 0;
           } else {
             this.qtySyncs.delete(key);
@@ -6316,10 +6964,17 @@ function normalizeOrigin(origin) {
   if (origin.contentId !== void 0 && origin.contentId !== null && String(origin.contentId).trim()) {
     out.contentId = String(origin.contentId).trim();
   }
+  const kind = componentKindOf(origin.componentKind ?? origin.componentTemplateId);
+  if (kind) out.componentKind = kind;
+  const contentUrl = originAndPath(origin.contentUrl);
+  if (contentUrl) out.contentUrl = contentUrl;
+  if (typeof origin.contentTitle === "string" && origin.contentTitle.trim()) {
+    out.contentTitle = origin.contentTitle.trim().slice(0, CONTENT_TITLE_MAX_LENGTH);
+  }
   return out;
 }
 function sameOrigin(a3, b3) {
-  return a3.campaignId === b3.campaignId && a3.slot === b3.slot && a3.contentId === b3.contentId;
+  return a3.campaignId === b3.campaignId && a3.slot === b3.slot && a3.contentId === b3.contentId && a3.componentKind === b3.componentKind;
 }
 function latestOrigin(line) {
   const origins = Array.isArray(line.origins) ? line.origins : [];
@@ -8080,9 +8735,10 @@ async function executeKlarnaGraphQL(query, variables, sponsorId) {
   return executeCartGraphQL(query, variables, await getCartGraphQLOptions(sponsorId));
 }
 var CheckoutManager = class _CheckoutManager extends EventTarget {
-  constructor(cartManager) {
+  constructor(cartManager, deps = {}) {
     super();
     this.cartManager = cartManager;
+    this.deps = deps;
     this.state = null;
     /** Counts `open()` calls — see CheckoutState.session. */
     this.sessionSeq = 0;
@@ -8151,7 +8807,20 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   // MARK: - Backend checkout (Vio Commerce GraphQL)
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  /** Create the backend checkout for the sponsor's cart (auto-accepts terms). */
+  /**
+   * The attribution of the order this sponsor's cart is about to become
+   * (ADR-0035 phase B), through the facade; `undefined` when there is none
+   * to give or it fails — attribution never costs a checkout.
+   */
+  async attributionFor(sponsorId) {
+    if (!sponsorId || typeof this.deps.orderAttribution !== "function") return void 0;
+    try {
+      return await this.deps.orderAttribution(sponsorId) ?? void 0;
+    } catch {
+      return void 0;
+    }
+  }
+  /** Create the backend checkout for the sponsor's cart (auto-accepts terms); born attributed when the facade knows the attribution. */
   async createCheckout(sponsorId) {
     await this.cartManager.waitForCartMutations(sponsorId);
     const cart = this.cartManager.getCart(sponsorId);
@@ -8163,7 +8832,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
     }
     const opts = await getCartGraphQLOptions(sponsorId);
-    const checkout = await createCheckout(cartId, opts);
+    const attribution = await this.attributionFor(sponsorId);
+    const checkout = attribution ? await createCheckout(cartId, opts, { attribution }) : await createCheckout(cartId, opts);
     if (checkout?.id) {
       this.state = {
         ...this.state ?? { sponsorId, subtotal: 0, currency: getGlobalCurrency() },
@@ -8194,12 +8864,15 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     return checkout;
   }
-  /** Update the backend checkout (terms are re-asserted unless overridden). */
+  /** Update the backend checkout (terms are re-asserted unless overridden; the attribution rides along unless the caller gives its own). */
   async updateCheckout(variables, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const spId = sponsorId ?? this.state?.sponsorId;
+    const opts = await getCartGraphQLOptions(spId);
+    const attribution = "attribution" in variables ? void 0 : await this.attributionFor(spId);
     const fullVars = {
       buyerAcceptsPurchaseConditions: true,
       buyerAcceptsTermsConditions: true,
+      ...attribution ? { attribution } : {},
       ...variables
     };
     const updated = await updateCheckout(fullVars, opts);
@@ -8373,9 +9046,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
     const opts = await getCartGraphQLOptions(spId);
+    const attribution = await this.attributionFor(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await createCheckout(cartId, opts);
+      const checkoutRes = attribution ? await createCheckout(cartId, opts, { attribution }) : await createCheckout(cartId, opts);
       checkoutId = checkoutRes?.id;
     }
     if (!checkoutId) {
@@ -8394,6 +9068,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       ...hasEmail ? { email: emailVal } : {},
       buyerAcceptsPurchaseConditions: true,
       buyerAcceptsTermsConditions: true,
+      ...attribution ? { attribution } : {},
       ...extraUpdateVars
     };
     if (addressObj) {
@@ -9982,59 +10657,6 @@ function toSmallestUnit(amount, currency) {
   return Math.round(amount * 100);
 }
 
-// src/core/content.ts
-var CONTENT_ID_QUERY = "vio_content";
-var CONTENT_TITLE_QUERY = "vio_content_title";
-var CONTENT_ID_MAX_LENGTH = 128;
-var CONTENT_TITLE_MAX_LENGTH = 255;
-function resolveContent(init, doc = typeof document !== "undefined" ? document : null, loc = typeof location !== "undefined" ? location : null) {
-  try {
-    const query = parseQuery(loc?.search);
-    const id = fits(text(init?.contentId)) ?? fits(text(query.get(CONTENT_ID_QUERY))) ?? fits(text(meta(doc, "name", "vio:content-id"))) ?? fits(stripQueryAndHash(text(attr(doc, 'link[rel="canonical"]', "href")))) ?? fits(stripQueryAndHash(text(meta(doc, "property", "og:url")))) ?? fits(text(loc?.pathname));
-    const title = text(init?.contentTitle) ?? text(query.get(CONTENT_TITLE_QUERY)) ?? text(meta(doc, "name", "vio:content-title")) ?? text(meta(doc, "property", "og:title")) ?? text(doc?.title);
-    const out = {};
-    if (id !== void 0) out.id = id;
-    if (title !== void 0) out.title = title.slice(0, CONTENT_TITLE_MAX_LENGTH);
-    return out;
-  } catch {
-    return {};
-  }
-}
-function fits(value) {
-  return value !== void 0 && value.length <= CONTENT_ID_MAX_LENGTH ? value : void 0;
-}
-function text(value) {
-  if (value === void 0 || value === null) return void 0;
-  const s4 = String(value).trim();
-  return s4 ? s4 : void 0;
-}
-function parseQuery(search) {
-  try {
-    return new URLSearchParams(typeof search === "string" ? search : "");
-  } catch {
-    return new URLSearchParams();
-  }
-}
-function meta(doc, key, value) {
-  return attr(doc, `meta[${key}="${value}"]`, "content");
-}
-function attr(doc, selector, name) {
-  try {
-    if (!doc || typeof doc.querySelector !== "function") return void 0;
-    const el = doc.querySelector(selector);
-    const v2 = el?.getAttribute?.(name);
-    return typeof v2 === "string" ? v2 : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function stripQueryAndHash(url) {
-  if (!url) return void 0;
-  const cut2 = url.search(/[?#]/);
-  const clean = cut2 >= 0 ? url.slice(0, cut2) : url;
-  return clean.trim() || void 0;
-}
-
 // src/core/analytics/client-context.ts
 var UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
 var CLIENT_LANGUAGE_MAX_LENGTH = 16;
@@ -10042,6 +10664,7 @@ var CLIENT_REFERRER_MAX_LENGTH = 2048;
 var CLIENT_UTM_MAX_LENGTH = 128;
 var CLIENT_TZ_MAX_LENGTH = 64;
 var CLIENT_SCREEN_MAX = 65535;
+var CLIENT_LANDING_URL_MAX_LENGTH = 2048;
 var LANDING_KEY = "vio.landing.v1";
 function defaultClientEnvironment() {
   return {
@@ -10064,6 +10687,8 @@ function resolveLanding(env = defaultClientEnvironment(), persist = true) {
     const referrer = internal ? void 0 : landingReferrer(raw);
     if (referrer) landing.referrer = referrer;
     if (utm) landing.utm = utm;
+    const url = landingUrl(env.location?.href);
+    if (url) landing.url = url;
     if (persist) writeLanding(env.storage, landing);
     return landing;
   } catch {
@@ -10071,15 +10696,13 @@ function resolveLanding(env = defaultClientEnvironment(), persist = true) {
   }
 }
 function landingReferrer(raw) {
-  const value = text2(raw);
-  if (!value) return void 0;
-  try {
-    const url = new URL(value);
-    return cut(`${url.origin}${url.pathname}`, CLIENT_REFERRER_MAX_LENGTH);
-  } catch {
-    const end = value.search(/[?#]/);
-    return cut(end >= 0 ? value.slice(0, end) : value, CLIENT_REFERRER_MAX_LENGTH);
-  }
+  return originAndPath(raw, CLIENT_REFERRER_MAX_LENGTH);
+}
+function landingUrl(raw) {
+  return originAndPath(raw, CLIENT_LANDING_URL_MAX_LENGTH);
+}
+function storedLanding(storage2 = defaultClientEnvironment().storage) {
+  return readLanding(storage2);
 }
 function isSameHost(referrer, host) {
   const value = text2(referrer);
@@ -10103,19 +10726,19 @@ function removeLanding(storage2 = defaultClientEnvironment().storage) {
 function resolveClientContext(env = defaultClientEnvironment(), landing = resolveLanding(env)) {
   const out = {};
   try {
-    const language = cut(text2(env.navigator?.language), CLIENT_LANGUAGE_MAX_LENGTH);
+    const language = cut2(text2(env.navigator?.language), CLIENT_LANGUAGE_MAX_LENGTH);
     if (language) out.language = language;
-    const referrer = cut(landing.referrer, CLIENT_REFERRER_MAX_LENGTH);
+    const referrer = cut2(landing.referrer, CLIENT_REFERRER_MAX_LENGTH);
     if (referrer) out.referrer = referrer;
     for (const key of UTM_KEYS) {
-      const value = cut(landing.utm?.[key], CLIENT_UTM_MAX_LENGTH);
+      const value = cut2(landing.utm?.[key], CLIENT_UTM_MAX_LENGTH);
       if (value) out[key] = value;
     }
     const w2 = dimension(env.screen?.width);
     const h3 = dimension(env.screen?.height);
     if (w2 !== void 0) out.screen_w = w2;
     if (h3 !== void 0) out.screen_h = h3;
-    const tz = cut(text2(safeCall(env.timeZone)), CLIENT_TZ_MAX_LENGTH);
+    const tz = cut2(text2(safeCall(env.timeZone)), CLIENT_TZ_MAX_LENGTH);
     if (tz) out.tz = tz;
   } catch {
   }
@@ -10131,7 +10754,7 @@ function utmOf(search) {
   const out = {};
   let any = false;
   for (const key of UTM_KEYS) {
-    const value = cut(text2(params.get(key)), CLIENT_UTM_MAX_LENGTH);
+    const value = cut2(text2(params.get(key)), CLIENT_UTM_MAX_LENGTH);
     if (value) {
       out[key] = value;
       any = true;
@@ -10147,13 +10770,15 @@ function readLanding(storage2) {
     if (!parsed || typeof parsed !== "object") return null;
     const p3 = parsed;
     const landing = {};
-    const referrer = cut(text2(p3.referrer), CLIENT_REFERRER_MAX_LENGTH);
+    const referrer = cut2(text2(p3.referrer), CLIENT_REFERRER_MAX_LENGTH);
     if (referrer) landing.referrer = referrer;
+    const url = cut2(text2(p3.url), CLIENT_LANDING_URL_MAX_LENGTH);
+    if (url) landing.url = url;
     if (p3.utm && typeof p3.utm === "object") {
       const utm = {};
       let any = false;
       for (const key of UTM_KEYS) {
-        const value = cut(text2(p3.utm[key]), CLIENT_UTM_MAX_LENGTH);
+        const value = cut2(text2(p3.utm[key]), CLIENT_UTM_MAX_LENGTH);
         if (value) {
           utm[key] = value;
           any = true;
@@ -10184,7 +10809,7 @@ function text2(value) {
   const s4 = String(value).trim();
   return s4 ? s4 : void 0;
 }
-function cut(value, max) {
+function cut2(value, max) {
   if (value === void 0) return void 0;
   return value.length > max ? value.slice(0, max) : value;
 }
@@ -10304,6 +10929,10 @@ var AnalyticsManager = class extends EventTarget {
     /** The landing it was read from — persisted later when consent arrives after the first event. */
     this.landing = null;
     this.teardown = [];
+  }
+  /** The landing this manager resolved on this page load (the first event's), or null before it; read only — for the order's entry context when nothing is stored yet. */
+  get currentLanding() {
+    return this.landing;
   }
   // MARK: - Public API
   /**
@@ -10488,7 +11117,7 @@ var AnalyticsManager = class extends EventTarget {
       // one is usually the tracking tail, not the page. The other host-given
       // fields (broadcastId, componentTemplateId, errorCode, variant, …) are
       // the host's responsibility: the SDK does not touch them.
-      content_url: capUrl(ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0)),
+      content_url: capContentUrl(ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0)),
       // The host's own content id — its join key back onto its reporting.
       // Explicit on the event when it fits, else what the SDK resolved for
       // the page (already capped per source), else nothing.
@@ -10978,14 +11607,6 @@ function capTitle(value) {
   if (!value) return void 0;
   return value.length > CONTENT_TITLE_MAX_LENGTH ? value.slice(0, CONTENT_TITLE_MAX_LENGTH) : value;
 }
-var CONTENT_URL_MAX_LENGTH = 2048;
-function capUrl(value) {
-  if (!value) return void 0;
-  if (value.length <= CONTENT_URL_MAX_LENGTH) return value;
-  const cut2 = value.search(/[?#]/);
-  const withoutQuery = cut2 >= 0 ? value.slice(0, cut2) : value;
-  return withoutQuery.length <= CONTENT_URL_MAX_LENGTH ? withoutQuery : withoutQuery.slice(0, CONTENT_URL_MAX_LENGTH);
-}
 function sliceCommerce(slice) {
   return { items: slice.items, value: slice.value, currency: slice.currency };
 }
@@ -11074,8 +11695,87 @@ function pushGa4(event) {
   });
 }
 
+// src/core/checkout/attribution.ts
+var CHECKOUT_ATTRIBUTION_CAPS = Object.freeze({
+  surfaceKey: 255,
+  contentUrl: 2048,
+  contentTitle: CONTENT_TITLE_MAX_LENGTH,
+  referrer: CLIENT_REFERRER_MAX_LENGTH,
+  utm: CLIENT_UTM_MAX_LENGTH,
+  landingUrl: CLIENT_LANDING_URL_MAX_LENGTH
+});
+function checkoutAttributionOf(input) {
+  const out = {};
+  const surfaceKey = cut3(input.surfaceKey, CHECKOUT_ATTRIBUTION_CAPS.surfaceKey);
+  if (surfaceKey) out.surface_key = surfaceKey;
+  const campaignId = positiveInt(input.pageCampaignId) ?? dominantCampaignOf(input.slices);
+  if (campaignId !== void 0) out.campaign_id = campaignId;
+  if (input.privacyMode === "standard") {
+    const url = originAndPath(input.content?.url, CHECKOUT_ATTRIBUTION_CAPS.contentUrl);
+    if (url) out.content_url = url;
+    const title = cut3(input.content?.title, CHECKOUT_ATTRIBUTION_CAPS.contentTitle);
+    if (title) out.content_title = title;
+    const entry = entryContextOf(input.landing);
+    if (entry) out.entry = entry;
+  }
+  return Object.keys(out).length ? out : void 0;
+}
+function entryContextOf(landing) {
+  if (!landing || typeof landing !== "object") return void 0;
+  const out = {};
+  const referrer = cut3(landing.referrer, CHECKOUT_ATTRIBUTION_CAPS.referrer);
+  if (referrer) out.referrer = referrer;
+  const source = cut3(landing.utm?.utm_source, CHECKOUT_ATTRIBUTION_CAPS.utm);
+  if (source) out.utm_source = source;
+  const medium = cut3(landing.utm?.utm_medium, CHECKOUT_ATTRIBUTION_CAPS.utm);
+  if (medium) out.utm_medium = medium;
+  const campaign = cut3(landing.utm?.utm_campaign, CHECKOUT_ATTRIBUTION_CAPS.utm);
+  if (campaign) out.utm_campaign = campaign;
+  const landingUrl2 = cut3(landing.url, CHECKOUT_ATTRIBUTION_CAPS.landingUrl);
+  if (landingUrl2) out.landing_url = landingUrl2;
+  return Object.keys(out).length ? out : void 0;
+}
+function dominantCampaignOf(slices) {
+  if (!Array.isArray(slices)) return void 0;
+  let best;
+  for (const slice of slices) {
+    const campaignId = positiveInt(slice?.campaignId);
+    if (campaignId === void 0) continue;
+    const items = Array.isArray(slice.items) ? slice.items : [];
+    const units = items.reduce((sum, item) => sum + (Number(item?.quantity) > 0 ? Number(item.quantity) : 0), 0);
+    const value = Number(slice.value) || 0;
+    if (!best || units > best.units || units === best.units && value > best.value) {
+      best = { campaignId, units, value };
+    }
+  }
+  return best?.campaignId;
+}
+function positiveInt(value) {
+  if (value === void 0 || value === null || value === "") return void 0;
+  const n6 = Number(value);
+  return Number.isInteger(n6) && n6 > 0 && n6 <= GRAPHQL_INT_MAX ? n6 : void 0;
+}
+function cut3(value, max) {
+  if (typeof value !== "string" && typeof value !== "number") return void 0;
+  const text3 = String(value).trim();
+  if (!text3) return void 0;
+  return text3.length > max ? text3.slice(0, max).trim() || void 0 : text3;
+}
+
 // src/core/client.ts
 var SLOT_DECLARATION_DEBOUNCE_MS = 1e3;
+var PRIVACY_MODE_TIMEOUT_MS = 1500;
+var PRIVACY_UNKNOWN_TTL_MS = 6e4;
+function privacyModeOf(value) {
+  return value === "minimal" || value === "standard" ? value : void 0;
+}
+function privacyModeOfSurface(res) {
+  const surface = res?.surface;
+  if (!surface || typeof surface !== "object") return "unknown";
+  const raw = surface.privacyMode;
+  if (raw === void 0 || raw === null) return "standard";
+  return privacyModeOf(raw) ?? "unknown";
+}
 var VioFacade = class {
   constructor() {
     this.apiInstance = null;
@@ -11108,6 +11808,10 @@ var VioFacade = class {
     this.cartManager = null;
     this.checkoutManager = null;
     this.analyticsManager = null;
+    /** What the surface answered of its privacy mode (`GET /v2/mobile/surface`) and when; `unknown` expires after a minute. */
+    this.surfaceMode = null;
+    /** The request in flight for it, if any. */
+    this.surfaceRequest = null;
   }
   init(config) {
     Configuration.init(config);
@@ -11117,6 +11821,9 @@ var VioFacade = class {
     this.cachedBootstrap = null;
     this.bootstrapFailedAt = 0;
     this.generation++;
+    this.surfaceMode = null;
+    this.surfaceRequest = null;
+    this.preloadPrivacyMode();
     this.checkoutManager?.clearPaymentMethodsCache();
     if (this.slotDeclareTimer) {
       clearTimeout(this.slotDeclareTimer);
@@ -11158,9 +11865,13 @@ var VioFacade = class {
     if (!this.cartManager) this.cartManager = new CartManager();
     return this.cartManager;
   }
-  /** Checkout flow manager. Subscribes to cart state via the CartManager. */
+  /** Checkout flow manager. Subscribes to cart state via the CartManager; asks here for the order's attribution. */
   get checkout() {
-    if (!this.checkoutManager) this.checkoutManager = new CheckoutManager(this.cart);
+    if (!this.checkoutManager) {
+      this.checkoutManager = new CheckoutManager(this.cart, {
+        orderAttribution: (sponsorId) => this.orderAttribution(sponsorId)
+      });
+    }
     return this.checkoutManager;
   }
   /**
@@ -11202,6 +11913,7 @@ var VioFacade = class {
         this.cachedBootstrap = res;
         this.bootstrapFailedAt = 0;
         if (this.slotsDirty) this.scheduleSlotDeclaration();
+        this.preloadPrivacyMode();
         return res;
       },
       (err) => {
@@ -11458,9 +12170,154 @@ var VioFacade = class {
       const content = this.content();
       if (content.id) out.contentId = content.id;
       if (content.title) out.contentTitle = content.title;
+      if (content.url) out.contentUrl = content.url;
     } catch {
     }
     return out;
+  }
+  /**
+   * What the surface answered and is still believed: `standard` / `minimal`
+   * for the configuration; `unknown` for a minute after a timeout or a
+   * failure (then it is asked again). `null` = nothing believed.
+   */
+  believedSurfaceMode() {
+    const answer = this.surfaceMode;
+    if (!answer) return null;
+    if (answer.mode !== "unknown") return answer.mode;
+    return Date.now() - answer.at < PRIVACY_UNKNOWN_TTL_MS ? "unknown" : null;
+  }
+  /**
+   * Ask the surface its privacy mode (`GET /v2/mobile/surface`), once —
+   * started at `init()` and again by `bootstrap()`, never by the payment
+   * path, which only reads what is known (`privacyModeNow`). Resolves what
+   * was learnt within 1.5 s: the mode; `standard` for a service that predates
+   * the endpoint (404) or a surface that names none; `unknown` for a word the
+   * SDK does not know, a timeout or any other failure — believed for a
+   * minute, then asked again. An answer that arrives after the cap still
+   * lands for the next step. Never throws.
+   */
+  preloadPrivacyMode() {
+    try {
+      if (this.surfaceRequest) return this.surfaceRequest;
+      const believed = this.believedSurfaceMode();
+      if (believed) return Promise.resolve(believed);
+      if (!Configuration.isInitialized) return Promise.resolve("unknown");
+      const now = Date.now();
+      if (Configuration.get().privacyMode === "minimal") {
+        this.surfaceMode = { mode: "minimal", at: now };
+        return Promise.resolve("minimal");
+      }
+      const generation = this.generation;
+      const learnt = (mode) => {
+        if (generation !== this.generation) return;
+        if (mode === "unknown" && this.surfaceMode && this.surfaceMode.mode !== "unknown") return;
+        this.surfaceMode = { mode, at: Date.now() };
+      };
+      const asked = this.api.surface().then(
+        (res) => privacyModeOfSurface(res),
+        (err) => err instanceof VioApiError && err.status === 404 ? "standard" : "unknown"
+      );
+      let timer;
+      const capped = new Promise((resolve) => {
+        timer = setTimeout(() => resolve("unknown"), PRIVACY_MODE_TIMEOUT_MS);
+      });
+      const request2 = Promise.race([asked, capped]).then((mode) => {
+        clearTimeout(timer);
+        learnt(mode);
+        if (this.surfaceRequest === request2) this.surfaceRequest = null;
+        return mode;
+      });
+      void asked.then((mode) => {
+        clearTimeout(timer);
+        learnt(mode);
+      });
+      this.surfaceRequest = request2;
+      return request2;
+    } catch {
+      return Promise.resolve("unknown");
+    }
+  }
+  /**
+   * How much of the visit the order attribution may carry (ADR-0035): the
+   * surface's privacy mode, as known RIGHT NOW, without waiting —
+   * `Vio.init({ privacyMode: 'minimal' })` when the host says so, else what
+   * the bootstrap says of the surface, else what the surface answered to the
+   * ask `init()` started (`preloadPrivacyMode`), else the host's `standard`
+   * once the surface could not tell. `unknown` while nothing is known: then
+   * the page, the slot and the entry stay off what goes to Commerce, because
+   * what can reveal which screen someone was on, and why, is only sent when
+   * the surface is known to allow it. The payment path reads this one.
+   */
+  privacyModeNow() {
+    try {
+      const config = Configuration.isInitialized ? Configuration.get() : void 0;
+      if (config?.privacyMode === "minimal") return "minimal";
+      const fromBootstrap = privacyModeOf(this.cachedBootstrap?.surface?.privacyMode);
+      if (fromBootstrap) return fromBootstrap;
+      if (!config) return "unknown";
+      const believed = this.believedSurfaceMode();
+      if (believed === "standard" || believed === "minimal") return believed;
+      if (!believed) this.preloadPrivacyMode();
+      return believed === "unknown" ? config.privacyMode ?? "unknown" : "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  /**
+   * `privacyModeNow`, but waiting for the ask in flight when there is one
+   * (at most its 1.5 s cap) — for the cart's lines, which are not the
+   * payment path. Never throws.
+   */
+  async privacyMode() {
+    try {
+      const now = this.privacyModeNow();
+      if (now !== "unknown") return now;
+      if (!this.surfaceRequest) return "unknown";
+      const asked = await this.surfaceRequest;
+      if (asked !== "unknown") return asked;
+      const config = Configuration.isInitialized ? Configuration.get() : void 0;
+      return config?.privacyMode ?? "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  /**
+   * The attribution of the order a sponsor's cart is about to become
+   * (ADR-0035 phase B) — what `CreateCheckout` / `UpdateCheckout` send as
+   * `attribution` and shopcart writes on the order: the surface (its SDK
+   * key), the page's campaign (`pageCampaign()`; without one, the campaign
+   * that explains most units of the cart under the same rule `purchase` is
+   * split by — `cartSlices`) and, on a surface KNOWN to be `standard`
+   * (`privacyModeNow`), the page (`content()`'s url as origin + path, and
+   * title) and where the session came in: the landing the session REMEMBERS
+   * (`storedLanding`, else the one analytics resolved on this page) — never
+   * the page the shopper pays on taken for a landing. Synchronous: nothing
+   * on the way to a payment waits for it. snake_case, capped to Commerce's
+   * limits. `undefined` when there is nothing to say; never throws.
+   */
+  orderAttribution(sponsorId) {
+    try {
+      const config = Configuration.isInitialized ? Configuration.get() : void 0;
+      const content = this.content();
+      return checkoutAttributionOf({
+        surfaceKey: config?.apiKey,
+        pageCampaignId: toNumber(this.pageCampaign()?.id),
+        slices: this.cartSlices(sponsorId),
+        content: { url: content.url, title: content.title },
+        landing: this.rememberedLanding(),
+        privacyMode: this.privacyModeNow()
+      });
+    } catch {
+      return void 0;
+    }
+  }
+  /** The landing the session remembers: what the first page stored, else what analytics resolved on this page load (consent pending); null otherwise. */
+  rememberedLanding() {
+    try {
+      return storedLanding() ?? this.analyticsManager?.currentLanding ?? null;
+    } catch {
+      return null;
+    }
   }
   /**
    * The cart split per campaign — the SAME rule `begin_checkout` / `purchase`
@@ -11629,7 +12486,7 @@ function vippsButtonAttributes(verb = "buy", opts = {}) {
 // src/react/index.ts
 import * as React from "react";
 
-// ../web-sdk-0240/node_modules/@lit/react/create-component.js
+// node_modules/@lit/react/create-component.js
 var e = /* @__PURE__ */ new Set(["children", "localName", "ref", "style", "className"]);
 var n = /* @__PURE__ */ new WeakMap();
 var t = (e7, t4, o7, l3, a3) => {
@@ -11660,7 +12517,7 @@ var o = ({ react: n6, tagName: o7, elementClass: l3, events: a3, displayName: s4
   return r6.displayName = s4 ?? l3.name, r6;
 };
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/css-tag.js
+// node_modules/@lit/reactive-element/css-tag.js
 var t2 = globalThis;
 var e2 = t2.ShadowRoot && (void 0 === t2.ShadyCSS || t2.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
 var s = Symbol();
@@ -11705,7 +12562,7 @@ var c = e2 ? (t4) => t4 : (t4) => t4 instanceof CSSStyleSheet ? ((t5) => {
   return r(e7);
 })(t4) : t4;
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/reactive-element.js
+// node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e3, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o3, getPrototypeOf: n3 } = Object;
 var a = globalThis;
 var c2 = a.trustedTypes;
@@ -11927,7 +12784,7 @@ var y = class extends HTMLElement {
 };
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = /* @__PURE__ */ new Map(), y[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
-// ../web-sdk-0240/node_modules/lit-html/lit-html.js
+// node_modules/lit-html/lit-html.js
 var t3 = globalThis;
 var i3 = (t4) => t4;
 var s2 = t3.trustedTypes;
@@ -12181,7 +13038,7 @@ var D = (t4, i5, s4) => {
   return h3._$AI(t4), h3;
 };
 
-// ../web-sdk-0240/node_modules/lit-element/lit-element.js
+// node_modules/lit-element/lit-element.js
 var s3 = globalThis;
 var i4 = class extends y {
   constructor() {
@@ -12210,7 +13067,7 @@ var o5 = s3.litElementPolyfillSupport;
 o5?.({ LitElement: i4 });
 (s3.litElementVersions ??= []).push("4.2.2");
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/property.js
+// node_modules/@lit/reactive-element/decorators/property.js
 var o6 = { attribute: true, type: String, converter: u, reflect: false, hasChanged: f };
 var r4 = (t4 = o6, e7, r6) => {
   const { kind: n6, metadata: i5 } = r6;
@@ -12240,15 +13097,15 @@ function n5(t4) {
   })(t4, e7, o7);
 }
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/state.js
+// node_modules/@lit/reactive-element/decorators/state.js
 function r5(r6) {
   return n5({ ...r6, state: true, attribute: false });
 }
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/base.js
+// node_modules/@lit/reactive-element/decorators/base.js
 var e5 = (e7, t4, c4) => (c4.configurable = true, c4.enumerable = true, Reflect.decorate && "object" != typeof t4 && Object.defineProperty(e7, t4, c4), c4);
 
-// ../web-sdk-0240/node_modules/@lit/reactive-element/decorators/query.js
+// node_modules/@lit/reactive-element/decorators/query.js
 function e6(e7, r6) {
   return (n6, s4, i5) => {
     const o7 = (t4) => t4.renderRoot?.querySelector(e7) ?? null;
@@ -12689,11 +13546,15 @@ var VioProduct = class extends i4 {
           // The host's sponsor-id wins; without one, the slot's campaign sponsor.
           sponsorId: this.sponsorId || this.sponsorFromAttribution(),
           // The host adds to the cart: pass this through as `origin` so the
-          // purchase is attributed to this place and campaign.
+          // purchase is attributed to this place, campaign, kind of element
+          // and page — the cart keeps it and Commerce receives it (ADR-0035).
           origin: {
             campaignId: attribution.campaignId,
             slot: attribution.slot,
-            contentId: attribution.contentId
+            contentId: attribution.contentId,
+            componentKind: attribution.componentTemplateId,
+            contentUrl: attribution.contentUrl,
+            contentTitle: attribution.contentTitle
           }
         }
       })
@@ -14491,14 +15352,14 @@ var VioProductDetail = class extends i4 {
     const sponsor = Vio.bootstrapCache?.primarySponsor;
     const secondaries = Vio.bootstrapCache?.secondarySponsors ?? [];
     const sponsorName = sponsor?.id === this.sponsorId ? sponsor.name : secondaries.find((s4) => s4.id === this.sponsorId)?.name;
-    const { campaignId, slot, contentId } = this.attribution();
+    const { campaignId, slot, contentId, componentTemplateId, contentUrl, contentTitle } = this.attribution();
     Vio.cart.addProduct({
       product: this.product,
       sponsorId: this.sponsorId,
       sponsorName,
       quantity: this.quantity,
       variantId: variant?.id,
-      origin: { campaignId, slot, contentId }
+      origin: { campaignId, slot, contentId, componentKind: componentTemplateId, contentUrl, contentTitle }
     });
     return variant?.id;
   }
@@ -19528,8 +20389,12 @@ export {
   ADD_ITEM_MUTATION,
   AnalyticsManager,
   BUYER_REF_MAX_LENGTH,
+  CHECKOUT_ATTRIBUTION_CAPS,
+  CLIENT_LANDING_URL_MAX_LENGTH,
+  CONTENT_URL_MAX_LENGTH,
   CREATE_CART_MUTATION,
   CREATE_CHECKOUT_MUTATION,
+  CREATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION,
   CREATE_PAYMENT_STRIPE_MUTATION,
   CREATE_PAYMENT_VIPPS_MUTATION,
   CartManager,
@@ -19542,9 +20407,13 @@ export {
   GET_CHECKOUT_QUERY,
   GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
   GET_VIPPS_STATUS_QUERY,
+  GRAPHQL_INT_MAX,
+  LINE_ORIGIN_CAPS,
   SDK_VERSION,
   UPDATE_CHECKOUT_MUTATION,
+  UPDATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION,
   UPDATE_ITEM_MUTATION,
+  UPDATE_ITEM_WITH_ORIGIN_MUTATION,
   UPDATE_SHIPPINGS_BY_SUPPLIER_MUTATION,
   VIPPS_BUTTON_SCRIPT,
   VIPPS_BUTTON_TAG,
@@ -19564,8 +20433,11 @@ export {
   autoSlotId,
   buyerRefOf,
   campaignCandidates,
+  capContentUrl,
   cartSlicesFrom,
   checkApplePayAvailability,
+  checkoutAttributionOf,
+  componentKindOf,
   createCart,
   createCheckout,
   createCommerceClient,
@@ -19574,9 +20446,12 @@ export {
   createVioApi,
   deleteItem,
   displayPrice,
+  dominantCampaignOf,
   ensureVippsButton,
+  entryContextOf,
   executeCartGraphQL,
   formatPrice,
+  gatewayHas,
   getAvailablePaymentMethods,
   getCart,
   getCartGraphQLOptions,
@@ -19586,13 +20461,19 @@ export {
   getGlobalCurrency,
   getLineItemsBySupplier,
   getVippsStatus,
+  isUnknownFeatureError,
+  isUnknownTokenError,
+  landingUrl,
+  lineOriginWire,
   lineOrigins,
   normalizeBuyerRef,
   normalizeOrigin,
   normalizeScope,
   normalizeSlotKind,
+  originAndPath,
   primaryImageUrl,
   purchaseFromPaymentSuccess,
+  resetGatewayFeatures,
   resolveCampaignId,
   resolveClientContext,
   resolveContent,
@@ -19601,11 +20482,13 @@ export {
   sameOrigin,
   showApplePaySheet,
   sponsorCampaignEntry,
+  storedLanding,
   toCampaignId,
   updateCheckout,
   updateItem,
   updateShippingsBySupplier,
-  vippsButtonAttributes
+  vippsButtonAttributes,
+  withGatewayFeature
 };
 /*! Bundled license information:
 
