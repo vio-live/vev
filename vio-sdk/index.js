@@ -7042,6 +7042,160 @@ function lineOrigins(line) {
   return copy.origins;
 }
 
+// src/core/sponsor-identity.ts
+var CHECKOUT_SPONSOR_STORAGE_KEY = "vio.checkoutSponsor.v1";
+var CHECKOUT_SPONSOR_MEMORY_MAX = 20;
+function toSponsorId(value) {
+  if (value === null || value === void 0 || value === "") return void 0;
+  const n6 = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isInteger(n6) && n6 > 0 ? n6 : void 0;
+}
+function urlOrNull(value) {
+  if (typeof value !== "string") return null;
+  const v2 = value.trim();
+  return v2 ? v2 : null;
+}
+function pageUrlOrNull(value) {
+  const v2 = urlOrNull(value);
+  if (!v2) return null;
+  try {
+    return new URL(v2).protocol === "https:" ? v2 : null;
+  } catch {
+    return null;
+  }
+}
+function nameOf(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function findSponsorIn(boot, sponsorId) {
+  const id = toSponsorId(sponsorId);
+  if (id === void 0 || !boot || typeof boot !== "object") return void 0;
+  const match = (s4) => !!s4 && typeof s4 === "object" && Number(s4.id) === id;
+  if (match(boot.primarySponsor)) return boot.primarySponsor;
+  const secondary = Array.isArray(boot.secondarySponsors) ? boot.secondarySponsors.find(match) : void 0;
+  if (secondary) return secondary;
+  const campaigns = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+  for (const c4 of campaigns) {
+    if (!c4 || typeof c4 !== "object") continue;
+    if (match(c4.primarySponsor)) return c4.primarySponsor;
+    const s4 = Array.isArray(c4.secondarySponsors) ? c4.secondarySponsors.find(match) : void 0;
+    if (s4) return s4;
+  }
+  return void 0;
+}
+function sponsorIdentityFrom(boot, sponsorId) {
+  try {
+    const id = toSponsorId(sponsorId);
+    if (id === void 0) return null;
+    const sponsor = findSponsorIn(boot, id);
+    if (!sponsor) return null;
+    const name = nameOf(sponsor.name);
+    const logoUrl = urlOrNull(sponsor.logoUrl);
+    if (!name && !logoUrl) return null;
+    const termsUrl = pageUrlOrNull(sponsor.termsUrl);
+    const refundPolicyUrl = pageUrlOrNull(sponsor.refundPolicyUrl);
+    return {
+      id,
+      name,
+      logoUrl,
+      avatarUrl: urlOrNull(sponsor.avatarUrl),
+      ...termsUrl ? { termsUrl } : {},
+      ...refundPolicyUrl ? { refundPolicyUrl } : {}
+    };
+  } catch {
+    return null;
+  }
+}
+function checkoutSponsorOf(identity) {
+  if (!identity) return void 0;
+  return { id: identity.id, name: identity.name, logoUrl: identity.logoUrl ?? null };
+}
+var inMemory = [];
+var storageRefusedWrite = false;
+function sessionStore() {
+  try {
+    const s4 = globalThis.sessionStorage;
+    return s4 && typeof s4.getItem === "function" && typeof s4.setItem === "function" ? s4 : null;
+  } catch {
+    return null;
+  }
+}
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const r6 = raw;
+  const checkoutId = typeof r6.checkoutId === "string" ? r6.checkoutId.trim() : "";
+  const sponsorId = toSponsorId(r6.sponsorId);
+  if (!checkoutId || sponsorId === void 0) return null;
+  return { checkoutId, sponsorId, name: nameOf(r6.name), logoUrl: urlOrNull(r6.logoUrl) };
+}
+function readEntries() {
+  const store = storageRefusedWrite ? null : sessionStore();
+  if (store) {
+    try {
+      const raw = store.getItem(CHECKOUT_SPONSOR_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map(normalizeEntry).filter((e7) => e7 !== null);
+      }
+    } catch {
+    }
+  }
+  return inMemory.slice();
+}
+function writeEntries(entries) {
+  inMemory = entries.slice();
+  const store = sessionStore();
+  if (!store) return;
+  try {
+    store.setItem(CHECKOUT_SPONSOR_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    storageRefusedWrite = true;
+  }
+}
+function rememberCheckoutSponsor(checkoutId, sponsor) {
+  try {
+    const id = typeof checkoutId === "string" ? checkoutId.trim() : "";
+    const sponsorId = toSponsorId(sponsor?.sponsorId);
+    if (!id || sponsorId === void 0) return;
+    const entries = readEntries();
+    const previous = entries.find((e7) => e7.checkoutId === id);
+    let name = nameOf(sponsor.name);
+    let logoUrl = urlOrNull(sponsor.logoUrl);
+    if (previous && previous.sponsorId === sponsorId && !name && !logoUrl) {
+      name = previous.name;
+      logoUrl = previous.logoUrl;
+    }
+    const next = entries.filter((e7) => e7.checkoutId !== id);
+    next.push({ checkoutId: id, sponsorId, name, logoUrl });
+    writeEntries(next.slice(-CHECKOUT_SPONSOR_MEMORY_MAX));
+  } catch {
+  }
+}
+function rememberedCheckoutSponsor(checkoutId) {
+  try {
+    const id = typeof checkoutId === "string" ? checkoutId.trim() : "";
+    if (!id) return null;
+    return readEntries().find((e7) => e7.checkoutId === id) ?? null;
+  } catch {
+    return null;
+  }
+}
+function rememberedSponsor(sponsorId) {
+  try {
+    const id = toSponsorId(sponsorId);
+    if (id === void 0) return null;
+    const entries = readEntries();
+    for (let i5 = entries.length - 1; i5 >= 0; i5--) {
+      const e7 = entries[i5];
+      if (e7.sponsorId === id && (e7.name || e7.logoUrl)) return e7;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // src/core/checkout/payments/apple-pay.ts
 var STRIPE_JS_URL = "https://js.stripe.com/v3";
 var stripeJsPromise = null;
@@ -7895,7 +8049,7 @@ function installQliroListeners(options) {
   let destroyed = false;
   let orderUpdatedRegistered = false;
   let pending2 = null;
-  const emit = (event) => {
+  const emit2 = (event) => {
     try {
       onEvent?.(event);
     } catch {
@@ -7930,24 +8084,24 @@ function installQliroListeners(options) {
     }
     if (destroyed) return;
     q1 = instance;
-    instance.onCheckoutLoaded(() => emit({ type: "loaded" }));
+    instance.onCheckoutLoaded(() => emit2({ type: "loaded" }));
     instance.onShippingMethodChanged(
-      (shipping) => emit({ type: "shipping-changed", shipping })
+      (shipping) => emit2({ type: "shipping-changed", shipping })
     );
     instance.onShippingPriceChanged(
-      (price, totalPrice) => emit({ type: "shipping-price-changed", price, totalPrice })
+      (price, totalPrice) => emit2({ type: "shipping-price-changed", price, totalPrice })
     );
     instance.onCustomerInfoChanged(
-      (customer) => emit({ type: "customer-changed", customer })
+      (customer) => emit2({ type: "customer-changed", customer })
     );
     instance.onPaymentMethodChanged(
-      (paymentMethod) => emit({ type: "payment-method-changed", paymentMethod })
+      (paymentMethod) => emit2({ type: "payment-method-changed", paymentMethod })
     );
     instance.onPaymentDeclined(
-      (reason, message) => emit({ type: "payment-declined", reason, message })
+      (reason, message) => emit2({ type: "payment-declined", reason, message })
     );
     instance.onSessionExpired(() => {
-      emit({ type: "session-expired" });
+      emit2({ type: "session-expired" });
       void controller.sync();
     });
   };
@@ -7980,7 +8134,7 @@ function installQliroListeners(options) {
       try {
         result = await syncPaymentQliro(checkoutId, queryOptions);
       } catch (error) {
-        emit({ type: "sync-failed", error });
+        emit2({ type: "sync-failed", error });
         settle();
         await settled;
         return null;
@@ -8484,7 +8638,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.25.0";
+var SDK_VERSION = "0.28.0";
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -8739,7 +8893,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     super();
     this.cartManager = cartManager;
     this.deps = deps;
-    this.state = null;
+    this.currentStateValue = null;
+    /** The last checkout + identity written to the memory — the state is set on every keystroke of the form. */
+    this.lastRememberedSponsor = "";
     /** Counts `open()` calls — see CheckoutState.session. */
     this.sessionSeq = 0;
     this.applePayAvailableCache = null;
@@ -8782,6 +8938,18 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.referenceInFlight = /* @__PURE__ */ new Map();
     this.kustomController = null;
     preloadStripeJs();
+  }
+  /**
+   * Every write of the state goes through here: a state that names its
+   * backend checkout is remembered with its sponsor (see
+   * `rememberSponsorOfCheckout`), whatever path created the checkout.
+   */
+  get state() {
+    return this.currentStateValue;
+  }
+  set state(next) {
+    this.currentStateValue = next;
+    if (next?.checkoutId && next.sponsorId) this.rememberSponsorOfCheckout(next.checkoutId, next.sponsorId);
   }
   open(sponsorId) {
     const cart = this.cartManager.getCart(sponsorId);
@@ -8901,21 +9069,81 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * `buyer_id`. Never throws; `null` for whatever the API does not say.
    */
   async getOrderReference(checkoutId, sponsorId) {
-    if (!checkoutId) return { orderNumber: null, buyerRef: null };
-    const inFlight = this.referenceInFlight.get(checkoutId);
-    if (inFlight) return inFlight;
-    const request2 = (async () => {
-      try {
-        const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
-        return await getCheckoutReference(checkoutId, opts);
-      } catch {
-        return { orderNumber: null, buyerRef: null };
-      } finally {
-        this.referenceInFlight.delete(checkoutId);
+    if (!checkoutId) return this.withSponsor({ orderNumber: null, buyerRef: null }, checkoutId, sponsorId);
+    let request2 = this.referenceInFlight.get(checkoutId);
+    if (!request2) {
+      const asked = (async () => {
+        try {
+          const opts = await getCartGraphQLOptions(
+            sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId
+          );
+          return await getCheckoutReference(checkoutId, opts);
+        } catch {
+          return { orderNumber: null, buyerRef: null };
+        } finally {
+          this.referenceInFlight.delete(checkoutId);
+        }
+      })();
+      this.referenceInFlight.set(checkoutId, asked);
+      request2 = asked;
+    }
+    return this.withSponsor(await request2, checkoutId, sponsorId);
+  }
+  /**
+   * The sponsor of a checkout as `getOrderReference` carries it
+   * (`{ id, name, logoUrl }`): the given sponsor, else the one this tab
+   * remembered for the checkout, else the open checkout's when it IS that
+   * checkout — named by the `Vio.sponsorIdentity` rule. `undefined` when
+   * nothing names it; never throws.
+   */
+  checkoutSponsor(checkoutId, sponsorId) {
+    try {
+      const id = sponsorId ?? this.sponsorIdOfCheckout(checkoutId ?? void 0);
+      const numeric = id === void 0 || id === null || id === "" ? void 0 : Number(id);
+      if (typeof this.deps.sponsorIdentity === "function") {
+        return checkoutSponsorOf(this.deps.sponsorIdentity(numeric, { checkoutId: checkoutId ?? void 0 }));
       }
-    })();
-    this.referenceInFlight.set(checkoutId, request2);
-    return request2;
+      const memo = rememberedCheckoutSponsor(checkoutId ?? void 0);
+      if (memo && (numeric === void 0 || memo.sponsorId === numeric) && (memo.name || memo.logoUrl)) {
+        return { id: memo.sponsorId, name: memo.name, logoUrl: memo.logoUrl };
+      }
+      return void 0;
+    } catch {
+      return void 0;
+    }
+  }
+  /** The sponsor id of a checkout: this tab's memory of it, else the open checkout's when it is that one. */
+  sponsorIdOfCheckout(checkoutId) {
+    if (!checkoutId) return void 0;
+    const memo = rememberedCheckoutSponsor(checkoutId);
+    if (memo) return memo.sponsorId;
+    return this.state?.checkoutId === checkoutId ? this.state.sponsorId : void 0;
+  }
+  withSponsor(reference, checkoutId, sponsorId) {
+    const sponsor = this.checkoutSponsor(checkoutId || void 0, sponsorId);
+    return sponsor ? { ...reference, sponsor } : reference;
+  }
+  /**
+   * Remember whose checkout this is (`rememberCheckoutSponsor`), with the
+   * sponsor's name and logo as known now — so a confirmation after a redirect
+   * or a reload can name the brand. Written again only when something changed.
+   */
+  rememberSponsorOfCheckout(checkoutId, sponsorId) {
+    try {
+      let identity = null;
+      try {
+        identity = this.deps.sponsorIdentity?.(sponsorId, { checkoutId }) ?? null;
+      } catch {
+        identity = null;
+      }
+      const name = identity?.name || this.cartManager.getCart(sponsorId)?.sponsorName || "";
+      const logoUrl = identity?.logoUrl ?? null;
+      const key = JSON.stringify([checkoutId, sponsorId, name, logoUrl]);
+      if (key === this.lastRememberedSponsor) return;
+      this.lastRememberedSponsor = key;
+      rememberCheckoutSponsor(checkoutId, { sponsorId, name, logoUrl });
+    } catch {
+    }
   }
   /**
    * Payment methods enabled for the sponsor (backend-configured). Memoised per
@@ -10065,7 +10293,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         );
       }
       const buyerRef = normalizeBuyerRef(confirmRes?.[BUYER_REF_FIELD]);
-      return { orderId: confirmRes?.order_id, status: confirmRes?.status, ...buyerRef ? { buyerRef } : {} };
+      return {
+        orderId: confirmRes?.order_id,
+        status: confirmRes?.status,
+        checkoutId,
+        ...buyerRef ? { buyerRef } : {}
+      };
     };
   }
   static {
@@ -10894,6 +11127,8 @@ function hasExplicitCampaign(lines) {
 }
 
 // src/core/analytics/analytics-manager.ts
+var ORDER_NUMBER_BACKOFF_MS = [500, 1e3, 2e3, 3e3, 3e3];
+var ORDER_NUMBER_MAX_WAIT_MS = 1e4;
 var SESSION_TTL_MS = 30 * 60 * 1e3;
 var FLUSH_INTERVAL_MS = 5e3;
 var FLUSH_AT_COUNT = 20;
@@ -10928,6 +11163,12 @@ var AnalyticsManager = class extends EventTarget {
     this.client = null;
     /** The landing it was read from — persisted later when consent arrives after the first event. */
     this.landing = null;
+    /** Checkouts (`c:<id>`) and orders (`o:<number>`) this page load reported a `purchase` for: one each. */
+    this.purchased = /* @__PURE__ */ new Set();
+    /** Purchases still waiting for Vio's order number: each sends at once, with what it has, when called. */
+    this.pendingPurchases = /* @__PURE__ */ new Set();
+    /** Between `pagehide` and `pageshow` (bfcache): nothing waits, it all goes out now. */
+    this.pageHiding = false;
     this.teardown = [];
   }
   /** The landing this manager resolved on this page load (the first event's), or null before it; read only — for the order's entry context when nothing is stored yet. */
@@ -10977,15 +11218,32 @@ var AnalyticsManager = class extends EventTarget {
     this.ensureSession();
     this.flushTimer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
     const onPageHide = () => {
+      this.pageHiding = true;
+      this.settlePendingPurchases();
       this.trackSessionEnd();
       this.flushWithBeacon();
     };
+    const onPageShow2 = () => {
+      this.pageHiding = false;
+    };
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow2);
     this.teardown.push(() => window.removeEventListener("pagehide", onPageHide));
+    this.teardown.push(() => window.removeEventListener("pageshow", onPageShow2));
+    if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+      const onVisibility = () => {
+        if (document.visibilityState !== "hidden" || this.pendingPurchases.size === 0) return;
+        this.settlePendingPurchases();
+        this.flushWithBeacon();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      this.teardown.push(() => document.removeEventListener("visibilitychange", onVisibility));
+    }
     if (this.options.autoTrack) this.installAutoListeners();
   }
-  /** Stop timers + listeners (tests / SPA unmount). Queue survives. */
+  /** Stop timers + listeners (tests / SPA unmount). Queue survives — a purchase still waiting for its order number joins it now. */
   stop() {
+    this.settlePendingPurchases();
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.flushTimer = null;
     for (const fn of this.teardown.splice(0)) fn();
@@ -10998,7 +11256,10 @@ var AnalyticsManager = class extends EventTarget {
   /** Queue one event. Works pre-init and pre-start (SSR: no-op). */
   track(name, opts = {}) {
     if (!hasDom()) return;
-    const event = this.buildEvent(name, opts);
+    this.record(this.buildEvent(name, opts));
+  }
+  /** The sinks and the queue for one built event — `track`'s second half. */
+  record(event) {
     if (!event) return;
     if (this.options.debug) {
       console.debug("[Vio.analytics]", event.name, event);
@@ -11145,6 +11406,8 @@ var AnalyticsManager = class extends EventTarget {
       value: com.value,
       currency: com.currency,
       order_id: com.orderId,
+      // A uuid always fits; anything over the collector's 128 is left out, not cut.
+      checkout_id: fitsId(com.checkoutId),
       payment_method: com.paymentMethod,
       // Only a reference survives — never an email, whatever a host passes —
       // and only with consent to persist: a visit measured with ephemeral
@@ -11384,31 +11647,134 @@ var AnalyticsManager = class extends EventTarget {
     });
     on("vio:payment-success", (ev) => {
       const d3 = ev.detail ?? {};
+      const ids = purchaseIdsOf(d3);
+      if (!this.claimPurchase(ids)) return;
       const sponsorId = d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0;
       const base = { sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
       const { slices, explicit } = this.cartSlices(sponsorId);
-      if (slices.length > 1) {
-        for (const slice of slices) {
-          this.track("purchase", {
-            context: this.sliceContext(slice, base),
-            commerce: { ...sliceCommerce(slice), ...purchaseFromPaymentSuccess(d3), paymentMethod: d3.method },
-            props: { slice: slice.slice, slices: slice.slices }
-          });
-        }
-        return;
-      }
-      const snap = this.cartCommerce(sponsorId);
-      this.track("purchase", {
-        context: this.singleSliceContext(slices[0], explicit, base),
-        commerce: {
+      const parts = slices.length > 1 ? (
+        // Several campaigns paid in one go: one purchase per campaign — its
+        // items and value, the SAME order_id — so each campaign's revenue is
+        // its own and the order still adds up. `props.slice/slices` lets the
+        // collector count the order once.
+        slices.map((slice) => ({
+          context: this.sliceContext(slice, base),
+          commerce: { ...sliceCommerce(slice), paymentMethod: d3.method },
+          props: { slice: slice.slice, slices: slice.slices }
+        }))
+      ) : [
+        {
+          context: this.singleSliceContext(slices[0], explicit, base),
           // value / currency / items: the cart snapshot, on every path.
-          ...snap ?? {},
-          // order_id: Vio's id for the purchase (never the provider's).
-          ...purchaseFromPaymentSuccess(d3),
-          paymentMethod: d3.method
+          commerce: { ...this.cartCommerce(sponsorId) ?? {}, paymentMethod: d3.method }
         }
-      });
+      ];
+      this.reportPurchase(parts, ids, buyerRefOf(d3), sponsorId);
     });
+  }
+  /**
+   * Claims the purchase of a payment for this page load: false when its
+   * checkout (or its order) already has one, reported or waiting.
+   */
+  claimPurchase(ids) {
+    const keys = [];
+    if (ids.checkoutId) keys.push(`c:${ids.checkoutId}`);
+    if (ids.orderIdKind === "order" && ids.orderId) keys.push(`o:${ids.orderId}`);
+    if (keys.some((key) => this.purchased.has(key))) return false;
+    for (const key of keys) this.purchased.add(key);
+    return true;
+  }
+  /**
+   * Sends the `purchase` event(s) of one payment — ONCE, with Vio's order
+   * number as `order_id` (`props.order_id_kind: 'order'`) and the checkout id
+   * as `checkout_id`. When the payment event did not bring the number (a
+   * redirect return, an order a webhook creates) the checkout is asked for it
+   * — the receipt's own path, `Vio.checkout.getOrderReference` — at once and
+   * after 0.5 / 1 / 2 / 3 / 3 s, for at most 10 s; nothing else waits for it.
+   * Unanswered, or when the page hides or `stop()` comes first, the events go
+   * out with what they have: the checkout id as `order_id`
+   * (`order_id_kind: 'checkout'`), as before — and the late number adds no
+   * second event. The events are BUILT at the payment — its moment (`ts`),
+   * `event_id`, session, page and content — and only the order number (and a
+   * buyer reference the payment did not bring) is filled in when it comes.
+   */
+  reportPurchase(parts, ids, buyerId, sponsorId) {
+    const events = parts.map(
+      (part) => this.buildEvent("purchase", {
+        ...part,
+        commerce: {
+          ...part.commerce,
+          ...ids.orderId !== void 0 ? { orderId: ids.orderId } : {},
+          ...ids.checkoutId !== void 0 ? { checkoutId: ids.checkoutId } : {},
+          ...buyerId !== void 0 ? { buyerId } : {}
+        },
+        ...ids.orderIdKind ? { props: { ...part.props, order_id_kind: ids.orderIdKind } } : {}
+      })
+    );
+    const send = (found = {}) => {
+      if (found.orderNumber) this.purchased.add(`o:${found.orderNumber}`);
+      const lateBuyer = this.canPersist ? normalizeBuyerRef(found.buyerRef) : void 0;
+      for (const event of events) {
+        if (!event) continue;
+        if (found.orderNumber) {
+          event.commerce = { ...event.commerce, order_id: found.orderNumber };
+          event.props = { ...event.props, order_id_kind: "order" };
+        }
+        if (lateBuyer && event.commerce && event.commerce.buyer_id === void 0) {
+          event.commerce = { ...event.commerce, buyer_id: lateBuyer };
+        }
+        this.record(event);
+      }
+    };
+    const ask = ids.orderIdKind === "checkout" ? this.orderReferenceAsker(ids.checkoutId, sponsorId) : null;
+    if (!ask) {
+      send();
+      return;
+    }
+    if (this.isPageHidden()) {
+      send();
+      this.flushWithBeacon();
+      return;
+    }
+    let done = false;
+    const settle = (found) => {
+      if (done) return;
+      done = true;
+      this.pendingPurchases.delete(settleNow);
+      send(found);
+    };
+    const settleNow = () => settle();
+    this.pendingPurchases.add(settleNow);
+    void waitForOrderNumber(ask, () => done).then(settle, () => settle());
+  }
+  /** Sends every purchase still waiting for its order number, at once, with what it has. */
+  settlePendingPurchases() {
+    for (const settle of [...this.pendingPurchases]) settle();
+  }
+  /** Whether the page is hidden or going away (`pagehide` until `pageshow`). */
+  isPageHidden() {
+    if (this.pageHiding) return true;
+    try {
+      return typeof document !== "undefined" && document.visibilityState === "hidden";
+    } catch {
+      return false;
+    }
+  }
+  /**
+   * How a purchase asks a checkout for Vio's order number: through the SDK's
+   * checkout manager (`getOrderReference`, which never throws and shares its
+   * in-flight ask with the receipt's). `null` when there is nothing to ask —
+   * no checkout id, or no checkout manager on this page.
+   */
+  orderReferenceAsker(checkoutId, sponsorId) {
+    if (!checkoutId) return null;
+    try {
+      const checkout = vioFacade()?.checkout;
+      if (!checkout || typeof checkout.getOrderReference !== "function") return null;
+      return () => checkout.getOrderReference(checkoutId, sponsorId || void 0);
+    } catch {
+      return null;
+    }
   }
   /** The lines of the cart (current, else the pre-clear snapshot), optionally one sponsor's. */
   cartLines(sponsorId) {
@@ -11643,14 +12009,62 @@ function buyerRefOf(d3) {
   }
   return void 0;
 }
-function purchaseFromPaymentSuccess(d3) {
+function purchaseIdsOf(d3) {
+  if (!d3) return {};
   const r6 = d3.result ?? {};
-  const orderId = firstId(d3.orderId, r6.confirmation?.orderId, d3.checkoutId);
+  const legacy = firstId(d3.orderId);
+  const legacyIsNumber = legacy !== void 0 && isOrderNumber(legacy);
+  const orderNumber = firstId(d3.orderNumber, r6.confirmation?.orderId, legacyIsNumber ? legacy : void 0);
+  const checkoutId = firstId(legacyIsNumber ? void 0 : legacy, d3.checkoutId, r6.confirmation?.checkoutId);
+  if (orderNumber !== void 0) {
+    return { orderId: orderNumber, ...checkoutId !== void 0 ? { checkoutId } : {}, orderIdKind: "order" };
+  }
+  if (checkoutId !== void 0) return { orderId: checkoutId, checkoutId, orderIdKind: "checkout" };
+  return {};
+}
+function purchaseFromPaymentSuccess(d3) {
+  const { orderId, checkoutId } = purchaseIdsOf(d3);
   const buyerId = buyerRefOf(d3);
   return {
     ...orderId !== void 0 ? { orderId } : {},
+    ...checkoutId !== void 0 ? { checkoutId } : {},
     ...buyerId !== void 0 ? { buyerId } : {}
   };
+}
+function isOrderNumber(value) {
+  return /^[1-9][0-9]*$/.test(value);
+}
+async function waitForOrderNumber(ask, stopped) {
+  let deadline;
+  const timeUp = new Promise((resolve) => {
+    deadline = setTimeout(() => resolve(null), ORDER_NUMBER_MAX_WAIT_MS);
+  });
+  let buyerRef;
+  const found = (orderNumber) => ({
+    ...orderNumber ? { orderNumber } : {},
+    ...buyerRef ? { buyerRef } : {}
+  });
+  try {
+    for (let attempt = 0; attempt <= ORDER_NUMBER_BACKOFF_MS.length; attempt++) {
+      if (attempt > 0) {
+        const wait = ORDER_NUMBER_BACKOFF_MS[attempt - 1];
+        const slept = await Promise.race([new Promise((resolve) => setTimeout(() => resolve(true), wait)), timeUp]);
+        if (slept === null) break;
+      }
+      if (stopped()) break;
+      try {
+        const reference = await Promise.race([ask(), timeUp]);
+        if (reference === null) break;
+        buyerRef ??= normalizeBuyerRef(reference?.buyerRef);
+        const orderNumber = firstId(reference?.orderNumber);
+        if (orderNumber !== void 0 && isOrderNumber(orderNumber)) return found(orderNumber);
+      } catch {
+      }
+    }
+    return found();
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 function firstId(...candidates) {
   for (const c4 of candidates) {
@@ -11869,7 +12283,8 @@ var VioFacade = class {
   get checkout() {
     if (!this.checkoutManager) {
       this.checkoutManager = new CheckoutManager(this.cart, {
-        orderAttribution: (sponsorId) => this.orderAttribution(sponsorId)
+        orderAttribution: (sponsorId) => this.orderAttribution(sponsorId),
+        sponsorIdentity: (sponsorId, opts) => this.sponsorIdentity(sponsorId, opts)
       });
     }
     return this.checkoutManager;
@@ -11929,6 +12344,39 @@ var VioFacade = class {
   }
   get bootstrapCache() {
     return this.cachedBootstrap;
+  }
+  /**
+   * Who a sponsor is to a shopper — `{ id, name, logoUrl, avatarUrl }` — by
+   * the ONE rule every element uses (`sponsorIdentityFrom`): the live
+   * bootstrap's sponsor blocks (the config's primary and secondaries, then
+   * every `campaigns[]` primary and secondaries, first match); when the
+   * bootstrap does not know the id (not loaded yet, a redirect return), what
+   * this tab remembered of the checkout (`opts.checkoutId`, else the latest
+   * checkout of that sponsor), then the cart's `sponsorName`. With only
+   * `opts.checkoutId`, the sponsor is the one remembered for that checkout.
+   * In a checkout pass the CHECKOUT's sponsor — never the page's
+   * attribution. URLs as given; an empty logo is `null`. `null` when nothing
+   * names it. Pure over local state, never throws.
+   */
+  sponsorIdentity(sponsorId, opts = {}) {
+    try {
+      let memo;
+      const memoOfCheckout = () => memo === void 0 ? memo = rememberedCheckoutSponsor(opts?.checkoutId ?? void 0) : memo;
+      const id = toSponsorId(sponsorId) ?? memoOfCheckout()?.sponsorId;
+      if (id === void 0) return null;
+      const fromBootstrap = sponsorIdentityFrom(this.cachedBootstrap, id);
+      if (fromBootstrap) return fromBootstrap;
+      const ofCheckout = memoOfCheckout();
+      const remembered = (ofCheckout && ofCheckout.sponsorId === id && (ofCheckout.name || ofCheckout.logoUrl) ? ofCheckout : null) ?? rememberedSponsor(id);
+      if (remembered) {
+        return { id, name: remembered.name, logoUrl: remembered.logoUrl, avatarUrl: null };
+      }
+      const cartName = this.cart.getCart(id)?.sponsorName;
+      const name = typeof cartName === "string" ? cartName.trim() : "";
+      return name ? { id, name, logoUrl: null, avatarUrl: null } : null;
+    } catch {
+      return null;
+    }
   }
   /**
    * Get a CommerceClient scoped to a specific sponsor (via bootstrap).
@@ -12089,10 +12537,10 @@ var VioFacade = class {
     return () => {
       if (released) return;
       released = true;
-      const current = this.slotRegistry.get(id);
-      if (!current) return;
-      if (current.count <= 1) this.slotRegistry.delete(id);
-      else current.count--;
+      const current2 = this.slotRegistry.get(id);
+      if (!current2) return;
+      if (current2.count <= 1) this.slotRegistry.delete(id);
+      else current2.count--;
     };
   }
   /**
@@ -12161,7 +12609,7 @@ var VioFacade = class {
           const campaign = this.campaignForSlot(name || null, { campaignId: pageCampaignId });
           const campaignId = toNumber(campaign?.id);
           if (campaignId !== void 0) out.campaignId = campaignId;
-          const sponsorId = toNumber(campaign?.primarySponsor?.id);
+          const sponsorId = campaign ? toNumber(campaign.primarySponsor?.id) : toNumber(boot.primarySponsor?.id);
           if (sponsorId !== void 0) out.sponsorId = sponsorId;
         }
       } else if (hinted !== void 0) {
@@ -12409,20 +12857,7 @@ var VioFacade = class {
     }, SLOT_DECLARATION_DEBOUNCE_MS);
   }
   findSponsor(sponsorId) {
-    const boot = this.cachedBootstrap;
-    if (!boot) return void 0;
-    const id = Number(sponsorId);
-    if (Number(boot.primarySponsor?.id) === id) return boot.primarySponsor;
-    const secondary = boot.secondarySponsors?.find((s4) => Number(s4.id) === id);
-    if (secondary) return secondary;
-    const campaigns = Array.isArray(boot.campaigns) ? boot.campaigns : [];
-    for (const c4 of campaigns) {
-      if (!c4 || typeof c4 !== "object") continue;
-      if (Number(c4.primarySponsor?.id) === id) return c4.primarySponsor ?? void 0;
-      const s4 = Array.isArray(c4.secondarySponsors) ? c4.secondarySponsors.find((x2) => Number(x2?.id) === id) : void 0;
-      if (s4) return s4;
-    }
-    return void 0;
+    return findSponsorIn(this.cachedBootstrap, sponsorId);
   }
 };
 function warn(...args) {
@@ -13669,6 +14104,54 @@ __decorateClass([
   r5()
 ], VioProduct.prototype, "justAdded", 2);
 
+// src/ui/sponsor-identity.ts
+function resolveSponsorIdentity(sponsorId, checkoutId) {
+  try {
+    if (typeof Vio.sponsorIdentity === "function") return Vio.sponsorIdentity(sponsorId, { checkoutId });
+    return sponsorIdentityFrom(Vio.bootstrapCache, sponsorId);
+  } catch {
+    return null;
+  }
+}
+function sponsorDetail(sponsorId, checkoutId) {
+  const sponsor = checkoutSponsorOf(resolveSponsorIdentity(sponsorId, checkoutId));
+  return sponsor ? { sponsor } : {};
+}
+var failedLogos = /* @__PURE__ */ new Set();
+function usableLogo(identity) {
+  const url = identity?.logoUrl;
+  return url && !failedLogos.has(url) ? url : null;
+}
+function renderSponsorMark(host, identity, classes) {
+  if (!identity) return A;
+  const logo = usableLogo(identity);
+  if (logo) {
+    return b2`<img
+      class=${classes.logo}
+      src=${logo}
+      alt=${identity.name}
+      decoding="async"
+      @error=${() => {
+      failedLogos.add(logo);
+      host.requestUpdate();
+    }}
+    />`;
+  }
+  return identity.name ? b2`<span class=${classes.name}>${identity.name}</span>` : A;
+}
+var INIT_WAIT_MS = 1e4;
+async function whenBootstrapped() {
+  try {
+    if (Vio.bootstrapCache) return true;
+    if (!Configuration.isInitialized) await Configuration.whenReady(INIT_WAIT_MS);
+    if (!Configuration.isInitialized || typeof Vio.bootstrap !== "function") return false;
+    await Vio.bootstrap();
+    return !!Vio.bootstrapCache;
+  } catch {
+    return false;
+  }
+}
+
 // src/ui/components/vio-product-carousel.ts
 var VioProductCarousel = class extends i4 {
   constructor() {
@@ -14042,7 +14525,7 @@ var VioProductCarousel = class extends i4 {
     if (this.fetched && this.fetched.length > 0) {
       return b2`${this.fetched.map(({ product: p3, sponsorId }) => {
         const img = primaryImageUrl(p3) ?? "";
-        const retailer = sponsorNameFromBootstrap(sponsorId) ?? p3.brand ?? "";
+        const retailer = resolveSponsorIdentity(sponsorId)?.name || p3.brand || "";
         return b2`
           <vio-product
             product-id=${String(p3.id)}
@@ -14160,11 +14643,101 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductCarousel.prototype, "fetchError", 2);
-function sponsorNameFromBootstrap(sponsorId) {
-  const boot = Vio.bootstrapCache;
-  if (!boot) return void 0;
-  if (boot.primarySponsor?.id === sponsorId) return boot.primarySponsor.name;
-  return boot.secondarySponsors?.find((s4) => s4.id === sponsorId)?.name;
+
+// src/ui/payment-redirect.ts
+var OVERLAY_CLASS = "vio-redirect-overlay";
+var STYLE_ID = "vio-redirect-overlay-style";
+var LABEL = { vipps: "Vipps", stripe: "Stripe", klarna: "Klarna" };
+function emit(name, detail, cancelable = false) {
+  if (typeof document === "undefined") return true;
+  return document.dispatchEvent(new CustomEvent(name, { detail, cancelable }));
+}
+function injectStyle() {
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = STYLE_ID;
+  style.textContent = `
+.${OVERLAY_CLASS} {
+  position: fixed; inset: 0; z-index: 2147483000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background: var(--vio-redirect-bg, rgba(255, 255, 255, 0.94));
+  color: var(--vio-redirect-color, var(--vio-color-text, #0a0a0a));
+  font: 600 16px/1.3 var(--vio-redirect-font, var(--vio-font-sans, -apple-system, sans-serif));
+  opacity: 0; transition: opacity 0.18s ease; cursor: progress;
+}
+.${OVERLAY_CLASS}.is-shown { opacity: 1; }
+.${OVERLAY_CLASS} .vio-redirect-spinner {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.1); border-top-color: var(--vio-redirect-spinner, #ff5b24);
+  animation: vio-redirect-spin 0.8s linear infinite;
+}
+@keyframes vio-redirect-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .${OVERLAY_CLASS} { transition: none; }
+  .${OVERLAY_CLASS} .vio-redirect-spinner { animation: none; }
+}`;
+  document.head.appendChild(style);
+}
+var current = null;
+function removeOverlay() {
+  const el = current?.el;
+  if (!el) return;
+  el.classList.remove("is-shown");
+  setTimeout(() => el.remove(), 200);
+  current.el = null;
+}
+function onPageShow(e7) {
+  if (!e7.persisted || !current || current.settled) return;
+  current.settled = true;
+  removeOverlay();
+  emit("vio:payment-redirect-cancel", { ...current.detail, reason: "back" });
+  current = null;
+}
+function beginPaymentRedirect(detail) {
+  if (current && !current.settled) {
+    current.settled = true;
+    removeOverlay();
+  }
+  const hostTookOver = !emit("vio:payment-redirect-start", detail, true);
+  const state = { el: null, detail, settled: false };
+  current = state;
+  if (!hostTookOver && typeof document !== "undefined" && document.body) {
+    injectStyle();
+    const el = document.createElement("div");
+    el.className = OVERLAY_CLASS;
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    const spinner = document.createElement("div");
+    spinner.className = "vio-redirect-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    const text3 = document.createElement("div");
+    text3.className = "vio-redirect-text";
+    text3.textContent = `\xC5pner ${LABEL[detail.method] ?? detail.method} \u2026`;
+    el.append(spinner, text3);
+    el.addEventListener("click", (e7) => e7.stopPropagation());
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("is-shown"));
+    state.el = el;
+  }
+  if (typeof window !== "undefined") window.addEventListener("pageshow", onPageShow);
+  const settle = (event, reason) => {
+    if (state.settled) return;
+    state.settled = true;
+    if (current === state) {
+      removeOverlay();
+      current = null;
+    } else if (state.el) {
+      state.el.remove();
+    }
+    emit(event, { ...detail, reason });
+  };
+  return {
+    fail: (reason) => settle("vio:payment-redirect-error", reason),
+    abort: (reason = "not-started") => settle("vio:payment-redirect-cancel", reason)
+  };
+}
+function returnCancelled(detail) {
+  emit("vio:payment-redirect-cancel", { ...detail, reason: "cancelled" });
 }
 
 // src/core/checkout/method-taxonomy.ts
@@ -14374,6 +14947,207 @@ function isWithin(node, ancestor) {
   return false;
 }
 
+// src/ui/bottom-sheet.ts
+var PHONE = "(max-width: 600px)";
+var SLOP = 6;
+var CLOSE_DISTANCE = 120;
+var FLICK_VELOCITY = 0.5;
+var FLICK_MIN = 24;
+var CLICK_AFTER_DRAG_MS = 400;
+function isPhoneSheet() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(PHONE).matches;
+}
+var BottomSheet = class {
+  constructor(opts) {
+    this.opts = opts;
+    this.active = false;
+    this.locked = false;
+    this.drag = null;
+    this.dragEndedAt = -Infinity;
+    this.onPointerDown = (e7) => {
+      if (!e7.isPrimary || e7.pointerType === "mouse" && e7.button !== 0) return;
+      if (this.drag || !isPhoneSheet()) return;
+      const sheet = this.opts.sheet();
+      if (!sheet || !inZone(e7, sheet, this.opts.dragZones)) return;
+      this.drag = {
+        pointerId: e7.pointerId,
+        startY: e7.clientY,
+        lastY: e7.clientY,
+        lastT: e7.timeStamp,
+        velocity: 0,
+        moving: false,
+        offset: 0
+      };
+      window.addEventListener("pointermove", this.onPointerMove);
+      window.addEventListener("pointerup", this.onPointerUp);
+      window.addEventListener("pointercancel", this.onPointerCancel);
+    };
+    this.onPointerMove = (e7) => {
+      const drag = this.drag;
+      if (!drag || e7.pointerId !== drag.pointerId) return;
+      const dy = e7.clientY - drag.startY;
+      if (!drag.moving) {
+        if (dy < -SLOP) return this.abandon();
+        if (dy <= SLOP) return;
+        drag.moving = true;
+        const sheet2 = this.opts.sheet();
+        if (sheet2) sheet2.style.transition = "none";
+        const backdrop2 = this.opts.backdrop?.();
+        if (backdrop2) backdrop2.style.transition = "none";
+      }
+      const dt = e7.timeStamp - drag.lastT;
+      if (dt > 0) drag.velocity = 0.8 * ((e7.clientY - drag.lastY) / dt) + 0.2 * drag.velocity;
+      drag.lastY = e7.clientY;
+      drag.lastT = e7.timeStamp;
+      drag.offset = Math.max(0, dy);
+      const sheet = this.opts.sheet();
+      if (sheet) sheet.style.transform = `translateY(${drag.offset}px)`;
+      const backdrop = this.opts.backdrop?.();
+      if (backdrop && sheet) {
+        const height = sheet.getBoundingClientRect().height || window.innerHeight;
+        backdrop.style.opacity = String(Math.max(0, 1 - drag.offset / height));
+      }
+      if (e7.cancelable) e7.preventDefault();
+    };
+    this.onPointerUp = (e7) => {
+      const drag = this.drag;
+      if (!drag || e7.pointerId !== drag.pointerId) return;
+      this.stopTracking();
+      this.drag = null;
+      if (!drag.moving) return;
+      this.dragEndedAt = performance.now();
+      const sheet = this.opts.sheet();
+      const height = sheet?.getBoundingClientRect().height || window.innerHeight;
+      const far = drag.offset >= Math.min(CLOSE_DISTANCE, height / 4);
+      const flick = drag.velocity >= FLICK_VELOCITY && drag.offset >= FLICK_MIN;
+      const allowed = !this.opts.canClose || this.opts.canClose();
+      this.release();
+      if ((far || flick) && allowed) {
+        if (sheet) sheet.style.transform = "translateY(100%)";
+        this.opts.close();
+      } else if (sheet) {
+        sheet.style.transform = "";
+      }
+    };
+    this.onPointerCancel = (e7) => {
+      if (!this.drag || e7.pointerId !== this.drag.pointerId) return;
+      this.abandon();
+    };
+    /** The press that ended a drag also fires a click on ✕ or the grab bar: swallow it. */
+    this.onClickCapture = (e7) => {
+      if (performance.now() - this.dragEndedAt > CLICK_AFTER_DRAG_MS) return;
+      this.dragEndedAt = -Infinity;
+      e7.stopPropagation();
+      e7.preventDefault();
+    };
+  }
+  /** Call from `updated()` when `open` changed. Same value twice is a no-op. */
+  update(open) {
+    if (open === this.active) return;
+    this.active = open;
+    if (open) this.opened();
+    else this.closed();
+  }
+  /** Call from `disconnectedCallback()`: a sheet torn down while open must not keep the page locked. */
+  disconnect() {
+    if (this.active) {
+      this.active = false;
+      this.closed();
+    }
+  }
+  opened() {
+    if (isPhoneSheet()) {
+      lockPageScroll();
+      this.locked = true;
+    }
+    this.opts.host.addEventListener("pointerdown", this.onPointerDown);
+    this.opts.host.addEventListener("click", this.onClickCapture, true);
+  }
+  closed() {
+    this.opts.host.removeEventListener("pointerdown", this.onPointerDown);
+    this.opts.host.removeEventListener("click", this.onClickCapture, true);
+    this.stopTracking();
+    this.drag = null;
+    const sheet = this.opts.sheet();
+    if (sheet) {
+      sheet.style.transform = "";
+      sheet.style.transition = "";
+    }
+    const backdrop = this.opts.backdrop?.();
+    if (backdrop) {
+      backdrop.style.opacity = "";
+      backdrop.style.transition = "";
+    }
+    if (this.locked) {
+      this.locked = false;
+      unlockPageScroll();
+    }
+  }
+  /** Give up on this press and put the sheet back where it was. */
+  abandon() {
+    const moving = this.drag?.moving;
+    this.stopTracking();
+    this.drag = null;
+    if (!moving) return;
+    this.release();
+    const sheet = this.opts.sheet();
+    if (sheet) sheet.style.transform = "";
+  }
+  /** Hand the sheet and backdrop back to their CSS transitions. */
+  release() {
+    const sheet = this.opts.sheet();
+    if (sheet) sheet.style.transition = "";
+    const backdrop = this.opts.backdrop?.();
+    if (backdrop) {
+      backdrop.style.transition = "";
+      backdrop.style.opacity = "";
+    }
+  }
+  stopTracking() {
+    window.removeEventListener("pointermove", this.onPointerMove);
+    window.removeEventListener("pointerup", this.onPointerUp);
+    window.removeEventListener("pointercancel", this.onPointerCancel);
+  }
+};
+function inZone(e7, sheet, zones) {
+  for (const node of e7.composedPath()) {
+    if (node === sheet) return false;
+    if (node instanceof Element && node.matches(zones)) return sheet.contains(node);
+  }
+  return false;
+}
+var locks = 0;
+var saved = null;
+var LOCKED = ["position", "top", "left", "right", "width", "overflow"];
+function lockPageScroll() {
+  if (typeof document === "undefined") return;
+  locks += 1;
+  if (locks > 1) return;
+  const body = document.body;
+  const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  saved = { scrollY, body: {} };
+  for (const p3 of LOCKED) saved.body[p3] = body.style[p3];
+  body.style.position = "fixed";
+  body.style.top = `-${scrollY}px`;
+  body.style.left = "0";
+  body.style.right = "0";
+  body.style.width = "100%";
+  body.style.overflow = "hidden";
+}
+function unlockPageScroll() {
+  if (typeof document === "undefined" || locks === 0) return;
+  locks -= 1;
+  if (locks > 0 || !saved) return;
+  const { scrollY, body } = saved;
+  saved = null;
+  for (const p3 of LOCKED) document.body.style[p3] = body[p3] ?? "";
+  const root = document.documentElement;
+  const behavior = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
+  window.scrollTo(0, scrollY);
+  root.style.scrollBehavior = behavior;
+}
+
 // src/ui/components/vio-product-detail.ts
 var STRIPE_LOGO_SRC = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
@@ -14408,6 +15182,10 @@ var VioProductDetail = class extends i4 {
     this.selectedOptions = {};
     this.quantity = 1;
     this.activeImageIndex = 0;
+    this.thumbsOverflow = false;
+    this.thumbsAtStart = true;
+    this.thumbsAtEnd = false;
+    this.logoSquare = false;
     this.adding = false;
     this.applePayOk = false;
     this.availableMethods = null;
@@ -14423,6 +15201,14 @@ var VioProductDetail = class extends i4 {
     this.dialogFocus = new DialogFocus({
       host: this,
       container: () => this.renderRoot.querySelector(".modal"),
+      close: () => this.close()
+    });
+    /** Phones: the page behind is locked, and the sheet closes by pulling the bar or the top bar down. */
+    this.bottomSheet = new BottomSheet({
+      host: this,
+      sheet: () => this.renderRoot.querySelector(".modal"),
+      backdrop: () => this.renderRoot.querySelector(".backdrop"),
+      dragZones: ".handle, .topbar",
       close: () => this.close()
     });
     this.boundProductClick = (e7) => {
@@ -14451,6 +15237,14 @@ var VioProductDetail = class extends i4 {
       this.currency = ev.detail.currency || getGlobalCurrency();
       this.show();
       void this.fetchProduct();
+    };
+    this.onThumbsScroll = () => {
+      const row = this.thumbRow();
+      if (!row) return;
+      const atStart = row.scrollLeft <= 1;
+      const atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - 1;
+      if (atStart !== this.thumbsAtStart) this.thumbsAtStart = atStart;
+      if (atEnd !== this.thumbsAtEnd) this.thumbsAtEnd = atEnd;
     };
   }
   /** The card's context applies to the product it opened — not to one the host opened by hand later. */
@@ -14539,7 +15333,10 @@ var VioProductDetail = class extends i4 {
         height: 92vh;
         border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+        overscroll-behavior: contain;
       }
+      /* Pulled down to close (bottom-sheet.ts): the browser must not take the gesture for a scroll. */
+      .handle, .topbar { touch-action: none; }
       .handle {
         display: flex;
         justify-content: center;
@@ -14560,8 +15357,8 @@ var VioProductDetail = class extends i4 {
     @media (min-width: 601px) {
       .modal {
         inset: 0 0 0 auto;
-        width: min(440px, 100%);
-        max-width: 440px;
+        width: min(var(--vio-detail-width, 440px), 100%);
+        max-width: var(--vio-detail-width, 440px);
         border-radius: 0;
         box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
         transform: translateX(100%);
@@ -14575,29 +15372,59 @@ var VioProductDetail = class extends i4 {
         max-width: none;
         grid-template-columns: 1fr;
         gap: 20px;
-        padding: 20px 24px 40px;
+        padding: var(--vio-detail-padding-top, 0px) var(--vio-detail-padding-x, var(--vio-space-lg, 24px)) 40px;
       }
-      .modal .name { font-size: 26px; line-height: 1.2; }
-      .modal .gallery-main { width: 100%; }
+      .modal .name { font-size: var(--vio-detail-title-size, 26px); line-height: 1.2; }
+      .modal .gallery-main { width: auto; }
     }
 
     .topbar {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 20px var(--vio-space-lg, 24px);
+      gap: 16px;
+      min-height: var(--vio-detail-topbar-height, 64px);
+      box-sizing: border-box;
+      padding: 10px var(--vio-detail-padding-x, var(--vio-space-lg, 24px));
       position: sticky;
       top: 0;
       background: var(--vio-color-surface, #fff);
       border-bottom: 1px solid var(--vio-color-border, #e5e5e5);
       z-index: 1;
     }
-    .topbar-brand {
-      font-size: 12px;
+    /* Who sells it, top left beside the close: the sponsor's logo, else its name. */
+    .topbar-sponsor { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
+    /* The logo box clips, so --vio-detail-logo-zoom can crop the white a
+       square file carries around its mark. */
+    .topbar-logo-box {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      height: var(--vio-detail-logo-height, 44px);
+      max-width: var(--vio-detail-logo-max-width, 220px);
+      overflow: hidden;
+    }
+    .topbar-logo {
+      display: block;
+      width: auto;
+      height: 100%;
+      max-width: var(--vio-detail-logo-max-width, 220px);
+      object-fit: contain;
+      object-position: left center;
+      transform: scale(var(--vio-detail-logo-zoom, 1));
+      transform-origin: center;
+    }
+    /* A square (or near) logo is a mark, not a wordmark: say whose it is. */
+    .topbar-sponsor:not(.is-square) .topbar-mark-name { display: none; }
+    .topbar-name {
+      font-size: var(--vio-detail-logo-name-size, 13px);
       text-transform: uppercase;
       letter-spacing: var(--vio-tracking-label, 0.1em);
       color: var(--vio-color-text-secondary, #666);
-      font-weight: 500;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .close {
       background: none;
@@ -14623,51 +15450,110 @@ var VioProductDetail = class extends i4 {
       gap: 64px;
     }
     @media (max-width: 800px) {
-      .body { grid-template-columns: 1fr; gap: 32px; padding: 24px var(--vio-space-lg, 24px) 64px; }
+      .body {
+        grid-template-columns: 1fr;
+        gap: 24px;
+        padding: var(--vio-detail-padding-top, 0px) var(--vio-detail-padding-x, var(--vio-space-lg, 24px)) 64px;
+      }
     }
 
-    /* Gallery */
-    .gallery { display: flex; flex-direction: column; gap: 16px; }
+    /* Gallery. One fixed proportion for every image (4:5 by default) that the
+       image fills (cover): no white bars, and the panel never jumps between
+       photos of different shapes (Angelo, 2026-10-22). Its side margin is
+       --vio-detail-image-inset (the panel's padding by default; 0 = edge to
+       edge). Fit, proportion, a height cap and a zoom (to crop a white margin
+       baked into the file) are the host's to set. */
+    .gallery { display: flex; flex-direction: column; gap: var(--vio-detail-gallery-gap, 12px); min-width: 0; }
     .gallery-main {
-      aspect-ratio: 1;
-      background: var(--vio-color-surface-muted, #f2f2f2);
+      position: relative;
+      margin-inline: calc(
+        var(--vio-detail-image-inset, var(--vio-detail-padding-x, var(--vio-space-lg, 24px))) -
+          var(--vio-detail-padding-x, var(--vio-space-lg, 24px))
+      );
+      aspect-ratio: var(--vio-detail-image-aspect, 4 / 5);
+      max-height: var(--vio-detail-image-max-height, 85vh);
+      background: var(--vio-detail-image-bg, var(--vio-color-surface-muted, #f2f2f2));
+      border-radius: var(--vio-detail-image-radius, 0);
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
     }
     .gallery-main img {
+      display: block;
       width: 100%;
       height: 100%;
-      object-fit: contain;
-      padding: 24px;
-      box-sizing: border-box;
+      max-height: var(--vio-detail-image-max-height, 85vh);
+      object-fit: var(--vio-detail-image-fit, cover);
+      object-position: var(--vio-detail-image-position, center);
+      transform: scale(var(--vio-detail-image-zoom, 1));
     }
+    /* Thumbnails: one row, never a second line — swipe on touch, arrows with a
+       mouse; the selected one scrolls into view by itself. */
+    .thumbs { position: relative; min-width: 0; }
     .gallery-thumbs {
       display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      gap: var(--vio-detail-thumb-gap, 8px);
+      overflow-x: auto;
+      scroll-snap-type: x proximity;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
     }
+    .gallery-thumbs::-webkit-scrollbar { display: none; }
     .gallery-thumb {
-      width: 72px;
-      height: 72px;
+      flex: 0 0 auto;
+      width: var(--vio-detail-thumb-size, 64px);
+      height: var(--vio-detail-thumb-size, 64px);
       background: var(--vio-color-surface-muted, #f2f2f2);
-      border: 1px solid transparent;
+      border: var(--vio-detail-thumb-border-width, 1px) solid transparent;
+      border-radius: var(--vio-detail-thumb-radius, 0);
       cursor: pointer;
       padding: 0;
       overflow: hidden;
+      scroll-snap-align: start;
+      box-sizing: border-box;
+      opacity: var(--vio-detail-thumb-opacity, 1);
     }
     .gallery-thumb img {
+      display: block;
       width: 100%;
       height: 100%;
-      object-fit: contain;
-      padding: 6px;
-      box-sizing: border-box;
+      object-fit: var(--vio-detail-thumb-fit, cover);
     }
-    .gallery-thumb.active { border-color: var(--vio-color-text, #0a0a0a); }
+    .gallery-thumb.active {
+      border-color: var(--vio-detail-thumb-active-color, var(--vio-color-text, #0a0a0a));
+      opacity: 1;
+    }
+    .thumbs-arrow {
+      display: none;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 1;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid var(--vio-color-border, #e5e5e5);
+      background: var(--vio-color-surface, #fff);
+      color: var(--vio-color-text, #0a0a0a);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font: 16px/1 sans-serif;
+    }
+    .thumbs-arrow.prev { left: -6px; }
+    .thumbs-arrow.next { right: -6px; }
+    .thumbs-arrow:disabled { visibility: hidden; }
+    @media (hover: hover) and (pointer: fine) {
+      .thumbs.overflows .thumbs-arrow { display: flex; }
+    }
 
     /* Info column */
-    .info { display: flex; flex-direction: column; gap: 24px; }
+    .info { display: flex; flex-direction: column; gap: var(--vio-detail-info-gap, 20px); min-width: 0; }
     .brand {
       font-size: 12px;
       text-transform: uppercase;
@@ -14677,8 +15563,8 @@ var VioProductDetail = class extends i4 {
     }
     .name {
       font-family: var(--vio-font-serif, Georgia, serif);
-      font-size: clamp(28px, 4vw, 40px);
-      font-weight: 400;
+      font-size: var(--vio-detail-title-size, clamp(28px, 4vw, 40px));
+      font-weight: var(--vio-detail-title-weight, 400);
       line-height: 1.15;
       margin: 0;
       letter-spacing: -0.01em;
@@ -14689,8 +15575,8 @@ var VioProductDetail = class extends i4 {
       gap: 16px;
     }
     .price {
-      font-size: 24px;
-      font-weight: 700;
+      font-size: var(--vio-detail-price-size, 24px);
+      font-weight: var(--vio-detail-price-weight, 700);
     }
     .compare-at {
       font-size: 16px;
@@ -14708,7 +15594,7 @@ var VioProductDetail = class extends i4 {
     .stock.out-of-stock { color: var(--vio-color-text-tertiary, #999); }
 
     /* Option pickers */
-    .option-group { display: flex; flex-direction: column; gap: 8px; }
+    .option-group { display: flex; flex-direction: column; gap: 6px; }
     .option-label {
       font-size: 11px;
       text-transform: uppercase;
@@ -14716,14 +15602,28 @@ var VioProductDetail = class extends i4 {
       color: var(--vio-color-text-secondary, #666);
       font-weight: 500;
     }
-    .option-values { display: flex; flex-wrap: wrap; gap: 8px; }
+    /* Sizes: compact, still comfortable to tap. wrap → several lines;
+       nowrap → one line that scrolls sideways. */
+    .option-values {
+      display: flex;
+      flex-wrap: var(--vio-detail-option-wrap, wrap);
+      gap: var(--vio-detail-option-gap, 6px);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .option-values::-webkit-scrollbar { display: none; }
     .option-pill {
-      padding: 10px 18px;
+      flex: 0 0 auto;
+      box-sizing: border-box;
+      min-height: var(--vio-detail-option-height, 36px);
+      min-width: var(--vio-detail-option-height, 36px);
+      padding: 0 var(--vio-detail-option-padding-x, 12px);
+      border-radius: var(--vio-detail-option-radius, 0);
       background: #fff;
       border: 1px solid var(--vio-color-border, #e5e5e5);
       cursor: pointer;
       font-family: inherit;
-      font-size: 13px;
+      font-size: var(--vio-detail-option-font-size, 13px);
       font-weight: 500;
       color: inherit;
       transition: border-color 0.15s, background 0.15s;
@@ -14742,6 +15642,34 @@ var VioProductDetail = class extends i4 {
     }
     .option-pill.unavailable:hover { border-color: var(--vio-color-border, #e5e5e5); }
 
+    /* The buy zone: Vipps first, then quantity + add to cart, then the other
+       ways to pay. --vio-detail-buy-position: sticky pins it to the bottom of
+       the panel while the shopper scrolls (mobile, mostly). */
+    .buy {
+      display: flex;
+      flex-direction: column;
+      gap: var(--vio-detail-buy-gap, 10px);
+      position: var(--vio-detail-buy-position, static);
+      bottom: 0;
+      z-index: 2;
+      background: var(--vio-detail-buy-bg, var(--vio-color-surface, #fff));
+      padding: var(--vio-detail-buy-padding, 0);
+      box-shadow: var(--vio-detail-buy-shadow, none);
+    }
+    .buy > * { margin-top: 0 !important; }
+    /* Under the buttons: who the shopper is buying from. */
+    .seller-note {
+      margin: 2px 0 0;
+      font-size: var(--vio-detail-seller-note-size, 12px);
+      line-height: 1.4;
+      color: var(--vio-color-text-secondary, #666);
+      text-align: var(--vio-detail-seller-note-align, center);
+    }
+    .seller-note strong { font-weight: 600; color: var(--vio-color-text, #0a0a0a); }
+    .seller-links { display: block; margin-top: 2px; }
+    .seller-links a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    .seller-links a + a::before { content: '·'; display: inline-block; margin: 0 6px; text-decoration: none; }
+
     /* Qty + CTA row */
     .qty-cta-row {
       display: grid;
@@ -14756,7 +15684,7 @@ var VioProductDetail = class extends i4 {
     }
     .qty-btn {
       width: 44px;
-      height: 56px;
+      height: var(--vio-detail-button-height, 52px);
       background: #fff;
       border: none;
       cursor: pointer;
@@ -14774,7 +15702,9 @@ var VioProductDetail = class extends i4 {
       background: var(--vio-color-text, #0a0a0a);
       color: var(--vio-color-text-on-primary, #fff);
       border: none;
-      padding: 18px 24px;
+      min-height: var(--vio-detail-button-height, 52px);
+      border-radius: var(--vio-detail-button-radius, 0);
+      padding: 0 24px;
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: var(--vio-tracking-label, 0.1em);
@@ -14884,19 +15814,49 @@ var VioProductDetail = class extends i4 {
     .buy-applepay:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Description */
-    .description {
-      font-size: 14px;
-      line-height: 1.6;
-      color: var(--vio-color-text-secondary, #444);
-      margin-top: 8px;
-    }
-    .description-label {
+    /* The description folds: a tap opens it, so it does not take the page. */
+    .description-block { border-top: 1px solid var(--vio-color-border, #e5e5e5); }
+    .description-block > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0;
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: var(--vio-tracking-label, 0.1em);
       color: var(--vio-color-text-secondary, #666);
-      font-weight: 500;
-      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .description-block > summary::-webkit-details-marker { display: none; }
+    .description-block > summary::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(45deg) translateY(-2px);
+      transition: transform 0.15s ease;
+    }
+    .description-block[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+    .description {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--vio-color-text-secondary, #444);
+      padding-bottom: 14px;
+      white-space: pre-line;
+    }
+    /* Desktop: the description above, the buy zone at the bottom of the panel
+       (sticky). Phones keep the order as it is: buy, then the description. */
+    @media (min-width: 601px) {
+      .description-block { order: 1; }
+      .buy {
+        order: 2;
+        position: var(--vio-detail-buy-position, sticky);
+        padding: var(--vio-detail-buy-padding, 12px 0 16px);
+        box-shadow: var(--vio-detail-buy-shadow, 0 -1px 0 var(--vio-color-border, #e5e5e5));
+      }
     }
 
     /* Skeleton loader: shimmer placeholders mirroring the product layout
@@ -14952,12 +15912,45 @@ var VioProductDetail = class extends i4 {
   disconnectedCallback() {
     document.removeEventListener("vio:product-click", this.boundProductClick);
     this.slotRegistration.clear();
+    this.bottomSheet.disconnect();
     super.disconnectedCallback();
   }
   updated(changed) {
-    if (changed.has("open")) this.dialogFocus.update(this.open);
+    if (changed.has("open")) {
+      this.dialogFocus.update(this.open);
+      this.bottomSheet.update(this.open);
+    }
+    if (changed.has("product") || changed.has("open")) this.measureThumbs();
+    if (changed.has("activeImageIndex")) this.revealActiveThumb();
+    this.measureLogo();
     if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName") || changed.has("vioCampaign")) {
       this.slotRegistration.sync(this.slotAttributes());
+    }
+  }
+  thumbRow() {
+    return this.renderRoot.querySelector(".gallery-thumbs");
+  }
+  /** Arrows only when the row overflows; each one off at its own end. */
+  measureThumbs() {
+    const row = this.thumbRow();
+    if (!row) return;
+    const overflow = row.scrollWidth > row.clientWidth + 1;
+    if (overflow !== this.thumbsOverflow) this.thumbsOverflow = overflow;
+    this.onThumbsScroll();
+  }
+  /** One arrow press moves most of a visible row. */
+  scrollThumbs(direction) {
+    const row = this.thumbRow();
+    if (row) row.scrollBy({ left: direction * row.clientWidth * 0.8 });
+  }
+  /** The selected thumbnail is always visible: the row scrolls to it, the page never does. */
+  revealActiveThumb() {
+    const row = this.thumbRow();
+    const thumb = row?.querySelectorAll(".gallery-thumb")[this.activeImageIndex];
+    if (!row || !thumb) return;
+    const left = thumb.offsetLeft - row.offsetLeft;
+    if (left < row.scrollLeft || left + thumb.offsetWidth > row.scrollLeft + row.clientWidth) {
+      row.scrollTo({ left: Math.max(0, left - (row.clientWidth - thumb.offsetWidth) / 2) });
     }
   }
   show() {
@@ -15349,9 +16342,7 @@ var VioProductDetail = class extends i4 {
   addCurrentToCart() {
     if (!this.product) return void 0;
     const variant = this.selectedVariant();
-    const sponsor = Vio.bootstrapCache?.primarySponsor;
-    const secondaries = Vio.bootstrapCache?.secondarySponsors ?? [];
-    const sponsorName = sponsor?.id === this.sponsorId ? sponsor.name : secondaries.find((s4) => s4.id === this.sponsorId)?.name;
+    const sponsorName = resolveSponsorIdentity(this.sponsorId)?.name || void 0;
     const { campaignId, slot, contentId, componentTemplateId, contentUrl, contentTitle } = this.attribution();
     Vio.cart.addProduct({
       product: this.product,
@@ -15402,7 +16393,7 @@ var VioProductDetail = class extends i4 {
         new CustomEvent("vio:checkout-open", {
           bubbles: true,
           composed: true,
-          detail: { sponsorId: this.sponsorId, paymentMethod: "klarna", express: true, ...this.attribution() }
+          detail: { sponsorId: this.sponsorId, paymentMethod: "klarna", express: true, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
         })
       );
     } finally {
@@ -15432,7 +16423,7 @@ var VioProductDetail = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, express: false, ...this.attribution() }
+        detail: { sponsorId: this.sponsorId, express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
       })
     );
   }
@@ -15448,27 +16439,33 @@ var VioProductDetail = class extends i4 {
   }
   buyWithVipps() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: this.sponsorId, source: "detail" });
     this.addCurrentToCart();
     this.close();
-    void this.startVippsExpressOrCheckout();
+    void this.startVippsExpressOrCheckout(redirect);
   }
-  async startVippsExpressOrCheckout() {
+  async startVippsExpressOrCheckout(redirect) {
     let fallback = true;
     try {
-      if (!await Vio.checkout.getVippsExpressEnabled(this.sponsorId)) throw new Error("express off");
-      const res = await Vio.checkout.startVippsExpress(this.sponsorId);
-      fallback = !res?.payment_url;
+      if (!await Vio.checkout.getVippsExpressEnabled(this.sponsorId)) {
+        redirect.abort("express-off");
+      } else {
+        const res = await Vio.checkout.startVippsExpress(this.sponsorId);
+        fallback = !res?.payment_url;
+        if (fallback) redirect.abort("not-started");
+      }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioProductDetail] Vipps Express not started:", err);
       }
+      redirect.fail(err instanceof Error ? err.message : String(err));
     }
     if (!fallback) return;
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, paymentMethod: "vipps", express: false, ...this.attribution() }
+        detail: { sponsorId: this.sponsorId, paymentMethod: "vipps", express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
       })
     );
   }
@@ -15481,7 +16478,7 @@ var VioProductDetail = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, paymentMethod: "stripe", express: false, ...this.attribution() }
+        detail: { sponsorId: this.sponsorId, paymentMethod: "stripe", express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
       })
     );
   }
@@ -15521,14 +16518,68 @@ var VioProductDetail = class extends i4 {
     this.sellerName = name;
     this.sellerSettled = true;
   }
+  /**
+   * Who sells the product, top left beside the close (Mote & Livsstil,
+   * 2026-10-22): the logo of the sponsor the product was fetched with — the
+   * product's brand, never the article's — with its name as `alt`; without a
+   * logo that loads, its name; without an identity, the seller's Company name
+   * (or the product's brand) once known. Size: --vio-detail-logo-height.
+   */
+  renderTopbarSponsor() {
+    const identity = resolveSponsorIdentity(this.sponsorId);
+    const mark = identity ? renderSponsorMark(this, identity, { logo: "topbar-logo", name: "topbar-name" }) : A;
+    if (mark !== A) {
+      if (identity && usableLogo(identity)) {
+        return b2`<span class="topbar-logo-box">${mark}</span
+          ><span class="topbar-name topbar-mark-name">${identity.name}</span>`;
+      }
+      return mark;
+    }
+    const name = this.headerName();
+    return name ? b2`<span class="topbar-name">${name}</span>` : A;
+  }
+  /**
+   * Under the buy buttons: «Du handler direkte hos {brand}.» — the brand the
+   * product was fetched with (the sponsor; its Company name or the product's
+   * brand when no identity is known), never the article's. Nothing when no
+   * name is known.
+   */
+  renderSellerNote() {
+    const identity = resolveSponsorIdentity(this.sponsorId);
+    const name = identity?.name || this.headerName();
+    if (!name) return A;
+    const links = [
+      identity?.termsUrl ? b2`<a href=${identity.termsUrl} target="_blank" rel="noopener noreferrer" part="seller-terms">Kjøpsvilkår</a>` : null,
+      identity?.refundPolicyUrl ? b2`<a href=${identity.refundPolicyUrl} target="_blank" rel="noopener noreferrer" part="seller-refund">Angrerett og retur</a>` : null
+    ].filter(Boolean);
+    return b2`<p class="seller-note" part="seller-note">
+      Du handler direkte hos <strong>${name}</strong>.${links.length ? b2`<span class="seller-links">${links}</span>` : A}
+    </p>`;
+  }
+  /** Square-ish logo (4:5 to 5:4) → the top bar shows the name beside it. */
+  measureLogo() {
+    const img = this.renderRoot.querySelector(".topbar-logo");
+    if (!img) {
+      if (this.logoSquare) this.logoSquare = false;
+      return;
+    }
+    const decide = () => {
+      if (!img.naturalWidth || !img.naturalHeight) return;
+      const ratio = img.naturalWidth / img.naturalHeight;
+      const square = ratio >= 0.8 && ratio <= 1.25;
+      if (square !== this.logoSquare) this.logoSquare = square;
+    };
+    if (img.complete) decide();
+    else img.addEventListener("load", decide, { once: true });
+  }
   render() {
     return b2`
       <div class="backdrop" @click=${this.close}></div>
       <div class="modal" role="dialog" aria-modal="true" aria-label="Produkt" tabindex="-1">
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
-        <div class="topbar">
-          <span class="topbar-brand">${this.headerName()}</span>
-          <button class="close" @click=${this.close} aria-label="Lukk">×</button>
+        <div class="topbar" part="topbar">
+          <div class="topbar-sponsor ${this.logoSquare ? "is-square" : ""}" part="sponsor">${this.renderTopbarSponsor()}</div>
+          <button class="close" part="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
         ${this.renderBody()}
@@ -15560,44 +16611,90 @@ var VioProductDetail = class extends i4 {
     const activeImage = this.activeImage;
     return b2`
       <div class="body">
-        <div class="gallery">
-          <div class="gallery-main">
+        <div class="gallery" part="gallery">
+          <div class="gallery-main" part="image">
             ${activeImage?.url ? b2`<img src=${activeImage.url} alt=${p3.title} />` : ""}
           </div>
           ${images.length > 1 ? b2`
-                <div class="gallery-thumbs">
-                  ${images.map(
+                <div class="thumbs ${this.thumbsOverflow ? "overflows" : ""}">
+                  <button
+                    class="thumbs-arrow prev"
+                    part="thumbs-arrow"
+                    aria-label="Forrige bilder"
+                    ?disabled=${this.thumbsAtStart}
+                    @click=${() => this.scrollThumbs(-1)}
+                  >‹</button>
+                  <div class="gallery-thumbs" part="thumbs" @scroll=${this.onThumbsScroll}>
+                    ${images.map(
       (img, idx) => b2`
-                      <button
-                        class="gallery-thumb ${idx === this.activeImageIndex ? "active" : ""}"
-                        @click=${() => this.activeImageIndex = idx}
-                        aria-label=${`Bilde ${idx + 1}`}
-                      >
-                        <img src=${img.url} alt="" />
-                      </button>
-                    `
+                        <button
+                          class="gallery-thumb ${idx === this.activeImageIndex ? "active" : ""}"
+                          part=${idx === this.activeImageIndex ? "thumb thumb-active" : "thumb"}
+                          @click=${() => this.activeImageIndex = idx}
+                          aria-label=${`Bilde ${idx + 1}`}
+                          aria-current=${idx === this.activeImageIndex ? "true" : "false"}
+                        >
+                          <img src=${img.url} alt="" loading="lazy" />
+                        </button>
+                      `
     )}
+                  </div>
+                  <button
+                    class="thumbs-arrow next"
+                    part="thumbs-arrow"
+                    aria-label="Neste bilder"
+                    ?disabled=${this.thumbsAtEnd}
+                    @click=${() => this.scrollThumbs(1)}
+                  >›</button>
                 </div>
               ` : ""}
         </div>
 
-        <div class="info">
-          ${p3.brand ? b2`<div class="brand">${p3.brand}</div>` : ""}
-          <h2 class="name">${p3.title}</h2>
+        <div class="info" part="info">
+          ${p3.brand ? b2`<div class="brand" part="brand">${p3.brand}</div>` : ""}
+          <h2 class="name" part="title">${p3.title}</h2>
 
           <div class="price-row">
-            <span class="price">${formatPrice(this.unitPrice, p3.price.currency_code)}</span>
+            <span class="price" part="price">${formatPrice(this.unitPrice, p3.price.currency_code)}</span>
             ${showCompare ? b2`<span class="compare-at">${formatPrice(
       compare,
       p3.price.currency_code
     )}</span>` : ""}
           </div>
 
-          <div class="stock ${stock.cls}">${stock.text}</div>
+          <div class="stock ${stock.cls}" part="stock">${stock.text}</div>
 
           ${this.renderOptionPickers(p3.options)}
 
-          <div class="qty-cta-row">
+          <div class="buy" part="buy">
+          ${this.availableQuantity > 0 && this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
+                  <vipps-mobilepay-button
+                    class="buy-vipps-official"
+                    part="buy-vipps"
+                    brand="vipps"
+                    language="no"
+                    verb="buy"
+                    variant="primary"
+                    rounded="true"
+                    stretched="true"
+                    role="button"
+                    aria-label="Kjøp nå med Vipps"
+                    @click=${this.buyWithVipps}
+                  ></vipps-mobilepay-button>
+                ` : b2`
+                  <button
+                    class="buy-vipps"
+                    part="buy-vipps"
+                    @click=${this.buyWithVipps}
+                    ?disabled=${this.adding}
+                    aria-label="Kjøp nå med Vipps"
+                  >
+                    <span>Kjøp nå med</span>
+                    <span class="vipps-badge">vipps</span>
+                  </button>
+                ` : ""}
+
+          <div class="qty-cta-row" part="quantity-row">
             <div class="qty-stepper">
               <button
                 class="qty-btn"
@@ -15618,6 +16715,7 @@ var VioProductDetail = class extends i4 {
             </div>
             <button
               class="add-to-cart"
+              part="add-to-cart"
               @click=${this.addToCart}
               ?disabled=${this.availableQuantity <= 0 || this.adding}
             >
@@ -15679,36 +16777,14 @@ var VioProductDetail = class extends i4 {
                 </button>
               ` : ""}
 
-          ${this.availableQuantity > 0 && this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
-                  <vipps-mobilepay-button
-                    class="buy-vipps-official"
-                    brand="vipps"
-                    language="no"
-                    verb="buy"
-                    variant="primary"
-                    rounded="true"
-                    stretched="true"
-                    role="button"
-                    aria-label="Kjøp nå med Vipps"
-                    @click=${this.buyWithVipps}
-                  ></vipps-mobilepay-button>
-                ` : b2`
-                  <button
-                    class="buy-vipps"
-                    @click=${this.buyWithVipps}
-                    ?disabled=${this.adding}
-                    aria-label="Kjøp nå med Vipps"
-                  >
-                    <span>Kjøp nå med</span>
-                    <span class="vipps-badge">vipps</span>
-                  </button>
-                ` : ""}
+          ${this.renderSellerNote()}
+          </div>
 
           ${p3.description ? b2`
-                <div>
-                  <div class="description-label">Beskrivelse</div>
+                <details class="description-block" part="description">
+                  <summary>Beskrivelse</summary>
                   <div class="description">${this.stripHtml(p3.description)}</div>
-                </div>
+                </details>
               ` : ""}
         </div>
       </div>
@@ -15720,9 +16796,9 @@ var VioProductDetail = class extends i4 {
       const values = normalizeValues(opt.values);
       if (values.length === 0) return "";
       return b2`
-        <div class="option-group">
-          <div class="option-label">${opt.name}</div>
-          <div class="option-values">
+        <div class="option-group" part="option-group">
+          <div class="option-label" part="option-label">${opt.name}</div>
+          <div class="option-values" part="options">
             ${values.map((val) => {
         const available = this.isValueAvailable(opt.name, val);
         const currentVal = this.selectedOptions[opt.name] ?? "";
@@ -15730,6 +16806,7 @@ var VioProductDetail = class extends i4 {
         return b2`
                 <button
                   class="option-pill ${available ? "" : "unavailable"}"
+                  part=${isSelected ? "option option-selected" : "option"}
                   @click=${() => this.selectOption(opt.name, val)}
                   aria-pressed=${isSelected}
                   ?disabled=${!available}
@@ -15811,6 +16888,18 @@ __decorateClass([
 ], VioProductDetail.prototype, "activeImageIndex", 2);
 __decorateClass([
   r5()
+], VioProductDetail.prototype, "thumbsOverflow", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "thumbsAtStart", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "thumbsAtEnd", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "logoSquare", 2);
+__decorateClass([
+  r5()
 ], VioProductDetail.prototype, "adding", 2);
 __decorateClass([
   r5()
@@ -15862,6 +16951,14 @@ var VioCart = class extends i4 {
       container: () => this.renderRoot.querySelector(".drawer"),
       close: () => this.close()
     });
+    /** Phones: the page behind is locked, and the sheet closes by pulling the bar or the header down. */
+    this.bottomSheet = new BottomSheet({
+      host: this,
+      sheet: () => this.renderRoot.querySelector(".drawer"),
+      backdrop: () => this.renderRoot.querySelector(".backdrop"),
+      dragZones: ".handle, .header",
+      close: () => this.close()
+    });
     this.boundOnCartChange = (e7) => {
       const detail = e7.detail;
       this.carts = detail.cartsBySponsor;
@@ -15892,7 +16989,7 @@ var VioCart = class extends i4 {
       top: 0;
       right: 0;
       bottom: 0;
-      width: min(440px, 100%);
+      width: min(var(--vio-cart-width, 440px), 100%);
       background: var(--vio-color-surface, #fff);
       transform: translateX(100%);
       transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
@@ -15921,8 +17018,11 @@ var VioCart = class extends i4 {
         border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
         transform: translateY(100%);
         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+        overscroll-behavior: contain;
       }
       :host([open]) .drawer { transform: translateY(0); }
+      /* Pulled down to close (bottom-sheet.ts): the browser must not take the gesture for a scroll. */
+      .handle, .header { touch-action: none; }
       .handle {
         display: flex;
         justify-content: center;
@@ -16242,6 +17342,7 @@ var VioCart = class extends i4 {
   }
   disconnectedCallback() {
     Vio.cart.removeEventListener("change", this.boundOnCartChange);
+    this.bottomSheet.disconnect();
     super.disconnectedCallback();
   }
   close() {
@@ -16288,7 +17389,10 @@ var VioCart = class extends i4 {
     return isMethodEnabled(this.availableMethods, ...names);
   }
   updated(changed) {
-    if (changed.has("open")) this.dialogFocus.update(this.open);
+    if (changed.has("open")) {
+      this.dialogFocus.update(this.open);
+      this.bottomSheet.update(this.open);
+    }
     if (changed.has("open") && this.open) {
       this.confirmedOrder = null;
       this.preparedTotal = -1;
@@ -16323,6 +17427,8 @@ var VioCart = class extends i4 {
     const handle = this.applePayHandle;
     if (!handle || !handle.available || this.itemCount === 0) return;
     const snapshot = this.buildConfirmation();
+    const sponsorIds = [...this.carts.keys()];
+    const sponsor = sponsorIds.length === 1 ? sponsorDetail(sponsorIds[0]) : {};
     void handle.show().then((result) => {
       if (!result) return;
       this.confirmedOrder = snapshot;
@@ -16334,7 +17440,7 @@ var VioCart = class extends i4 {
         new CustomEvent("vio:payment-success", {
           bubbles: true,
           composed: true,
-          detail: { method: "apple-pay", result, ...buyerRef ? { buyerRef } : {} }
+          detail: { method: "apple-pay", result, ...buyerRef ? { buyerRef } : {}, ...sponsor }
         })
       );
     });
@@ -16370,7 +17476,7 @@ var VioCart = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: firstSponsorId, paymentMethod: "klarna", express: true }
+        detail: { sponsorId: firstSponsorId, paymentMethod: "klarna", express: true, ...sponsorDetail(firstSponsorId) }
       })
     );
   }
@@ -16391,7 +17497,7 @@ var VioCart = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: firstSponsorId, express: false }
+        detail: { sponsorId: firstSponsorId, express: false, ...sponsorDetail(firstSponsorId) }
       })
     );
   }
@@ -16405,30 +17511,36 @@ var VioCart = class extends i4 {
     if (this.itemCount === 0) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
-    void this.startVippsExpressOrCheckout(firstSponsorId);
+    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: firstSponsorId, source: "cart" });
+    void this.startVippsExpressOrCheckout(firstSponsorId, redirect);
   }
   /** Vipps' own button when its script answers; our orange one otherwise. */
   async loadVippsButton() {
     this.vippsOfficial = await ensureVippsButton();
   }
-  async startVippsExpressOrCheckout(sponsorId) {
+  async startVippsExpressOrCheckout(sponsorId, redirect) {
     let fallback = true;
     try {
       await Vio.cart.waitForCartMutations(sponsorId);
-      if (!await Vio.checkout.getVippsExpressEnabled(sponsorId)) throw new Error("express off");
-      const res = await Vio.checkout.startVippsExpress(sponsorId);
-      fallback = !res?.payment_url;
+      if (!await Vio.checkout.getVippsExpressEnabled(sponsorId)) {
+        redirect.abort("express-off");
+      } else {
+        const res = await Vio.checkout.startVippsExpress(sponsorId);
+        fallback = !res?.payment_url;
+        if (fallback) redirect.abort("not-started");
+      }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCart] Vipps Express not started:", err);
       }
+      redirect.fail(err instanceof Error ? err.message : String(err));
     }
     if (!fallback) return;
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId, paymentMethod: "vipps", express: false }
+        detail: { sponsorId, paymentMethod: "vipps", express: false, ...sponsorDetail(sponsorId) }
       })
     );
   }
@@ -16441,9 +17553,13 @@ var VioCart = class extends i4 {
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: firstSponsorId, paymentMethod: "stripe", express: false }
+        detail: { sponsorId: firstSponsorId, paymentMethod: "stripe", express: false, ...sponsorDetail(firstSponsorId) }
       })
     );
+  }
+  /** The name over a sponsor's lines: the brand's display name by the one rule, else what the cart kept. */
+  sponsorLabel(cart) {
+    return resolveSponsorIdentity(cart.sponsorId)?.name || cart.sponsorName || "";
   }
   get totalAcrossSponsors() {
     let sum = 0;
@@ -16485,7 +17601,7 @@ var VioCart = class extends i4 {
                 ${sponsorCarts.map(
       (cart) => b2`
                     <div class="sponsor-group">
-                      ${cart.sponsorName ? b2`<div class="sponsor-label">${cart.sponsorName}</div>` : ""}
+                      ${this.sponsorLabel(cart) ? b2`<div class="sponsor-label">${this.sponsorLabel(cart)}</div>` : ""}
                       ${cart.items.map(
         (item) => b2`
                           <div class="item">
@@ -16723,6 +17839,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.verifyingReturn = null;
     /** The checkout whose confirmation is on screen — see fillOrderNumber. */
     this.confirmedCheckoutId = null;
+    this.orderSponsor = null;
+    /** The bootstrap that names the checkout's sponsor was asked for (once per checkout) — see watchSponsorBootstrap. */
+    this.sponsorBootstrapAsked = false;
     this.confirmedOrder = null;
     /** Active Klarna Payments widget handle + the subtotal it was mounted for. */
     this.klarnaHandle = null;
@@ -16821,6 +17940,15 @@ var _VioCheckout = class _VioCheckout extends i4 {
       close: () => this.close(),
       canClose: () => !this.paymentInFlight
     });
+    /** Phones: the page behind is locked, and the sheet closes by pulling the bar or the top bar down — not mid-payment. */
+    this.bottomSheet = new BottomSheet({
+      host: this,
+      sheet: () => this.renderRoot.querySelector(".modal"),
+      backdrop: () => this.renderRoot.querySelector(".backdrop"),
+      dragZones: ".handle, .topbar",
+      close: () => this.close(),
+      canClose: () => !this.paymentInFlight
+    });
     this.paymentMethodsResolved = false;
     /** Guards `autoSelectSoleMethod` to ONE attempt per opening — see there. */
     this.autoSelectAttempted = false;
@@ -16873,6 +18001,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.paymentNotice = null;
         this.verifyingReturn = null;
         this.confirmedCheckoutId = null;
+        this.orderSponsor = null;
+        this.sponsorBootstrapAsked = false;
         this.express = false;
         this.availableMethods = null;
         this.paymentMethodsResolved = false;
@@ -16971,8 +18101,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
        from the right instead of the full-screen overlay. */
     .modal.as-side {
       inset: 0 0 0 auto;
-      width: min(440px, 100%);
-      max-width: 440px;
+      width: min(var(--vio-checkout-width, 440px), 100%);
+      max-width: var(--vio-checkout-width, 440px);
       transform: translateX(100%);
       border-radius: 0;
       box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
@@ -16987,8 +18117,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     @media (min-width: 601px) {
       .modal {
         inset: 0 0 0 auto;
-        width: min(440px, 100%);
-        max-width: 440px;
+        width: min(var(--vio-checkout-width, 440px), 100%);
+        max-width: var(--vio-checkout-width, 440px);
         transform: translateX(100%);
         border-radius: 0;
         box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
@@ -17025,7 +18155,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
         height: 92vh;
         border-radius: var(--vio-radius-xl, 16px) var(--vio-radius-xl, 16px) 0 0;
         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+        overscroll-behavior: contain;
       }
+      /* Pulled down to close (bottom-sheet.ts): the browser must not take the gesture for a scroll. */
+      .handle, .topbar { touch-action: none; }
       .handle {
         display: flex;
         justify-content: center;
@@ -17057,6 +18190,33 @@ var _VioCheckout = class _VioCheckout extends i4 {
       font-size: 24px;
       font-weight: 400;
       margin: 0;
+    }
+    .topbar-title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    /* Who the shopper buys from — the checkout's sponsor, compact under the heading. */
+    .topbar-sponsor {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      line-height: 1.3;
+      color: var(--vio-color-text-secondary, #666);
+    }
+    .topbar-sponsor-logo {
+      display: block;
+      width: auto;
+      height: 18px;
+      max-width: 120px;
+      object-fit: contain;
+    }
+    .topbar-sponsor-name {
+      color: var(--vio-color-text, #0a0a0a);
+      font-weight: 600;
     }
     .close {
       background: none;
@@ -17373,7 +18533,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       width: 48px;
       height: 48px;
       border-radius: 50%;
-      background: #2e7d32;
+      background: var(--vio-confirm-check-bg, #2e7d32);
       color: #fff;
       display: flex;
       align-items: center;
@@ -17383,10 +18543,26 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     .confirm-title {
       font-family: var(--vio-font-serif, Georgia, serif);
-      font-size: 24px;
-      font-weight: 400;
+      font-size: var(--vio-confirm-title-size, 24px);
+      font-weight: var(--vio-confirm-title-weight, 400);
       margin: 0;
     }
+    /* The brand the order is with: its logo over the thanks, its name in it. */
+    .confirm-brand { display: flex; align-items: center; }
+    .confirm-brand-logo {
+      display: block;
+      width: auto;
+      height: var(--vio-confirm-logo-height, 40px);
+      max-width: var(--vio-confirm-logo-max-width, 220px);
+      object-fit: contain;
+    }
+    .confirm-sponsor {
+      font-size: var(--vio-confirm-text-size, 14px);
+      line-height: 1.4;
+      color: var(--vio-color-text, #0a0a0a);
+      margin: 4px 0 0;
+    }
+    .confirm-sponsor strong { font-weight: 600; }
     .confirm-text {
       font-size: 14px;
       color: var(--vio-color-text-secondary, #666);
@@ -17587,6 +18763,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * Vipps-specific (GetVippsStatus) return-verification paths. */
   applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId) {
     if (outcome === "paid") {
+      this.setOrderSponsor(sponsorId, checkoutId);
       if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
       this.confirmedOrder = {
         items: [],
@@ -17604,6 +18781,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     } else if (outcome === "failed") {
       this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
       this.open = true;
+      returnCancelled({ method: vioMethod, sponsorId, source: "checkout", checkoutId });
     } else if (sawStatus) {
       this.paymentNotice = "Betalingen behandles fortsatt. Du f\xE5r ordrebekreftelse p\xE5 e-post n\xE5r den er gjennomf\xF8rt. Handlekurven er uendret.";
       this.open = true;
@@ -17647,6 +18825,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (kustomReturn?.kind === "confirmation") {
         const kustomOrderId = kustomReturn.orderId;
         this.returningFrom = "kustom";
+        this.setOrderSponsor(sponsorId, kustomReturn.checkoutId);
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -17690,6 +18869,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (!vioPayment && !checkoutId) return;
       if (urlParams.get("payment_processor") === "QLIRO" && checkoutId) {
         this.returningFrom = "qliro";
+        this.setOrderSponsor(sponsorId, checkoutId);
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -17744,6 +18924,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
       if (urlParams.get("payment_processor") === "WALLEY" && checkoutId) {
         this.returningFrom = "walley";
+        this.setOrderSponsor(sponsorId, checkoutId);
         if (!this.checkoutState) {
           const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
           if (spIdToUse) {
@@ -17800,6 +18981,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(ADYEN_RETURN_QUERY_KEYS);
         if (!adyenReturn) return;
         this.returningFrom = "adyen";
+        this.setOrderSponsor(sponsorId, checkoutId);
         this.adyenSettled = true;
         this.autoSelectAttempted = true;
         if (!this.checkoutState) {
@@ -17856,6 +19038,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             }
           }
         }
+        this.setOrderSponsor(sponsorId, checkoutId);
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen med Vipps\u2026";
         const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
@@ -17866,6 +19049,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         let outcome = "pending";
         let sawStatus = false;
         if (checkoutId) {
+          this.setOrderSponsor(sponsorId, checkoutId);
           this.open = true;
           this.verifyingReturn = "Bekrefter betalingen\u2026";
           for (const delayMs of _VioCheckout.RETURN_VERIFY_DELAYS_MS) {
@@ -17940,10 +19124,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.unmountNexi();
     this.unmountAdyen();
     for (const settle of [...this.pendingSuccessEmits]) settle();
+    this.bottomSheet.disconnect();
     super.disconnectedCallback();
   }
   updated(changed) {
-    if (changed.has("open")) this.dialogFocus.update(this.open);
+    if (changed.has("open")) {
+      this.dialogFocus.update(this.open);
+      this.bottomSheet.update(this.open);
+    }
     if (changed.has("open") && this.open && this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
@@ -17964,6 +19152,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.unmountStripe();
       this.paymentError = null;
     }
+    this.watchSponsorBootstrap();
     if (!this.isConnected) return;
     void this.mountKlarnaIfNeeded();
     void this.mountKustomIfNeeded();
@@ -18395,10 +19584,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     if (method === "vipps") {
       this.vippsLoading = true;
+      const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: this.checkoutState?.sponsorId, source: "checkout" });
       void this.startVippsFromCheckout().catch((err) => {
         if (typeof console !== "undefined") {
           console.warn("[VioCheckout] Vipps payment could not start:", err);
         }
+        redirect.fail(errorText(err));
         this.paymentError = friendlyPaymentError(errorText(err), "vipps");
       }).finally(() => {
         this.vippsLoading = false;
@@ -18440,6 +19631,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const email = String(this.form.email ?? "").trim();
     const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
     const providerOrderId = r6.order?.orderId != null ? String(r6.order.orderId) : "";
+    this.setOrderSponsor(sponsorId, checkoutId);
     this.confirmedOrder = {
       items: [...this.items],
       currency: this.checkoutState?.currency ?? "",
@@ -18482,17 +19674,27 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * `visibilitychange`) or the element leaves, the event goes out at once
    * without the reference. Exactly one event per call. `afterwards` runs
    * right after the event, so a path keeps the order it always had (the cart
-   * is cleared after the event).
+   * is cleared after the event). When that answer already has Vio's order
+   * number, the event carries it too (`orderNumber`): it is the purchase's
+   * `order_id`, and analytics need not ask again.
    */
   async emitPaymentSuccess(detail, checkoutId, sponsorId, afterwards) {
     let done = false;
-    const finish = (buyerRef) => {
+    const sponsorAtStart = this.sponsorOfOrder(sponsorId, checkoutId);
+    const finish = (found = {}) => {
       if (done) return;
       done = true;
+      const named = this.sponsorOfOrder(sponsorId, checkoutId);
+      const sponsor = named.sponsor ? named : sponsorAtStart;
+      const withSponsor = sponsor.sponsor ? { ...detail, ...sponsor } : detail;
       const event = new CustomEvent("vio:payment-success", {
         bubbles: true,
         composed: true,
-        detail: buyerRef ? { ...detail, buyerRef } : detail
+        detail: found.buyerRef || found.orderNumber ? {
+          ...withSponsor,
+          ...found.buyerRef ? { buyerRef: found.buyerRef } : {},
+          ...found.orderNumber ? { orderNumber: found.orderNumber } : {}
+        } : withSponsor
       });
       this.dispatchEvent(event);
       if (!this.isConnected && typeof window !== "undefined") {
@@ -18505,7 +19707,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     };
     const known = buyerRefOf(detail);
     if (known || !checkoutId || !this.shouldAskBuyerRef(detail)) {
-      finish(known);
+      finish({ buyerRef: known });
       return;
     }
     const settleEarly = () => finish();
@@ -18537,8 +19739,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * failed or has neither the reference nor an order yet (the webhook has not
    * written the checkout), again at 1.2 s — all within 2.5 s. An order
    * without a reference is a settled answer: the backend has none, asking
-   * again cannot help. `undefined` when the time is up, when the answer
-   * stopped mattering (`stopped()`) or on failure.
+   * again cannot help. Whatever the answer said of the order number comes
+   * back with it. `{}` when the time is up, when the answer stopped mattering
+   * (`stopped()`) or on failure.
    */
   async askBuyerRef(checkoutId, sponsorId, stopped) {
     const started = Date.now();
@@ -18551,19 +19754,20 @@ var _VioCheckout = class _VioCheckout extends i4 {
       for (const at of [0, _VioCheckout.BUYER_REF_RETRY_AT_MS]) {
         const wait = Math.min(at - (Date.now() - started), remaining());
         if (wait > 0) await Promise.race([new Promise((resolve) => setTimeout(resolve, wait)), timeUp]);
-        if (stopped() || remaining() <= 0) return void 0;
+        if (stopped() || remaining() <= 0) return {};
         try {
           const reference = await Promise.race([
             Vio.checkout.getOrderReference(checkoutId, sponsorId || void 0),
             timeUp
           ]);
-          if (reference === null) return void 0;
-          if (reference.buyerRef) return reference.buyerRef;
-          if (reference.orderNumber !== null) return void 0;
+          if (reference === null) return {};
+          const order = reference.orderNumber ? { orderNumber: reference.orderNumber } : {};
+          if (reference.buyerRef) return { buyerRef: reference.buyerRef, ...order };
+          if (reference.orderNumber !== null) return order;
         } catch {
         }
       }
-      return void 0;
+      return {};
     } finally {
       clearTimeout(deadline);
     }
@@ -18680,7 +19884,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
       >
         <div class="handle" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar">
-          <h2 class="heading">${this.orderConfirmed ? "Takk!" : this.heading}</h2>
+          <div class="topbar-title">
+            <h2 class="heading">${this.orderConfirmed ? "Takk!" : this.heading}</h2>
+            ${this.renderTopbarSponsor()}
+          </div>
           <button class="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
@@ -18689,6 +19896,82 @@ var _VioCheckout = class _VioCheckout extends i4 {
         </div>
       </div>
     `;
+  }
+  /**
+   * Remember whose order this is and how it is named right now, before the
+   * cart that names it is cleared. Whose: the sponsor this tab remembered for
+   * the checkout when it was created (exact for that checkout id), else the
+   * one given (the return URL's `vio_sponsor`, the state it was paid in),
+   * else the open state's — a return without `vio_sponsor` (Qliro, Walley)
+   * re-opens the state with whichever cart comes first, which is a guess.
+   */
+  setOrderSponsor(sponsorId, checkoutId) {
+    try {
+      const checkout = checkoutId || void 0;
+      const id = rememberedCheckoutSponsor(checkout)?.sponsorId ?? (sponsorId && sponsorId > 0 ? sponsorId : void 0) ?? this.checkoutState?.sponsorId;
+      if (!id) return;
+      const named = checkoutSponsorOf(resolveSponsorIdentity(id, checkout));
+      const previous = this.orderSponsor;
+      const snapshot = named ?? (previous && previous.sponsorId === id ? previous.snapshot : void 0);
+      this.orderSponsor = { sponsorId: id, ...checkout ? { checkoutId: checkout } : {}, ...snapshot ? { snapshot } : {} };
+    } catch {
+    }
+  }
+  /**
+   * Who this checkout is with, as a shopper sees it: the order being
+   * confirmed / verified (`orderSponsor`), else the open checkout's own
+   * sponsor (`checkoutState.sponsorId`) — named by `Vio.sponsorIdentity`,
+   * which falls back to this tab's memory of the checkout and the cart; the
+   * name taken before the cart was cleared last. Never the page's
+   * attribution. `null` when nothing names it.
+   */
+  checkoutSponsorIdentity() {
+    const o7 = this.orderSponsor;
+    if (o7) return checkoutSponsorOf(resolveSponsorIdentity(o7.sponsorId, o7.checkoutId)) ?? o7.snapshot ?? null;
+    const s4 = this.checkoutState;
+    return s4?.sponsorId ? checkoutSponsorOf(resolveSponsorIdentity(s4.sponsorId, s4.checkoutId)) ?? null : null;
+  }
+  /**
+   * `{ sponsor }` for the payment event — the same sponsor the screen names
+   * (`orderSponsor`, set by every path right before it emits): named now, else
+   * as named before the cart was cleared; `{}` when nothing names it.
+   */
+  sponsorOfOrder(sponsorId, checkoutId) {
+    try {
+      const o7 = this.orderSponsor;
+      const sameOrder = !!o7 && (o7.checkoutId ?? void 0) === (checkoutId || void 0);
+      const id = sameOrder ? o7.sponsorId : sponsorId > 0 ? sponsorId : void 0;
+      const live = sponsorDetail(id, checkoutId);
+      if (live.sponsor) return live;
+      if (sameOrder && o7.snapshot) return { sponsor: o7.snapshot };
+    } catch {
+    }
+    return {};
+  }
+  /**
+   * Ask once per checkout for the bootstrap when it is not there yet and a
+   * sponsor has to be named (a redirect return renders before it), then
+   * render again — the name and the logo appear when it lands.
+   */
+  watchSponsorBootstrap() {
+    if (this.sponsorBootstrapAsked || !this.open || Vio.bootstrapCache) return;
+    if (!this.orderSponsor && !this.checkoutState?.sponsorId) return;
+    this.sponsorBootstrapAsked = true;
+    void whenBootstrapped().then(() => this.requestUpdate());
+  }
+  /**
+   * The checkout's sponsor in the header — «Du handler hos <logo|name>»
+   * («Du har handlet hos» on a provider's receipt). Not on our own
+   * confirmation, which says it in its body.
+   */
+  renderTopbarSponsor() {
+    if (this.orderConfirmed) return A;
+    const sponsor = this.checkoutSponsorIdentity();
+    const mark = renderSponsorMark(this, sponsor, { logo: "topbar-sponsor-logo", name: "topbar-sponsor-name" });
+    if (mark === A) return A;
+    return b2`<p class="topbar-sponsor" part="sponsor">
+      <span>${this.providerReceipt ? "Du har handlet hos" : "Du handler hos"}</span> ${mark}
+    </p>`;
   }
   /**
    * The provider's receipt on its own. It must not depend on the cart: the
@@ -18717,6 +20000,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.confirmedMethod = method;
     this.open = true;
     const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
+    this.setOrderSponsor(sponsorId, checkoutId);
     void this.emitPaymentSuccess(
       { method, sponsorId, result, checkoutId },
       checkoutId,
@@ -18745,19 +20029,24 @@ var _VioCheckout = class _VioCheckout extends i4 {
     details.push(["Betalingsm\xE5te", o7?.paidWith || this.methodLabel(this.confirmedMethod)]);
     if (o7?.providerRef) details.push([o7.providerRef.label, o7.providerRef.value]);
     if (email) details.push(["Kvittering til", email]);
+    const sponsor = this.checkoutSponsorIdentity();
     return b2`
-      <section class="confirmation">
+      <section class="confirmation" part="confirmation">
+        ${usableLogo(sponsor) ? b2`<div class="confirm-brand" part="sponsor">
+              ${renderSponsorMark(this, sponsor, { logo: "confirm-brand-logo", name: "confirm-brand-name" })}
+            </div>` : ""}
         <header class="confirm-head">
           <div class="confirm-check" aria-hidden="true">✓</div>
           <div>
-            <h3 class="confirm-title">Takk for bestillingen!</h3>
+            <h3 class="confirm-title" part="confirm-title">Takk for bestillingen!</h3>
+            ${sponsor?.name ? b2`<p class="confirm-sponsor" part="confirm-sponsor">Du har handlet hos <strong>${sponsor.name}</strong>.</p>` : ""}
             <p class="confirm-text">
               Betalingen er bekreftet.${email ? b2` Du får en ordrebekreftelse på e-post.` : ""}
             </p>
           </div>
         </header>
 
-        <dl class="confirm-details">
+        <dl class="confirm-details" part="confirm-details">
           ${details.map(
       ([k2, v2]) => b2`<div><dt>${k2}</dt><dd class=${k2 === o7?.providerRef?.label ? "ref" : ""}>${v2}</dd></div>`
     )}
@@ -19167,12 +20456,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     for (const delay of _VioCheckout.NEXI_DETAILS_DELAYS_MS) {
       if (delay) await new Promise((r6) => setTimeout(r6, delay));
       const o7 = await Vio.checkout.getNexiOrder(checkoutId, sponsorId).catch(() => null);
-      const current = this.confirmedOrder;
-      if (!current || current.providerRef?.value !== paymentId) return;
+      const current2 = this.confirmedOrder;
+      if (!current2 || current2.providerRef?.value !== paymentId) return;
       if (!o7) continue;
       const paidWith = o7.payment_method ? o7.card_last4 ? `${o7.payment_method} \u2022\u2022\u2022\u2022 ${o7.card_last4}` : o7.payment_method : void 0;
       this.confirmedOrder = {
-        ...current,
+        ...current2,
         ...paidWith ? { paidWith } : {},
         ...o7.email ? { email: o7.email } : {}
       };
@@ -19200,15 +20489,15 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const options = this.nexiShipping?.options ?? [];
     if (options.length < 2) return "";
     const currency = this.checkoutState?.currency || getGlobalCurrency();
-    const current = this.nexiShipping?.shipping_id;
+    const current2 = this.nexiShipping?.shipping_id;
     return b2`
       <div class="ship-select nexi-ship" role="radiogroup" aria-label="Frakt">
         ${options.map(
       (o7) => b2`
             <button
-              class="ship-opt ${current === o7.id ? "active" : ""}"
+              class="ship-opt ${current2 === o7.id ? "active" : ""}"
               role="radio"
-              aria-checked=${current === o7.id}
+              aria-checked=${current2 === o7.id}
               ?disabled=${this.nexiPicking}
               @click=${() => void this.onPickNexiShipping(o7.id)}
             >
@@ -20045,6 +21334,9 @@ __decorateClass([
 ], _VioCheckout.prototype, "verifyingReturn", 2);
 __decorateClass([
   r5()
+], _VioCheckout.prototype, "orderSponsor", 2);
+__decorateClass([
+  r5()
 ], _VioCheckout.prototype, "confirmedOrder", 2);
 __decorateClass([
   r5()
@@ -20327,7 +21619,38 @@ var THEME_KEY_TO_CSS_VAR = {
   spaceSm: "--vio-space-sm",
   spaceMd: "--vio-space-md",
   spaceLg: "--vio-space-lg",
-  spaceXl: "--vio-space-xl"
+  spaceXl: "--vio-space-xl",
+  detailWidth: "--vio-detail-width",
+  detailPaddingX: "--vio-detail-padding-x",
+  detailLogoHeight: "--vio-detail-logo-height",
+  detailLogoZoom: "--vio-detail-logo-zoom",
+  detailTitleSize: "--vio-detail-title-size",
+  detailPriceSize: "--vio-detail-price-size",
+  detailImageFit: "--vio-detail-image-fit",
+  detailImageAspect: "--vio-detail-image-aspect",
+  detailImageMaxHeight: "--vio-detail-image-max-height",
+  detailImageZoom: "--vio-detail-image-zoom",
+  detailImageInset: "--vio-detail-image-inset",
+  detailImageBg: "--vio-detail-image-bg",
+  detailThumbSize: "--vio-detail-thumb-size",
+  detailThumbGap: "--vio-detail-thumb-gap",
+  detailThumbRadius: "--vio-detail-thumb-radius",
+  detailThumbActiveColor: "--vio-detail-thumb-active-color",
+  detailOptionHeight: "--vio-detail-option-height",
+  detailOptionGap: "--vio-detail-option-gap",
+  detailOptionRadius: "--vio-detail-option-radius",
+  detailOptionWrap: "--vio-detail-option-wrap",
+  detailButtonHeight: "--vio-detail-button-height",
+  detailButtonRadius: "--vio-detail-button-radius",
+  detailBuyPosition: "--vio-detail-buy-position",
+  detailBuyShadow: "--vio-detail-buy-shadow",
+  cartWidth: "--vio-cart-width",
+  checkoutWidth: "--vio-checkout-width",
+  confirmLogoHeight: "--vio-confirm-logo-height",
+  confirmTitleSize: "--vio-confirm-title-size",
+  confirmCheckBg: "--vio-confirm-check-bg",
+  redirectBg: "--vio-redirect-bg",
+  redirectSpinner: "--vio-redirect-spinner"
 };
 function applyVioTheme(overrides, target = typeof document !== "undefined" ? document.documentElement : null) {
   if (!target) return;
@@ -20390,6 +21713,7 @@ export {
   AnalyticsManager,
   BUYER_REF_MAX_LENGTH,
   CHECKOUT_ATTRIBUTION_CAPS,
+  CHECKOUT_SPONSOR_STORAGE_KEY,
   CLIENT_LANDING_URL_MAX_LENGTH,
   CONTENT_URL_MAX_LENGTH,
   CREATE_CART_MUTATION,
@@ -20473,6 +21797,7 @@ export {
   originAndPath,
   primaryImageUrl,
   purchaseFromPaymentSuccess,
+  purchaseIdsOf,
   resetGatewayFeatures,
   resolveCampaignId,
   resolveClientContext,
@@ -20482,6 +21807,7 @@ export {
   sameOrigin,
   showApplePaySheet,
   sponsorCampaignEntry,
+  sponsorIdentityFrom,
   storedLanding,
   toCampaignId,
   updateCheckout,
