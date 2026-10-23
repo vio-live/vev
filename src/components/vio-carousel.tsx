@@ -50,6 +50,7 @@ const CAROUSEL_CSS = `
   transition: transform 0.14s ease, opacity 0.14s ease;
 }
 .vio-carousel-arrow:hover { transform: translateY(-50%) scale(1.08); }
+.vio-carousel-arrow:disabled { opacity: 0; pointer-events: none; }
 .vio-carousel-arrow.prev { left: -8px; }
 .vio-carousel-arrow.next { right: -8px; }
 .vio-carousel-empty {
@@ -162,9 +163,51 @@ export default function VioProductCarousel(props: Props) {
   const perView = Math.max(1, Number(visible) || 4);
   const itemWidth = `calc((100% - ${gap * (perView - 1)}px) / ${perView})`;
 
+  // Whether the track can still move each way: the arrow at an end is off.
+  const [canPrev, setCanPrev] = useState(false);
+  const [canNext, setCanNext] = useState(true);
+  const updateEnds = () => {
+    const el = trackRef.current;
+    if (!el) return;
+    setCanPrev(el.scrollLeft > 1);
+    setCanNext(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  };
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    updateEnds();
+    el.addEventListener("scroll", updateEnds, { passive: true });
+    window.addEventListener("resize", updateEnds);
+    return () => {
+      el.removeEventListener("scroll", updateEnds);
+      window.removeEventListener("resize", updateEnds);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.length]);
+
+  // The arrows move card by card. A smooth programmatic scroll on a track with
+  // mandatory snapping leaves it blank or halfway on iPhone Safari (QA 23/10:
+  // the arrows emptied the carousel, a finger swipe did not), so the snap is
+  // paused while the scroll runs and comes back when it ends.
   const scrollBy = (dir: number) => {
     const el = trackRef.current;
-    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.9, behavior: "smooth" });
+    const items = el ? (Array.from(el.children) as HTMLElement[]) : [];
+    if (!el || items.length === 0) return;
+    const origin = items[0].offsetLeft;
+    const cardWidth = items[0].offsetWidth || el.clientWidth;
+    const perStep = Math.max(1, Math.floor((el.clientWidth + gap) / (cardWidth + gap)));
+    const current = Math.max(0, items.findIndex((it) => it.offsetLeft - origin >= el.scrollLeft - 1));
+    const target = Math.min(items.length - 1, Math.max(0, current + dir * perStep));
+    const left = Math.min(items[target].offsetLeft - origin, el.scrollWidth - el.clientWidth);
+    el.style.scrollSnapType = "none";
+    const restore = () => {
+      el.style.scrollSnapType = "";
+      el.removeEventListener("scrollend", restore);
+      updateEnds();
+    };
+    el.addEventListener("scrollend", restore);
+    window.setTimeout(restore, 700);
+    el.scrollTo({ left, behavior: "smooth" });
   };
 
   if (ids.length === 0) {
@@ -190,7 +233,7 @@ export default function VioProductCarousel(props: Props) {
 
       <div className="vio-carousel-viewport">
         {arrows && list.length > perView ? (
-          <button className="vio-carousel-arrow prev" aria-label="Previous" onClick={() => scrollBy(-1)}>
+          <button className="vio-carousel-arrow prev" aria-label="Previous" disabled={!canPrev} onClick={() => scrollBy(-1)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <polyline points="15 18 9 12 15 6" />
             </svg>
@@ -212,7 +255,7 @@ export default function VioProductCarousel(props: Props) {
         </div>
 
         {arrows && list.length > perView ? (
-          <button className="vio-carousel-arrow next" aria-label="Next" onClick={() => scrollBy(1)}>
+          <button className="vio-carousel-arrow next" aria-label="Next" disabled={!canNext} onClick={() => scrollBy(1)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <polyline points="9 18 15 12 9 6" />
             </svg>
