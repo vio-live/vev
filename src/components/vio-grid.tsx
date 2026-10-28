@@ -3,7 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { ProductMultiSelect, parseIds } from "./product-picker";
 import { ProductCardFromDTO } from "./card-view";
 import { CutByFrameNotice, useCutByFrame } from "./editor-fit";
-import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
+import { LIST_CARD_CONFIG_PROPS, CARD_EDITABLE_CSS, pickCardConfig } from "./card-props";
 import { SLOT_PROPS } from "./slot-props";
 import { COMPONENT_TEMPLATE_ID, fetchVioProducts, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem, trackViewItemList } from "./analytics";
@@ -184,6 +184,6 @@ registerVevComponent(VioProductGrid, {
     } as any,
     { name: "gap", title: "Gap (px)", type: "number", initialValue: 20 },
     ...SLOT_PROPS,
-    ...CARD_CONFIG_PROPS,
+    ...LIST_CARD_CONFIG_PROPS,
   ],
 });
