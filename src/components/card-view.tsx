@@ -45,6 +45,9 @@ export type CardConfig = {
   showName?: boolean;
   showPrice?: boolean;
   showRetailer?: boolean;
+  showDescription?: boolean;
+  /** The editor's own words instead of the catalogue's description (shown even without showDescription). */
+  descriptionText?: string;
   discountMode?: string; // off | auto | manual
   discountText?: string;
   annonse?: boolean;
@@ -181,6 +184,10 @@ const CARD_CSS = `
 .vio-native-card .vnc-name {
   font-size: 16px; font-weight: 500; line-height: 1.3; margin: 0 0 10px;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vio-native-card .vnc-description {
+  font-size: 14px; line-height: 1.45; color: var(--vio-color-text-secondary, #737373); margin: 0 0 12px;
+  display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
 .vio-native-card .vnc-price { font-size: 16px; font-weight: 700; line-height: 1.3; margin-bottom: 16px; }
 /* Cards side by side line up whatever their product (Angelo, 2026-10-08):
@@ -426,6 +433,8 @@ export function ProductCardView({
     showName = true,
     showPrice = true,
     showRetailer = true,
+    showDescription = false,
+    descriptionText = "",
     discountMode = "off",
     discountText = "-25 %",
     annonse = false,
@@ -448,6 +457,8 @@ export function ProductCardView({
     ? `${hasVariants ? "Fra " : ""}${priceAmount} ${p.price.currency_code ?? ""}`
     : "";
   const retailer = p?.supplier?.name ?? p?.brand ?? "";
+  const ownDescription = descriptionText.trim();
+  const description = ownDescription || (showDescription ? plainText(p?.description) : "");
   const inCart = qty > 0;
   const discount = resolveDiscount(p, discountMode, discountText);
   const isImageOnly = layout === "image-only";
@@ -597,6 +608,7 @@ export function ProductCardView({
           so cards side by side line up (see the CSS). */}
       {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || "\u00a0"}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
+      {inBody && description ? <p className="vnc-description">{description}</p> : null}
       {showPrice && price ? <div className="vnc-price">{price}</div> : null}
       {inBody ? vippsEl : null}
       {showRetailer && retailer ? <div className="vnc-retailer">{retailer}</div> : null}
@@ -806,4 +818,17 @@ export function VioProductCardSelf({
       componentTemplateId={COMPONENT_TEMPLATE_ID.card}
     />
   );
+}
+
+/** A catalogue description (HTML) as one plain paragraph for the card, which cuts it. */
+function plainText(html: string | null | undefined): string {
+  if (!html) return "";
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }

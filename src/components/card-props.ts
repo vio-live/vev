@@ -91,6 +91,17 @@ export const CARD_CONFIG_PROPS: any[] = [
   { name: "showName", title: "Show name", type: "boolean", initialValue: true },
   { name: "showPrice", title: "Show price", type: "boolean", initialValue: true },
   { name: "showRetailer", title: "Show retailer", type: "boolean", initialValue: true },
+  // A short paragraph under the name, like the product boxes inside an
+  // article (Angelo, 2026-10-28): the catalogue's description, or the
+  // editor's own words. Cut after four lines.
+  { name: "showDescription", title: "Show description", type: "boolean", initialValue: false },
+  {
+    name: "descriptionText",
+    title: "Description (own text)",
+    type: "string",
+    initialValue: "",
+    options: { multiline: true },
+  },
   {
     name: "discountMode",
     title: "Discount badge",
@@ -150,6 +161,12 @@ export const CARD_EDITABLE_CSS: any[] = [
 ];
 
 /** Extract the CardConfig subset from a Vev props object. */
+/**
+ * The carousel and the grid: the same controls minus the card's own
+ * description text — one text for every product in a row would be wrong.
+ */
+export const LIST_CARD_CONFIG_PROPS: any[] = CARD_CONFIG_PROPS.filter((p) => p.name !== "descriptionText");
+
 export function pickCardConfig(props: Record<string, any>) {
   const {
     layout,
@@ -162,6 +179,8 @@ export function pickCardConfig(props: Record<string, any>) {
     showName,
     showPrice,
     showRetailer,
+    showDescription,
+    descriptionText,
     discountMode,
     discountText,
     annonse,
@@ -180,6 +199,8 @@ export function pickCardConfig(props: Record<string, any>) {
     showName,
     showPrice,
     showRetailer,
+    showDescription,
+    descriptionText,
     discountMode,
     discountText,
     annonse,
