@@ -1,5 +1,5 @@
 /**
- * The SDK facade (vio-web-sdk 0.25.0). Beyond init / bootstrap / cart /
+ * The SDK facade (vio-web-sdk 0.37.0; this header lists what Vev uses, added in 0.25.0). Beyond init / bootstrap / cart /
  * checkout / analytics, the slot and page-campaign API of ADR-0027 / ADR-0034
  * (amendment 3) the blocks use:
  *   init({ apiKey, environment?, platform?, contentId?, contentTitle?, campaignId?, debug?, … })
@@ -52,7 +52,7 @@ export function purchaseFromPaymentSuccess(detail: {
   buyerRef?: string | null;
   buyer_ref?: string | null;
   result?: { confirmation?: { orderId?: string | number | null; status?: string } | null; [key: string]: unknown } | null;
-}): { orderId?: string; buyerId?: string };
+}): { orderId?: string; checkoutId?: string; buyerId?: string };
 
 export const CREATE_CART_MUTATION: string;
 export const ADD_ITEM_MUTATION: string;

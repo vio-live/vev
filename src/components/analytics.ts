@@ -138,6 +138,10 @@ type EventParams = {
    *  SDK without `requireConsent`, so the gate is the host's CMP — whether the
    *  package loads at all — and the collector's `minimal` privacy mode. */
   buyerId?: string;
+  /** Vio's checkout id (uuid): `commerce.checkout_id` on the wire — what ties
+   *  `add_payment_info` and `purchase` to the order Commerce confirms
+   *  (`order_paid`). Only to the Vio collector, never into GA4. */
+  checkoutId?: string;
   /** Internal: the raw cart lines (`CartLineItem[]`, origins included) behind
    *  `items`, for `Vio.cartSlices()`. Never leaves this module. */
   cartLines?: unknown[];
@@ -189,7 +193,7 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 
   const {
     currency, value, items, item_list_name, transaction_id, payment_type,
-    sponsorId, slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines,
+    sponsorId, slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines, checkoutId,
     ...rest
   } = params;
   // What the sinks outside this module see: never the raw cart lines, never
@@ -234,7 +238,7 @@ export function trackEvent(name: string, params: EventParams = {}): void {
 /** Client-side taxonomy of the analytics contract v1 — only these forward. */
 const VIO_EVENT_NAMES = new Set([
   "view_item_list", "select_item", "view_item", "add_to_cart", "remove_from_cart",
-  "view_cart", "begin_checkout", "purchase",
+  "view_cart", "begin_checkout", "add_payment_info", "purchase",
   "component_impression", "component_click", "ad_impression", "ad_click",
   "poll_impression", "contest_impression", "session_start", "session_end",
   "sdk_error",
@@ -255,7 +259,7 @@ function persistedSponsorIfKnown(): number | undefined {
 }
 
 /** Events that a cart with several campaigns splits (ADR-0034, amendment 2). */
-const SPLIT_BY_CAMPAIGN = new Set(["begin_checkout", "purchase"]);
+const SPLIT_BY_CAMPAIGN = new Set(["begin_checkout", "add_payment_info", "purchase"]);
 
 type CampaignGroup = {
   campaignId?: number;
@@ -438,7 +442,7 @@ function forwardToVio(name: string, params: EventParams): void {
 function sendToVio(analytics: any, name: string, params: EventParams): void {
   const {
     currency, value, items, item_list_name, transaction_id, payment_type, sponsorId, error_code,
-    slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines: _cartLines,
+    slot, campaignId, contentId, contentTitle, componentTemplateId, buyerId, cartLines: _cartLines, checkoutId,
     ...rest
   } = params;
   const props: Record<string, unknown> = { ...rest };
@@ -447,7 +451,7 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
   try {
     analytics.track(name, {
       commerce:
-        items?.length || value != null || transaction_id || payment_type || buyerId
+        items?.length || value != null || transaction_id || payment_type || buyerId || checkoutId
           ? {
               items: items?.map((i) => ({
                 productId: i.productId ?? "",
@@ -460,6 +464,7 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
               value: value ?? undefined,
               currency: currency ?? undefined,
               orderId: transaction_id,
+              checkoutId: checkoutId || undefined,
               paymentMethod: payment_type,
               // The SDK keeps only a reference (`normalizeBuyerRef`) —
               // `buyer_id` on the wire.
@@ -497,6 +502,44 @@ function sendToVio(analytics: any, name: string, params: EventParams): void {
     });
   } catch {
     // Analytics must never break the page.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Buttons (cta_click, SDK 0.37)
+// ---------------------------------------------------------------------------
+
+/** A button tap, as `Vio.trackCta()` takes it (vio-web-sdk src/core/analytics/cta.ts). */
+export type CtaClick = {
+  cta: string;
+  location?: string;
+  label?: string;
+  variant?: string;
+  optionValue?: string;
+  productId?: number | string;
+  sponsorId?: number | string;
+} & VioAttribution;
+
+/**
+ * Sends one `cta_click`: a tap on a Vev block's own button, or one the SDK's
+ * detail, cart or checkout announced (`vio:cta-click`). It goes straight to
+ * `Vio.trackCta`, which validates it — not through trackEvent: the fields are
+ * the button's, not commerce, and GA4 does not get button taps. The inspector
+ * shows it like any other event.
+ */
+export function trackCta(click: CtaClick): void {
+  if (!state.enabled || !click?.cta) return;
+  if (state.sendToVio) {
+    try {
+      (Vio as any).trackCta?.(click);
+    } catch {
+      /* analytics must never break the page */
+    }
+  }
+  if (typeof document !== "undefined") {
+    const detail = { name: "cta_click", params: click, ts: Date.now() };
+    ringLog(detail);
+    document.dispatchEvent(new CustomEvent("vio:analytics", { detail }));
   }
 }
 
@@ -766,6 +809,51 @@ export function initVioAnalytics(): () => void {
     });
   };
 
+  // add_payment_info — the backend checkout exists (SDK 0.29+). The one link
+  // from the order Commerce confirms (`order_paid`, by checkout id) back to
+  // this session: «Went to Vipps» and «Vipps payments» in the dashboard count
+  // it. The SDK sends it only in its own auto tracking, which is off here,
+  // and dispatches `vio:checkout-created` on WINDOW, not document. Since 0.35
+  // the cart's Vipps button and the detail's Vipps-with-lines pay by Express
+  // without `vio:checkout-open`, so this is also the only trace of those.
+  const announcedCheckouts = new Set<string>();
+  const onCheckoutCreated = (e: Event) => {
+    const d = (e as CustomEvent).detail ?? {};
+    const checkoutId = typeof d.checkoutId === "string" ? d.checkoutId.trim() : "";
+    if (!checkoutId || announcedCheckouts.has(checkoutId)) return;
+    announcedCheckouts.add(checkoutId);
+    const sid = num(d.sponsorId);
+    const items = cartToItems(sid);
+    trackEvent("add_payment_info", {
+      currency: currencyOf(items),
+      value: sumValue(items),
+      payment_type: typeof d.paymentMethod === "string" && d.paymentMethod ? d.paymentMethod : undefined,
+      checkoutId,
+      sponsorId: sid ?? soleCartSponsor(),
+      items,
+      cartLines: rawCartLines(sid),
+      ...attributionOf(d),
+    });
+    // Leaving for the provider now: the page-hide beacon would cover it, but
+    // a flush before the redirect costs nothing.
+    if (d.redirect === true) {
+      try {
+        const flushed = (Vio as any).analytics?.flush?.();
+        if (flushed && typeof flushed.catch === "function") flushed.catch(() => {});
+      } catch {
+        /* analytics must never break the page */
+      }
+    }
+  };
+
+  // cta_click — a tap on one of the SDK's own buttons (detail, cart,
+  // checkout). The SDK only sends it in its own auto tracking (off here), so
+  // `vio:cta-click` (bubbles, composed) goes to trackCta.
+  const onCtaClick = (e: Event) => {
+    const d = (e as CustomEvent).detail;
+    if (d) trackCta(d as CtaClick);
+  };
+
   // view_cart — the cart drawer was opened.
   const onOpenCart = () => {
     const items = cartToItems();
@@ -803,11 +891,12 @@ export function initVioAnalytics(): () => void {
         : [...snapshots.entries()];
     const items = picked.flatMap(([, s]) => s.items);
     const lines = picked.flatMap(([, s]) => s.lines);
-    const { orderId, buyerId } = purchaseFromPaymentSuccess(d);
+    const { orderId, checkoutId, buyerId } = purchaseFromPaymentSuccess(d);
     trackEvent("purchase", {
       currency: currencyOf(items),
       value: sumValue(items),
       transaction_id: orderId,
+      checkoutId,
       payment_type: d.method,
       sponsorId: paidSponsor ?? soleSnapshotSponsor(),
       items,
@@ -865,6 +954,8 @@ export function initVioAnalytics(): () => void {
   document.addEventListener("vio:checkout-open", onCheckoutOpen);
   document.addEventListener("vio:open-cart", onOpenCart);
   document.addEventListener("vio:payment-success", onPaymentSuccess);
+  document.addEventListener("vio:cta-click", onCtaClick);
+  if (typeof window !== "undefined") window.addEventListener("vio:checkout-created", onCheckoutCreated);
 
   const cleanup = () => {
     Vio.cart?.removeEventListener?.("change", onCartChange);
@@ -874,6 +965,8 @@ export function initVioAnalytics(): () => void {
     document.removeEventListener("vio:checkout-open", onCheckoutOpen);
     document.removeEventListener("vio:open-cart", onOpenCart);
     document.removeEventListener("vio:payment-success", onPaymentSuccess);
+    document.removeEventListener("vio:cta-click", onCtaClick);
+    if (typeof window !== "undefined") window.removeEventListener("vio:checkout-created", onCheckoutCreated);
     g[INIT_FLAG] = null;
   };
   g[INIT_FLAG] = cleanup;

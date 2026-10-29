@@ -1196,8 +1196,8 @@ export type AdoptedConnection = {
 /**
  * What Vio Config does with a successful bootstrap of `key`:
  *  - another key (or environment) than the one this browser last connected
- *    with → forget the previous key's sponsor, sponsor list, carts, catalog
- *    and Vipps answers;
+ *    with → forget the previous key's sponsor, sponsor list, catalog and
+ *    Vipps answers (its carts stay with its connection, SDK 0.33);
  *  - drop the cart of any sponsor this key does not have (a page built on
  *    vio-backend's sponsor ids left "4" and "5" in `vio.cart.v1`);
  *  - remember the sponsors (for the "Active Sponsor" selector) and the
@@ -1219,7 +1219,11 @@ export function adoptConnection(
   // No fingerprint yet = a browser from before this rule: nothing says the key
   // changed, and the carts of unknown sponsors go below anyway.
   const keyChanged = previous != null && previous !== fingerprint;
-  if (keyChanged) forgetConnectionState({ carts: true });
+  // Not the carts: since SDK 0.33 each connection (environment + key) keeps
+  // its own, and `Vio.init` with this key has already switched `Vio.cart` to
+  // them — clearing here wiped the NEW key's carts, not the old one's (which
+  // come back if the page switches back).
+  if (keyChanged) forgetConnectionState({ carts: false });
   // Any sponsor of any campaign of the key keeps its cart: a slot's campaign
   // may sell with a sponsor the default campaign does not have.
   const droppedCarts = pruneCartsOutside(config.knownIds);
@@ -1474,15 +1478,29 @@ function commerceSponsorOrThrow(requested: unknown): number {
   return sponsorId;
 }
 
+/** The channel a block reads with (SDK 0.33): its campaign's, when the block
+ * has one — a slot the dashboard gave to another campaign of the same sponsor
+ * sells on that campaign's channel, and its cart and checkout already do.
+ * Without one, the SDK picks the page's campaign (`Vio.init`). */
+function commerceForBlock(sponsorId: unknown, campaignId?: number | null) {
+  const sid = commerceSponsorOrThrow(sponsorId);
+  return campaignId != null ? Vio.commerceFor(sid, { campaignId }) : Vio.commerceFor(sid);
+}
+
 /** Fetch a single full product DTO by id. Returns null on failure — and when
  * the sponsor's channel does not carry the product (the card then shows its
- * "unavailable" placeholder). */
-export async function fetchVioProduct(productId: number, sponsorId?: number | null): Promise<VioProduct | null> {
+ * "unavailable" placeholder). `campaignId`: the block's campaign (see
+ * `commerceForBlock`). */
+export async function fetchVioProduct(
+  productId: number,
+  sponsorId?: number | null,
+  campaignId?: number | null
+): Promise<VioProduct | null> {
   try {
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(commerceSponsorOrThrow(sponsorId)).channel.product.getByIds({
+      const arr = await commerceForBlock(sponsorId, campaignId).channel.product.getByIds({
         product_ids: [productId],
         currency: getActiveCurrency(),
         shipping_country_code: getActiveCountryCode(),
@@ -1497,15 +1515,20 @@ export async function fetchVioProduct(productId: number, sponsorId?: number | nu
 }
 
 /** Fetch several products by id in one call (carousel / grid). Returns [] on
- * failure; a product the sponsor's channel does not carry is left out. */
-export async function fetchVioProducts(productIds: number[], sponsorId?: number | null): Promise<VioProduct[]> {
+ * failure; a product the sponsor's channel does not carry is left out.
+ * `campaignId`: the block's campaign (see `commerceForBlock`). */
+export async function fetchVioProducts(
+  productIds: number[],
+  sponsorId?: number | null,
+  campaignId?: number | null
+): Promise<VioProduct[]> {
   const ids = productIds.filter((n) => Number.isFinite(n));
   if (ids.length === 0) return [];
   try {
     return await withRetry(async () => {
       ensureVioInit();
       await Vio.bootstrap();
-      const arr = await Vio.commerceFor(commerceSponsorOrThrow(sponsorId)).channel.product.getByIds({
+      const arr = await commerceForBlock(sponsorId, campaignId).channel.product.getByIds({
         product_ids: ids,
         currency: getActiveCurrency(),
         shipping_country_code: getActiveCountryCode(),

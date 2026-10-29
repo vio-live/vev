@@ -46,7 +46,7 @@ import {
   type VioEnvironment,
 } from "./vio-helpers";
 import ProductSelect from "./product-picker";
-import { trackViewItem } from "./analytics";
+import { trackCta, trackViewItem } from "./analytics";
 
 /**
  * Vio Configuration — the ONLY setup block. Wraps the real vio-web-sdk:
@@ -471,7 +471,10 @@ export default function VioConfig({
       const slot = typeof payload?.slot === "string" && payload.slot.trim() ? payload.slot.trim() : undefined;
       const sponsorId = sponsorForSlot(slot, sponsorForCommerce(payload?.product?.sponsorId));
       // Typed as the detail — the component the reader sees (COMPONENT_TEMPLATE_ID.open).
-      trackViewItem({ productId: Number(productId) }, vioAttribution(slot, sponsorId, COMPONENT_TEMPLATE_ID.open));
+      const attr = vioAttribution(slot, sponsorId, COMPONENT_TEMPLATE_ID.open);
+      trackViewItem({ productId: Number(productId) }, attr);
+      // The tap itself, for the dashboard's «Buttons» (an article block).
+      trackCta({ ...attr, cta: "open", location: "block", productId: Number(productId), sponsorId: sponsorId ?? undefined });
       openProductInfo(Number(productId), payload?.product?.sponsorId, undefined, slot);
     },
   );
@@ -527,7 +530,9 @@ export default function VioConfig({
       Vio.checkout?.open?.(sponsorId);
       if (paymentMethod) Vio.checkout?.selectPaymentMethod?.(paymentMethod);
     } catch {
-      /* noop */
+      // The SDK refused the checkout (0.31: an empty cart, or one that totals
+      // 0 kr): showing the drawer anyway left an empty checkout on screen.
+      return;
     }
     setTimeout(() => {
       const checkoutEl: any = checkoutRef.current;
@@ -697,9 +702,13 @@ export default function VioConfig({
           inherits the host's), given here too so a title the Vev store
           resolves after the detail connected still reaches it (the element
           re-registers on a prop change; it does not watch its ancestors). */}
+      {/* noAddedToast: since SDK 0.31 the detail shows «Lagt i handlekurven»
+          after an add, on top of the cart drawer Vev opens right then (and,
+          on phones, under Vev's cart button). Vev keeps its drawer. */}
       <VioProductDetail
         vioScope={pageScope.scope}
         vioScopeName={pageScope.scopeName}
+        noAddedToast
         onCheckoutOpen={onCheckoutOpen}
         onAddedToCart={() => cartRef.current?.show?.()}
       />
