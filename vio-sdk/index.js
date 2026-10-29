@@ -205,9 +205,9 @@ function slotDeclarationKey(location2, pageCampaignId) {
   const kind = normalizeSlotKind(location2.kind);
   return location2.id + (location2.displayName ? `${location2.displayName}` : "") + (campaignId !== void 0 ? `${campaignId}` : "") + (kind !== void 0 ? `${kind}` : "");
 }
-function pendingSlotKeys(memory, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
+function pendingSlotKeys(memory2, keys, now = Date.now(), ttl = SLOT_DECLARATION_TTL_MS) {
   return keys.filter((key) => {
-    const at = memory?.[key];
+    const at = memory2?.[key];
     if (typeof at !== "number" || !Number.isFinite(at)) return true;
     return now - at >= ttl || now < at;
   });
@@ -216,8 +216,8 @@ function slotKeyId(key) {
   const cut4 = key.search(/[\u001f\u001e\u001d]/);
   return cut4 >= 0 ? key.slice(0, cut4) : key;
 }
-function rememberSlotKeys(memory, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
-  const next = { ...memory ?? {} };
+function rememberSlotKeys(memory2, keys, at, cap = SLOT_DECLARATION_MEMORY_CAP) {
+  const next = { ...memory2 ?? {} };
   const ids = new Set(keys.map(slotKeyId));
   for (const existing of Object.keys(next)) {
     if (ids.has(slotKeyId(existing)) && !keys.includes(existing)) delete next[existing];
@@ -256,10 +256,10 @@ function readSlotDeclaration(storageKey) {
     return {};
   }
 }
-function writeSlotDeclaration(storageKey, memory) {
+function writeSlotDeclaration(storageKey, memory2) {
   try {
     if (typeof localStorage === "undefined") return;
-    localStorage.setItem(storageKey, JSON.stringify(memory));
+    localStorage.setItem(storageKey, JSON.stringify(memory2));
   } catch {
   }
 }
@@ -4589,6 +4589,51 @@ var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
   };
 };
 
+// src/core/safe-storage.ts
+var memory = {
+  local: /* @__PURE__ */ new Map(),
+  session: /* @__PURE__ */ new Map()
+};
+function area(kind) {
+  try {
+    const s4 = globalThis[kind === "local" ? "localStorage" : "sessionStorage"];
+    return s4 && typeof s4.getItem === "function" ? s4 : null;
+  } catch {
+    return null;
+  }
+}
+function storageGet(kind, key) {
+  const kept = memory[kind];
+  if (kept.has(key)) return kept.get(key) ?? null;
+  const s4 = area(kind);
+  if (!s4) return null;
+  try {
+    return s4.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function storageSet(kind, key, value, opts = {}) {
+  try {
+    const s4 = area(kind);
+    if (s4) {
+      s4.setItem(key, value);
+      memory[kind].delete(key);
+      return true;
+    }
+  } catch {
+  }
+  if (opts.memory !== false) memory[kind].set(key, value);
+  return false;
+}
+function storageRemove(kind, key) {
+  memory[kind].delete(key);
+  try {
+    area(kind)?.removeItem(key);
+  } catch {
+  }
+}
+
 // src/core/types.ts
 function displayPrice(product) {
   const p3 = product.price;
@@ -4598,37 +4643,24 @@ function displayPrice(product) {
 function getGlobalCountryCode() {
   const g2 = globalThis;
   if (g2.__VIO_COUNTRY__) return g2.__VIO_COUNTRY__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.country");
-      if (v2) return v2;
-    } catch {
-    }
-  }
+  const stored = storageGet("local", "vio.country");
+  if (stored) return stored;
   return "NO";
 }
 function getGlobalLocale() {
   const g2 = globalThis;
   if (g2.__VIO_LOCALE__) return g2.__VIO_LOCALE__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.locale");
-      if (v2) return v2;
-    } catch {
-    }
-  }
+  const stored = storageGet("local", "vio.locale");
+  if (stored) return stored;
   return "nb-NO";
 }
 function getGlobalSymbol(currency) {
   const activeCurrency = currency || getGlobalCurrency();
   const g2 = globalThis;
   if (!currency && g2.__VIO_SYMBOL__) return g2.__VIO_SYMBOL__;
-  if (!currency && typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.symbol");
-      if (v2) return v2;
-    } catch {
-    }
+  if (!currency) {
+    const v2 = storageGet("local", "vio.symbol");
+    if (v2) return v2;
   }
   const curr = String(activeCurrency).toUpperCase();
   if (curr === "NOK" || curr === "DKK") return "Kr";
@@ -4642,13 +4674,8 @@ function getGlobalSymbol(currency) {
 function getGlobalCurrency() {
   const g2 = globalThis;
   if (g2.__VIO_CURRENCY__) return g2.__VIO_CURRENCY__;
-  if (typeof localStorage !== "undefined") {
-    try {
-      const v2 = localStorage.getItem("vio.currency");
-      if (v2) return v2;
-    } catch {
-    }
-  }
+  const stored = storageGet("local", "vio.currency");
+  if (stored) return stored;
   return "NOK";
 }
 var validatedLocales = /* @__PURE__ */ new Map();
@@ -4790,6 +4817,80 @@ var GET_PRODUCT_SELLER = (
   }
 `
 );
+var GET_PRODUCT_SHIPPING = (
+  /* GraphQL */
+  `
+  query GetProductShipping(
+    $productIds: [Int!]
+    $useCache: Boolean!
+    $currency: String
+    $shippingCountryCode: String
+  ) {
+    Channel {
+      GetProductsByIds(
+        product_ids: $productIds
+        useCache: $useCache
+        currency: $currency
+        shipping_country_code: $shippingCountryCode
+      ) {
+        id
+        product_shipping {
+          id
+          name
+          description
+          default
+          shipping_country {
+            country
+            price {
+              amount
+              amount_incl_taxes
+              currency_code
+            }
+          }
+        }
+      }
+    }
+  }
+`
+);
+var GET_PRODUCT_SHIPPING_WITH_LOGO = (
+  /* GraphQL */
+  `
+  query GetProductShippingWithLogo(
+    $productIds: [Int!]
+    $useCache: Boolean!
+    $currency: String
+    $shippingCountryCode: String
+  ) {
+    Channel {
+      GetProductsByIds(
+        product_ids: $productIds
+        useCache: $useCache
+        currency: $currency
+        shipping_country_code: $shippingCountryCode
+      ) {
+        id
+        product_shipping {
+          id
+          name
+          description
+          logo_url
+          default
+          shipping_country {
+            country
+            price {
+              amount
+              amount_incl_taxes
+              currency_code
+            }
+          }
+        }
+      }
+    }
+  }
+`
+);
+var gatewayHasShippingLogo;
 var ChannelProduct = class {
   constructor(client) {
     this.client = client;
@@ -4829,7 +4930,77 @@ var ChannelProduct = class {
       return null;
     }
   }
+  /**
+   * The product's shipping rates for the page's market (or `country`),
+   * cheapest first; `[]` when it has none there, `null` when they could not
+   * be read. Never throws. Never from the cache, for the reason given at
+   * getSellerCompany.
+   */
+  async getShippingRates(productId, options = {}) {
+    const country = options.country || getGlobalCountryCode();
+    const variables = {
+      productIds: [productId],
+      useCache: false,
+      currency: options.currency ?? getGlobalCurrency(),
+      shippingCountryCode: country
+    };
+    try {
+      let data;
+      if (gatewayHasShippingLogo === false) {
+        data = await this.client.request(GET_PRODUCT_SHIPPING, variables);
+      } else {
+        try {
+          data = await this.client.request(GET_PRODUCT_SHIPPING_WITH_LOGO, variables);
+          gatewayHasShippingLogo = true;
+        } catch (err) {
+          if (!/logo_url/.test(String(err?.message ?? ""))) throw err;
+          gatewayHasShippingLogo = false;
+          data = await this.client.request(GET_PRODUCT_SHIPPING, variables);
+        }
+      }
+      const product = data.Channel?.GetProductsByIds?.[0];
+      if (!product) return null;
+      return shippingRatesFor(product.product_shipping, country);
+    } catch {
+      return null;
+    }
+  }
 };
+var FILLER_SHIPPING_DESCRIPTIONS = Object.freeze(["by outshifter", "default shipping method"]);
+function shippingDescriptionOf(value, repeats = []) {
+  const text3 = typeof value === "string" ? value.trim() : "";
+  if (!text3) return "";
+  const key = text3.toLowerCase();
+  if (FILLER_SHIPPING_DESCRIPTIONS.includes(key)) return "";
+  for (const r6 of repeats) {
+    if (typeof r6 === "string" && r6.trim() && r6.trim().toLowerCase() === key) return "";
+  }
+  return text3;
+}
+function shippingRatesFor(productShipping, country) {
+  if (!Array.isArray(productShipping)) return [];
+  const want = String(country || "").trim().toUpperCase();
+  const out = [];
+  for (const s4 of productShipping) {
+    const countries = Array.isArray(s4?.shipping_country) ? s4.shipping_country : [];
+    const row = countries.find((c4) => String(c4?.country ?? "").trim().toUpperCase() === want);
+    const price = row?.price;
+    const amount = typeof price?.amount_incl_taxes === "number" ? price.amount_incl_taxes : price?.amount;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) continue;
+    const name = String(s4.name ?? "");
+    const description = shippingDescriptionOf(s4.description, [name]);
+    out.push({
+      id: String(s4.id ?? ""),
+      name,
+      price: amount,
+      currency: String(price?.currency_code ?? ""),
+      default: s4.default === true,
+      description,
+      logoUrl: httpsUrlOrEmpty(s4.logo_url ?? s4.logoUrl)
+    });
+  }
+  return out.sort((a3, b3) => a3.price - b3.price);
+}
 var Channel = class {
   constructor(client) {
     this.product = new ChannelProduct(client);
@@ -4847,6 +5018,11 @@ var CommerceClient = class {
 };
 function createCommerceClient(options) {
   return new CommerceClient(options);
+}
+function httpsUrlOrEmpty(value) {
+  if (typeof value !== "string") return "";
+  const url = value.trim();
+  return /^https:\/\/[^\s]+$/i.test(url) ? url : "";
 }
 
 // src/core/content.ts
@@ -4988,6 +5164,168 @@ async function currentPrivacyMode() {
   }
 }
 
+// src/core/detail-layout.ts
+var DETAIL_SECTION_IDS = [
+  "brand",
+  "title",
+  "stock",
+  "price",
+  "options",
+  "purchase",
+  "highlights",
+  "description",
+  "shippingReturns"
+];
+var ESSENTIAL_DETAIL_SECTIONS = ["title", "price", "options", "purchase"];
+var LAYOUT_TOKEN = /^[A-Za-z0-9._:-]{1,64}$/;
+function layoutToken(value) {
+  if (typeof value !== "string") return void 0;
+  const v2 = value.trim();
+  return LAYOUT_TOKEN.test(v2) ? v2 : void 0;
+}
+var KNOWN = new Set(DETAIL_SECTION_IDS);
+function defaultDetailLayout() {
+  return { id: "default", revision: "0", sections: [...DETAIL_SECTION_IDS], adjusted: [], source: "default" };
+}
+var warned = /* @__PURE__ */ new Set();
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  if (typeof console !== "undefined") console.warn("[Vio] detail layout ignored:", message);
+}
+function normalizeDetailLayout(raw) {
+  if (raw === null || raw === void 0) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    warnOnce(`type:${typeof raw}`, "it must be an object");
+    return null;
+  }
+  const r6 = raw;
+  const id = layoutToken(r6.id);
+  if (!id) {
+    warnOnce(`id:${String(r6.id)}`, `invalid id ${JSON.stringify(r6.id)} (\u2264 64 chars of A-Z a-z 0-9 . _ : -)`);
+    return null;
+  }
+  if (!Array.isArray(r6.sections)) {
+    warnOnce(`sections:${id}`, `layout ${id}: sections must be an array of section ids`);
+    return null;
+  }
+  const out = {
+    id,
+    revision: layoutToken(r6.revision) ?? "",
+    sections: r6.sections.map((s4) => typeof s4 === "string" ? s4.trim() : String(s4))
+  };
+  const experimentId = layoutToken(r6.experimentId);
+  if (experimentId) out.experimentId = experimentId;
+  const variantId = layoutToken(r6.variantId);
+  if (variantId) out.variantId = variantId;
+  return out;
+}
+function effectiveDetailSections(requested) {
+  const sections = [];
+  const adjusted = [];
+  for (const raw of requested) {
+    const s4 = String(raw).slice(0, 64);
+    if (!KNOWN.has(s4)) {
+      adjusted.push({ section: s4, reason: "unknown" });
+      continue;
+    }
+    if (sections.includes(s4)) {
+      adjusted.push({ section: s4, reason: "duplicate" });
+      continue;
+    }
+    sections.push(s4);
+  }
+  for (const essential of ESSENTIAL_DETAIL_SECTIONS) {
+    if (!sections.includes(essential)) {
+      sections.push(essential);
+      adjusted.push({ section: essential, reason: "added-essential" });
+    }
+  }
+  return { sections, adjusted };
+}
+function resolveDetailLayout(elementLayout, globalLayout = currentGlobalDetailLayout()) {
+  const own = normalizeDetailLayout(elementLayout);
+  const page = own ? null : normalizeDetailLayout(globalLayout);
+  const chosen = own ?? page;
+  if (!chosen) return defaultDetailLayout();
+  const { sections, adjusted } = effectiveDetailSections(chosen.sections);
+  return {
+    id: chosen.id,
+    revision: chosen.revision,
+    ...chosen.experimentId ? { experimentId: chosen.experimentId } : {},
+    ...chosen.variantId ? { variantId: chosen.variantId } : {},
+    sections,
+    adjusted,
+    source: own ? "element" : "global"
+  };
+}
+function copyAppliedLayout(applied) {
+  return { ...applied, sections: [...applied.sections], adjusted: applied.adjusted.map((a3) => ({ ...a3 })) };
+}
+function layoutSignature(applied) {
+  return [applied.source, applied.id, applied.revision, applied.experimentId ?? "", applied.variantId ?? "", applied.sections.join(",")].join("|");
+}
+function layoutOriginOf(applied) {
+  if (!applied || applied.source === "default") return {};
+  return {
+    layoutId: applied.id,
+    ...applied.revision ? { layoutRevision: applied.revision } : {},
+    ...applied.experimentId ? { experimentId: applied.experimentId } : {},
+    ...applied.variantId ? { variantId: applied.variantId } : {}
+  };
+}
+function normalizeLayoutOrigin(origin) {
+  if (!origin || typeof origin !== "object") return {};
+  const o7 = origin;
+  const layoutId = layoutToken(o7.layoutId);
+  if (!layoutId) return {};
+  const out = { layoutId };
+  const layoutRevision = layoutToken(o7.layoutRevision);
+  if (layoutRevision) out.layoutRevision = layoutRevision;
+  const experimentId = layoutToken(o7.experimentId);
+  if (experimentId) out.experimentId = experimentId;
+  const variantId = layoutToken(o7.variantId);
+  if (variantId) out.variantId = variantId;
+  return out;
+}
+function store() {
+  const g2 = globalThis;
+  return g2.__VIO_DETAIL_LAYOUT__ ??= { layout: null, listeners: /* @__PURE__ */ new Set() };
+}
+function currentGlobalDetailLayout() {
+  return store().layout;
+}
+function setGlobalDetailLayout(layout) {
+  const s4 = store();
+  s4.layout = layout ?? null;
+  normalizeDetailLayout(s4.layout);
+  for (const listener of [...s4.listeners]) {
+    try {
+      listener();
+    } catch {
+    }
+  }
+}
+function currentGlobalDescriptionLabel() {
+  return store().descriptionLabel ?? null;
+}
+function setGlobalDescriptionLabel(label) {
+  const s4 = store();
+  const text3 = typeof label === "string" ? label.trim() : "";
+  s4.descriptionLabel = text3 && text3.length <= 40 ? text3 : null;
+  for (const listener of [...s4.listeners]) {
+    try {
+      listener();
+    } catch {
+    }
+  }
+}
+function onGlobalDetailLayoutChange(listener) {
+  const s4 = store();
+  s4.listeners.add(listener);
+  return () => s4.listeners.delete(listener);
+}
+
 // src/core/buyer-ref.ts
 var BUYER_REF_MAX_LENGTH = 128;
 var BUYER_REF_PATTERN = /^[A-Za-z0-9._~-]+$/;
@@ -5006,18 +5344,18 @@ var FEATURE_TOKENS = {
 };
 var UNKNOWN_PATTERN = /cannot query field|unknown field|unknown argument|unknown type|is not defined by type|not defined by type|field "[^"]+" is not defined/i;
 var refused = /* @__PURE__ */ new Set();
-var warned = /* @__PURE__ */ new Set();
+var warned2 = /* @__PURE__ */ new Set();
 function gatewayHas(feature) {
   return !refused.has(feature);
 }
 function resetGatewayFeatures(feature) {
   if (feature) {
     refused.delete(feature);
-    warned.delete(feature);
+    warned2.delete(feature);
     return;
   }
   refused.clear();
-  warned.clear();
+  warned2.clear();
 }
 function messagesOf(err) {
   if (!err || typeof err !== "object") return [];
@@ -5046,8 +5384,8 @@ async function withGatewayFeature(feature, request2) {
   } catch (err) {
     if (!isUnknownFeatureError(err, feature)) throw err;
     refused.add(feature);
-    if (!warned.has(feature) && typeof console !== "undefined") {
-      warned.add(feature);
+    if (!warned2.has(feature) && typeof console !== "undefined") {
+      warned2.add(feature);
       console.warn(
         `[Vio] the commerce gateway does not know "${FEATURE_TOKENS[feature][0]}" (${feature}) yet \u2014 sent without it on this page load:`,
         messagesOf(err)[0] ?? ""
@@ -6008,7 +6346,7 @@ query Config {
   }
 }
 `;
-async function getCartGraphQLOptions(sponsorId) {
+async function getCartGraphQLOptions(sponsorId, ctx) {
   const facade = globalThis.__VIO_FACADE__;
   if (!Configuration.isInitialized) {
     await Configuration.whenReady();
@@ -6026,14 +6364,31 @@ async function getCartGraphQLOptions(sponsorId) {
   const anyCfg = cfg;
   let commerceKey = anyCfg.apiKey;
   let sponsorResolved = false;
-  if (sponsorId && typeof facade?.findSponsor === "function") {
+  let channelId;
+  let channelMissing = false;
+  const askedChannel = ctx?.channelId === null || ctx?.channelId === void 0 ? "" : String(ctx.channelId).trim();
+  if (sponsorId && typeof facade?.sponsorCommerce === "function") {
+    const sponsor = facade.sponsorCommerce(sponsorId, ctx ?? {});
+    if (sponsor?.commerce?.apiKey) {
+      commerceKey = sponsor.commerce.apiKey;
+      sponsorResolved = true;
+      const ch = sponsor.commerce.channelId;
+      if (ch !== null && ch !== void 0 && String(ch).trim()) channelId = String(ch).trim();
+    } else if (askedChannel && facade.bootstrapCache) {
+      channelMissing = true;
+    }
+  } else if (sponsorId && !askedChannel && typeof facade?.findSponsor === "function") {
     const sponsor = facade.findSponsor(sponsorId);
     if (sponsor?.commerce?.apiKey) {
       commerceKey = sponsor.commerce.apiKey;
       sponsorResolved = true;
     }
   }
-  if (sponsorId && !sponsorResolved && typeof console !== "undefined") {
+  if (channelMissing && typeof console !== "undefined") {
+    console.warn(
+      `[Vio] channel ${askedChannel} of sponsor ${sponsorId} is no longer in the bootstrap \u2014 not calling it with another channel's key`
+    );
+  } else if (sponsorId && !sponsorResolved && typeof console !== "undefined") {
     console.warn(
       `[Vio] no commerce key for sponsor ${sponsorId} \u2014 falling back to the platform apiKey, which the commerce API will reject. Is the sponsor configured, and did Vio.init run before this call?`
     );
@@ -6042,16 +6397,17 @@ async function getCartGraphQLOptions(sponsorId) {
     endpoint: anyCfg.graphQLBase || "https://graph-ql-dev.vio.live",
     apiKey: anyCfg.apiKey,
     commerceKey,
-    sponsorResolved
+    sponsorResolved,
+    ...channelId ? { channelId } : {},
+    ...channelMissing ? { channelMissing } : {}
   };
 }
 var CUSTOMER_SESSION_KEY = "vio.customer_session_id.v1";
 function getCustomerSessionId() {
-  if (typeof localStorage === "undefined") return "cs_session_default";
-  let id = localStorage.getItem(CUSTOMER_SESSION_KEY);
+  let id = storageGet("local", CUSTOMER_SESSION_KEY);
   if (!id) {
     id = "cs_" + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
-    localStorage.setItem(CUSTOMER_SESSION_KEY, id);
+    storageSet("local", CUSTOMER_SESSION_KEY, id);
   }
   return id;
 }
@@ -6274,7 +6630,18 @@ async function confirmPaymentApplePay(variables, options) {
 }
 
 // src/core/cart/cart-manager.ts
-var STORAGE_KEY = "vio.cart.v1";
+var CART_STORAGE_PREFIX = "vio.cart.v1";
+function cartStorageKey(scope) {
+  return scope ? `${CART_STORAGE_PREFIX}:${scope}` : CART_STORAGE_PREFIX;
+}
+function cartScopeOf(environment, apiKey) {
+  let h3 = 2166136261;
+  for (let i5 = 0; i5 < apiKey.length; i5++) {
+    h3 ^= apiKey.charCodeAt(i5);
+    h3 = Math.imul(h3, 16777619) >>> 0;
+  }
+  return `${environment || "production"}:${h3.toString(16).padStart(8, "0")}`;
+}
 function finalTarget(sync) {
   return sync.steps.reduce((quantity, step) => quantity + step.delta, sync.sent);
 }
@@ -6302,6 +6669,17 @@ function queueStep(sync, target, origin) {
     else sync.steps.push({ delta: -left });
   }
 }
+function cartCampaignOf(cart) {
+  const items = cart?.items ?? [];
+  for (let i5 = items.length - 1; i5 >= 0; i5--) {
+    const origins = items[i5]?.origins ?? [];
+    for (let j = origins.length - 1; j >= 0; j--) {
+      const id = Number(origins[j]?.campaignId);
+      if (Number.isInteger(id) && id > 0) return id;
+    }
+  }
+  return void 0;
+}
 function lineId() {
   return "li_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
@@ -6312,7 +6690,7 @@ function normId(val) {
   return String(val).trim();
 }
 var CartManager = class extends EventTarget {
-  constructor() {
+  constructor(scope = "") {
     super();
     /** In-flight CreateCart per sponsor — two quick adds must share ONE backend
      * cart (two CreateCarts split the items and one silently disappears). */
@@ -6336,10 +6714,71 @@ var CartManager = class extends EventTarget {
      * in parallel; each response re-applied the whole backend cart, so an
      * older one landing after a newer optimistic change rolled the line back.) */
     this.qtySyncs = /* @__PURE__ */ new Map();
+    /**
+     * Bumped per sponsor each time its backend cart is dropped because its
+     * channel went away: the lines as they stood then (`carryOver`) go to the
+     * new backend cart, so an add whose local units were already counted in
+     * them must not send its own AddItem as well (see `addManual`).
+     */
+    this.rebuildEpoch = /* @__PURE__ */ new Map();
+    /** The lines to give the next backend cart of a sponsor, after its channel went away. */
+    this.carryOver = /* @__PURE__ */ new Map();
+    /**
+     * Whether this is the page's connection now. A manager left behind by a
+     * re-init (another key) still finishes its requests and keeps its own
+     * carts, but says nothing to the page: no `vio:cart-*` events.
+     */
+    this.active = true;
     /** Quantity intents for lines whose backend id hasn't arrived yet — replayed
      * when the AddItem response reconciles (keyed by product::variant). */
     this.pendingQtyIntents = /* @__PURE__ */ new Map();
+    /**
+     * Another tab of the site wrote the carts: adopt what it wrote, sponsor by
+     * sponsor — its lines and its backend cart id, or nothing when it cleared
+     * the cart (a payment) — except for a sponsor this tab is mid-write for:
+     * its own answer lands in a moment and is persisted then, over whatever
+     * the other tab had. `key` is null when the other tab cleared the whole
+     * storage. Says `change` (the drawer) and `vio:cart-updated` per sponsor
+     * that changed (`source: 'storage'`); nothing when nothing did.
+     */
+    this.onStorage = (e7) => {
+      if (e7.key !== null && e7.key !== this.storageKey) return;
+      const stored = this.loadFromStorage();
+      const changed = [];
+      for (const sponsorId of /* @__PURE__ */ new Set([...this.cartsBySponsor.keys(), ...stored.keys()])) {
+        if (this.hasMutationsInFlight(sponsorId) || this.cartIdPromises.has(sponsorId)) continue;
+        const mine = this.cartsBySponsor.get(sponsorId);
+        const theirs = stored.get(sponsorId);
+        if (JSON.stringify(mine ?? null) === JSON.stringify(theirs ?? null)) continue;
+        if (theirs) this.cartsBySponsor.set(sponsorId, theirs);
+        else this.cartsBySponsor.delete(sponsorId);
+        changed.push(sponsorId);
+      }
+      if (changed.length === 0) return;
+      this.emit();
+      for (const sponsorId of changed) this.emitCartUpdated(sponsorId, "storage");
+    };
+    this.storageKey = cartStorageKey(scope);
     this.cartsBySponsor = this.loadFromStorage();
+    if (scope && this.cartsBySponsor.size === 0) {
+      const legacy = this.loadFromStorage(CART_STORAGE_PREFIX);
+      if (legacy.size > 0) {
+        this.cartsBySponsor = legacy;
+        this.persist();
+        storageRemove("local", CART_STORAGE_PREFIX);
+      }
+    }
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      window.addEventListener("storage", this.onStorage);
+    }
+  }
+  /** The page's connection is (or is no longer) this one; see `active`. */
+  setActive(active) {
+    this.active = active;
+  }
+  /** Tell the listeners what this connection's carts hold now (after the page switched to it). */
+  announce() {
+    this.emit();
   }
   nextSeq(sponsorId) {
     const n6 = (this.mutationSeq.get(sponsorId) ?? 0) + 1;
@@ -6434,15 +6873,118 @@ var CartManager = class extends EventTarget {
   emitError(message, err) {
     if (typeof console !== "undefined") console.warn("[CartManager]", message, err ?? "");
     this.dispatchEvent(new CustomEvent("error", { detail: { message } }));
-    if (typeof document !== "undefined") {
+    if (this.active && typeof document !== "undefined") {
       document.dispatchEvent(
         new CustomEvent("vio:cart-error", { bubbles: true, detail: { message } })
       );
     }
   }
   // MARK: - Backend cart sync (Vio Commerce GraphQL)
-  /** Ensure the sponsor cart exists server-side; returns its backend cart id. */
-  async ensureCartId(sponsorId, currency, shippingCountry) {
+  /**
+   * The options of a sponsor's backend cart: the key of the channel it was
+   * created on (`channelMissing` when the bootstrap no longer lists it). A
+   * cart from before channels were remembered keeps the sponsor's first
+   * block, as when it was created, and remembers that channel from now on.
+   */
+  async cartOptions(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (cart?.cartId && cart.channelId) {
+      return getCartGraphQLOptions(sponsorId, { channelId: cart.channelId });
+    }
+    if (!cart?.cartId) return getCartGraphQLOptions(sponsorId);
+    const opts = await getCartGraphQLOptions(sponsorId, { campaignId: null });
+    const now = this.cartsBySponsor.get(sponsorId);
+    if (now?.cartId && !now.channelId && opts.sponsorResolved && opts.channelId) {
+      now.channelId = opts.channelId;
+      this.persist();
+    }
+    return opts;
+  }
+  /**
+   * The backend cart to call for a sponsor, with the key of its channel. When
+   * the bootstrap no longer lists that channel the stale cart is dropped and a
+   * new one is created on the sponsor's current channel with the same lines
+   * (`dropStaleBackendCart` + `ensureCartId`) — never a call with a key of
+   * another channel. `undefined` when there is no backend cart (or none could
+   * be made).
+   */
+  async liveCart(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const cartId = cart?.cartId;
+    if (!cart || !cartId) return void 0;
+    const opts = await this.cartOptions(sponsorId);
+    if (!opts.channelMissing) {
+      const current2 = this.cartsBySponsor.get(sponsorId)?.cartId;
+      if (current2 && current2 !== cartId) return { cartId: current2, opts: await this.cartOptions(sponsorId) };
+      return { cartId, opts };
+    }
+    const now = this.cartsBySponsor.get(sponsorId);
+    if (now?.cartId === cartId) this.dropStaleBackendCart(sponsorId);
+    const rebuilt = await this.ensureCartId(sponsorId, now?.currency || void 0, now?.shippingCountry || void 0);
+    if (!rebuilt) return void 0;
+    return { cartId: rebuilt, opts: await this.cartOptions(sponsorId) };
+  }
+  /**
+   * The channel of a sponsor's cart is gone from the bootstrap (the campaign
+   * moved, a refresh after hours): forget the backend cart and its line ids,
+   * keep the lines, and remember them as they stand now for the next backend
+   * cart (`carryOver`). Queued quantity syncs of the old cart are dropped —
+   * their quantities are in the lines carried.
+   */
+  dropStaleBackendCart(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart?.cartId) return;
+    const carried = cart.items.filter((item) => item.quantity > 0).map((item) => ({ productId: item.productId, variantId: item.variantId, origins: lineOrigins(item) }));
+    delete cart.cartId;
+    delete cart.channelId;
+    for (const item of cart.items) delete item.cartItemId;
+    for (const key of [...this.qtySyncs.keys()]) {
+      if (key.startsWith(`${sponsorId}:`)) this.qtySyncs.delete(key);
+    }
+    this.carryOver.set(sponsorId, carried);
+    this.rebuildEpoch.set(sponsorId, (this.rebuildEpoch.get(sponsorId) ?? 0) + 1);
+    this.persist();
+  }
+  /** Give a new backend cart the lines of the one whose channel went away — each unit with its own origin. */
+  async replayCarriedLines(sponsorId, cartId, carried, opts) {
+    let last;
+    const seq = this.nextSeq(sponsorId);
+    try {
+      const privacyMode = await currentPrivacyMode();
+      for (const line of carried) {
+        for (const origin of line.origins) {
+          if (!(origin.quantity > 0)) continue;
+          const { quantity, ...place } = origin;
+          const wire = Object.keys(place).length ? lineOriginWire(normalizeOrigin(place), { page: currentOriginPage(), privacyMode }) : void 0;
+          last = await addItem(
+            cartId,
+            [
+              {
+                product_id: Number(line.productId || 0),
+                quantity,
+                variant_id: line.variantId != null ? Number(line.variantId) : null,
+                ...wire ? { origin: wire } : {}
+              }
+            ],
+            opts
+          );
+        }
+      }
+    } catch (err) {
+      this.emitError("moving the cart to the current channel failed \u2014 some lines may not be in it", err);
+    }
+    const res = last;
+    if (res && Array.isArray(res.line_items)) this.applyBackendCart(sponsorId, res, seq);
+  }
+  /**
+   * Ensure the sponsor cart exists server-side; returns its backend cart id.
+   * A new backend cart is created on the channel of the campaign in context —
+   * `ctx.campaignId` (the add's origin), else the campaign the cart's lines
+   * came from, else `Vio.init`'s — and remembers it (`channelId`). An existing
+   * one whose channel the bootstrap no longer lists is created again on the
+   * current channel, with its lines (`liveCart`).
+   */
+  async ensureCartId(sponsorId, currency, shippingCountry, ctx = {}) {
     const activeCurrency = currency || getGlobalCurrency();
     const activeCountry = shippingCountry || getGlobalCountryCode();
     let cart = this.cartsBySponsor.get(sponsorId);
@@ -6452,11 +6994,15 @@ var CartManager = class extends EventTarget {
     } else {
       cart.shippingCountry = activeCountry;
     }
-    if (cart.cartId) return cart.cartId;
+    if (cart.cartId) {
+      if (!cart.channelId) return cart.cartId;
+      return (await this.liveCart(sponsorId))?.cartId;
+    }
     const inFlight = this.cartIdPromises.get(sponsorId);
     if (inFlight) return inFlight;
     const creation = (async () => {
-      const opts = await getCartGraphQLOptions(sponsorId);
+      const campaignId = ctx.campaignId ?? cartCampaignOf(cart);
+      const opts = await getCartGraphQLOptions(sponsorId, campaignId !== void 0 ? { campaignId } : void 0);
       if (!opts.sponsorResolved) {
         this.emitError(`no commerce key resolved for sponsor ${sponsorId} \u2014 cart not synced`);
         return void 0;
@@ -6471,6 +7017,8 @@ var CartManager = class extends EventTarget {
         );
         if (backendCart?.cart_id) {
           cart.cartId = backendCart.cart_id;
+          if (opts.channelId) cart.channelId = opts.channelId;
+          else delete cart.channelId;
           if (Array.isArray(backendCart.line_items) && backendCart.line_items.length > 0) {
             this.updateFromBackendCart(sponsorId, backendCart);
           } else {
@@ -6483,6 +7031,11 @@ var CartManager = class extends EventTarget {
             }
             this.persist();
             this.emit();
+          }
+          const carried = this.carryOver.get(sponsorId);
+          if (carried) {
+            this.carryOver.delete(sponsorId);
+            if (carried.length > 0) await this.replayCarriedLines(sponsorId, backendCart.cart_id, carried, opts);
           }
         }
       } catch (err) {
@@ -6499,6 +7052,9 @@ var CartManager = class extends EventTarget {
    * Overwrite local cart state with the backend cart response (source of
    * truth). `opts.settling` is the mutation whose answer this is: it does not
    * count as "in flight" for the origins (see `hasMutationsInFlight`).
+   * `opts.authoritative` is a GetCart taken with nothing of this tab's in
+   * flight (`refreshFromServer`): an empty answer then means the cart IS
+   * empty, and the local lines go — not an add still on its way.
    */
   updateFromBackendCart(sponsorId, backendCart, opts = {}) {
     const cart = this.cartsBySponsor.get(sponsorId);
@@ -6514,7 +7070,7 @@ var CartManager = class extends EventTarget {
     const removedBeforeSync = [];
     if (Array.isArray(backendCart.line_items)) {
       const existingItems = cart.items || [];
-      if (backendCart.line_items.length === 0 && existingItems.length > 0) {
+      if (backendCart.line_items.length === 0 && existingItems.length > 0 && !opts.authoritative) {
         this.persist();
         this.emit();
         return;
@@ -6573,7 +7129,7 @@ var CartManager = class extends EventTarget {
     this.emit();
     const syncedCartId = cart.cartId;
     if (syncedCartId) {
-      for (const id of removedBeforeSync) this.syncQuantity(sponsorId, syncedCartId, id, 0);
+      for (const id of removedBeforeSync) this.syncQuantity(sponsorId, syncedCartId, id, 0, void 0, cart.channelId);
     }
     if (this.pendingQtyIntents.size > 0) {
       const currentCart = this.cartsBySponsor.get(sponsorId);
@@ -6665,13 +7221,17 @@ var CartManager = class extends EventTarget {
     this.emit();
     const addedItem = existing ?? cart.items[cart.items.length - 1];
     const addedLineId = addedItem.id;
+    const epochAtAdd = this.rebuildEpoch.get(opts.sponsorId) ?? 0;
     const seq = this.nextSeq(opts.sponsorId);
     let settling;
     const mutation = (async () => {
       try {
-        const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0);
+        const cartId = await this.ensureCartId(opts.sponsorId, opts.currency || void 0, void 0, {
+          campaignId: opts.origin?.campaignId
+        });
+        if ((this.rebuildEpoch.get(opts.sponsorId) ?? 0) !== epochAtAdd) return;
         if (cartId) {
-          const gqlOpts = await getCartGraphQLOptions(opts.sponsorId);
+          const gqlOpts = await this.cartOptions(opts.sponsorId);
           const origin = opts.origin ? lineOriginWire(normalizeOrigin(opts.origin), {
             page: currentOriginPage(),
             privacyMode: await currentPrivacyMode()
@@ -6740,7 +7300,7 @@ var CartManager = class extends EventTarget {
     const addedOrigin = increase ? latestOrigin(item) : void 0;
     if (target <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
-      if (typeof document !== "undefined") {
+      if (this.active && typeof document !== "undefined") {
         document.dispatchEvent(
           new CustomEvent("vio:removed-from-cart", {
             bubbles: true,
@@ -6756,7 +7316,9 @@ var CartManager = class extends EventTarget {
               // Attribution of the removed units: their most recent origin.
               slot: removedOrigin?.slot,
               campaignId: removedOrigin?.campaignId,
-              contentId: removedOrigin?.contentId
+              contentId: removedOrigin?.contentId,
+              // The detail layout of those units (0.34), when they came from one.
+              ...removedOrigin?.layoutId ? { layout: normalizeLayoutOrigin(removedOrigin) } : {}
             }
           })
         );
@@ -6767,12 +7329,17 @@ var CartManager = class extends EventTarget {
     if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
     this.persist();
     this.emit();
-    if (!cart.cartId) return;
+    if (!cart.cartId) {
+      if (this.cartIdPromises.has(sponsorId)) {
+        this.pendingQtyIntents.set(this.intentKey(item.productId, item.variantId), target);
+      }
+      return;
+    }
     if (!targetItemId) {
       this.pendingQtyIntents.set(this.intentKey(item.productId, item.variantId), target);
       return;
     }
-    this.syncQuantity(sponsorId, cart.cartId, targetItemId, target, addedOrigin);
+    this.syncQuantity(sponsorId, cart.cartId, targetItemId, target, addedOrigin, cart.channelId);
   }
   /** Send a line's target quantity to the backend — ONE request in flight per
    * line. Targets that arrive while one is in flight queue behind it as
@@ -6784,7 +7351,7 @@ var CartManager = class extends EventTarget {
    * optimistic quantity through any backend response (see
    * `updateFromBackendCart`); a rejection drops what was queued and
    * reconciles the cart from the server. */
-  syncQuantity(sponsorId, backendCartId, cartItemId, target, origin) {
+  syncQuantity(sponsorId, backendCartId, cartItemId, target, origin, channelId) {
     const key = this.qtySyncKey(sponsorId, cartItemId);
     const active = this.qtySyncs.get(key);
     if (active) {
@@ -6799,9 +7366,19 @@ var CartManager = class extends EventTarget {
       let nextOrigin = origin;
       let removalRetried = false;
       while (next !== void 0) {
+        let gqlOpts;
+        if (this.cartsBySponsor.get(sponsorId)?.cartId) {
+          const live = await this.liveCart(sponsorId);
+          if (!live || live.cartId !== backendCartId) {
+            if (this.qtySyncs.get(key) === sync) this.qtySyncs.delete(key);
+            break;
+          }
+          gqlOpts = live.opts;
+        } else {
+          gqlOpts = await getCartGraphQLOptions(sponsorId, channelId ? { channelId, retired: true } : void 0);
+        }
         const seq = this.nextSeq(sponsorId);
         try {
-          const gqlOpts = await getCartGraphQLOptions(sponsorId);
           const originWire = next > 0 && nextOrigin ? lineOriginWire(nextOrigin, { page: currentOriginPage(), privacyMode: await currentPrivacyMode() }) : void 0;
           const resCart = next <= 0 ? await deleteItem(backendCartId, cartItemId, gqlOpts) : originWire ? await updateItem(backendCartId, cartItemId, null, next, gqlOpts, { origin: originWire }) : await updateItem(backendCartId, cartItemId, null, next, gqlOpts);
           const step = sync.steps.shift();
@@ -6861,26 +7438,78 @@ var CartManager = class extends EventTarget {
   }
   /** Refresh the local cart from the backend (source of truth). */
   async fetchCartFromBackend(sponsorId) {
-    const cart = this.cartsBySponsor.get(sponsorId);
-    if (!cart?.cartId) return null;
-    const gqlOpts = await getCartGraphQLOptions(sponsorId);
-    const resCart = await getCart(cart.cartId, gqlOpts);
+    const live = await this.liveCart(sponsorId);
+    if (!live) return null;
+    const resCart = await getCart(live.cartId, live.opts);
     if (resCart) this.updateFromBackendCart(sponsorId, resCart);
     return resCart;
   }
+  /**
+   * The cart as the server has it, for the moment a checkout is about to be
+   * built on it: what the shopper is about to pay must be what the page shows.
+   * Waits for this tab's own mutations (their answers are the server's too),
+   * then applies GetCart as it is — a line another tab added, one it removed,
+   * an empty cart — and tells the page: `change` for the drawer, and
+   * `vio:cart-updated` on `document` (`source: 'server'`) for a host that
+   * draws its own. A mutation that starts while the server is answering makes
+   * that answer old: it is asked once more. Nothing to ask without a backend
+   * cart. A GetCart that fails leaves the local state as it was and does not
+   * throw — the checkout then goes on with the lines the last mutation
+   * answered, as it always did. Resolves with the sponsor's cart.
+   */
+  async refreshFromServer(sponsorId) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await this.waitForCartMutations(sponsorId);
+      const cart = this.cartsBySponsor.get(sponsorId);
+      if (!cart?.cartId) return cart;
+      let resCart;
+      try {
+        const live = await this.liveCart(sponsorId);
+        if (!live) return this.cartsBySponsor.get(sponsorId);
+        resCart = await getCart(live.cartId, live.opts);
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.warn("[CartManager] GetCart before the checkout failed \u2014 the local cart stands", err);
+        }
+        return cart;
+      }
+      if (this.hasMutationsInFlight(sponsorId)) continue;
+      const backendCart = resCart;
+      if (backendCart && Array.isArray(backendCart.line_items)) {
+        this.updateFromBackendCart(sponsorId, backendCart, { authoritative: true });
+        this.emitCartUpdated(sponsorId, "server");
+      }
+      return this.cartsBySponsor.get(sponsorId);
+    }
+    return this.cartsBySponsor.get(sponsorId);
+  }
+  /** `vio:cart-updated` on `document` — see `CartUpdatedDetail`. */
+  emitCartUpdated(sponsorId, source) {
+    if (!this.active || typeof document === "undefined") return;
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const items = (cart?.items ?? []).map((item) => ({ ...item }));
+    const detail = {
+      sponsorId,
+      cartId: cart?.cartId,
+      items,
+      itemCount: items.reduce((count, item) => count + item.quantity, 0),
+      subtotal: items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
+      currency: cart?.currency || getGlobalCurrency(),
+      source
+    };
+    document.dispatchEvent(new CustomEvent("vio:cart-updated", { bubbles: true, detail }));
+  }
   /** Line items grouped by supplier (shipping is per-supplier server-side). */
   async fetchLineItemsBySupplier(sponsorId) {
-    const cart = this.cartsBySponsor.get(sponsorId);
-    if (!cart?.cartId) return null;
-    const gqlOpts = await getCartGraphQLOptions(sponsorId);
-    return getLineItemsBySupplier(cart.cartId, gqlOpts);
+    const live = await this.liveCart(sponsorId);
+    if (!live) return null;
+    return getLineItemsBySupplier(live.cartId, live.opts);
   }
   /** Set the chosen shipping option per supplier on the backend cart. */
   async updateShippingsBySupplier(sponsorId, data) {
-    const cart = this.cartsBySponsor.get(sponsorId);
-    if (!cart?.cartId) return null;
-    const gqlOpts = await getCartGraphQLOptions(sponsorId);
-    const resCart = await updateShippingsBySupplier(cart.cartId, data, gqlOpts);
+    const live = await this.liveCart(sponsorId);
+    if (!live) return null;
+    const resCart = await updateShippingsBySupplier(live.cartId, data, live.opts);
     if (resCart && Array.isArray(resCart.line_items)) {
       this.updateFromBackendCart(sponsorId, resCart);
     }
@@ -6920,19 +7549,23 @@ var CartManager = class extends EventTarget {
     return formatPrice(this.totalAcrossSponsors, this.primaryCurrency);
   }
   // MARK: - Persistence
+  /**
+   * Keep the carts for the next page and the other tabs. Where storage
+   * refuses (in-app browsers, private modes) nothing throws (safe-storage.ts):
+   * the carts stay in this manager's own map, the add to cart and the
+   * checkout go on, and the cart just does not survive a reload there.
+   */
   persist() {
-    if (typeof localStorage === "undefined") return;
     try {
       const obj = {};
       for (const [k2, v2] of this.cartsBySponsor) obj[String(k2)] = v2;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      storageSet("local", this.storageKey, JSON.stringify(obj), { memory: false });
     } catch {
     }
   }
-  loadFromStorage() {
-    if (typeof localStorage === "undefined") return /* @__PURE__ */ new Map();
+  loadFromStorage(key = this.storageKey) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = storageGet("local", key);
       if (!raw) return /* @__PURE__ */ new Map();
       const obj = JSON.parse(raw);
       const map = /* @__PURE__ */ new Map();
@@ -6971,10 +7604,11 @@ function normalizeOrigin(origin) {
   if (typeof origin.contentTitle === "string" && origin.contentTitle.trim()) {
     out.contentTitle = origin.contentTitle.trim().slice(0, CONTENT_TITLE_MAX_LENGTH);
   }
+  Object.assign(out, normalizeLayoutOrigin(origin));
   return out;
 }
 function sameOrigin(a3, b3) {
-  return a3.campaignId === b3.campaignId && a3.slot === b3.slot && a3.contentId === b3.contentId && a3.componentKind === b3.componentKind;
+  return a3.campaignId === b3.campaignId && a3.slot === b3.slot && a3.contentId === b3.contentId && a3.componentKind === b3.componentKind && a3.layoutId === b3.layoutId && a3.layoutRevision === b3.layoutRevision && a3.experimentId === b3.experimentId && a3.variantId === b3.variantId;
 }
 function latestOrigin(line) {
   const origins = Array.isArray(line.origins) ? line.origins : [];
@@ -7083,6 +7717,56 @@ function findSponsorIn(boot, sponsorId) {
   }
   return void 0;
 }
+function channelIdOf(value) {
+  if (value === null || value === void 0) return void 0;
+  const s4 = String(value).trim();
+  return s4 ? s4 : void 0;
+}
+function sells(s4) {
+  const commerce = s4?.commerce;
+  if (!commerce || typeof commerce !== "object") return false;
+  const key = commerce.apiKey;
+  return typeof key === "string" && key.trim() !== "";
+}
+function sellingBlocksIn(boot, sponsorId) {
+  const id = toSponsorId(sponsorId);
+  const out = [];
+  if (id === void 0 || !boot || typeof boot !== "object") return out;
+  const take = (s4, campaignId) => {
+    if (!s4 || typeof s4 !== "object" || Number(s4.id) !== id || !sells(s4)) return;
+    out.push({ campaignId: toCampaignId(campaignId), sponsor: s4 });
+  };
+  try {
+    const defaultId = boot.campaign?.id;
+    take(boot.primarySponsor, defaultId);
+    if (Array.isArray(boot.secondarySponsors)) for (const s4 of boot.secondarySponsors) take(s4, defaultId);
+    const campaigns = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+    for (const c4 of campaigns) {
+      if (!c4 || typeof c4 !== "object") continue;
+      take(c4.primarySponsor, c4.id);
+      if (Array.isArray(c4.secondarySponsors)) for (const s4 of c4.secondarySponsors) take(s4, c4.id);
+    }
+  } catch {
+  }
+  return out;
+}
+function sponsorCommerceIn(boot, sponsorId, ctx = {}) {
+  try {
+    const blocks = sellingBlocksIn(boot, sponsorId);
+    if (blocks.length === 0) return void 0;
+    const channel = channelIdOf(ctx?.channelId);
+    if (channel !== void 0) {
+      return blocks.find((b3) => channelIdOf(b3.sponsor.commerce.channelId) === channel)?.sponsor;
+    }
+    for (const campaignId of campaignCandidates(ctx?.campaignId)) {
+      const found = blocks.find((b3) => b3.campaignId === campaignId);
+      if (found) return found.sponsor;
+    }
+    return blocks[0].sponsor;
+  } catch {
+    return void 0;
+  }
+}
 function sponsorIdentityFrom(boot, sponsorId) {
   try {
     const id = toSponsorId(sponsorId);
@@ -7094,13 +7778,15 @@ function sponsorIdentityFrom(boot, sponsorId) {
     if (!name && !logoUrl) return null;
     const termsUrl = pageUrlOrNull(sponsor.termsUrl);
     const refundPolicyUrl = pageUrlOrNull(sponsor.refundPolicyUrl);
+    const highlights = highlightsOf(sponsor.highlights);
     return {
       id,
       name,
       logoUrl,
       avatarUrl: urlOrNull(sponsor.avatarUrl),
       ...termsUrl ? { termsUrl } : {},
-      ...refundPolicyUrl ? { refundPolicyUrl } : {}
+      ...refundPolicyUrl ? { refundPolicyUrl } : {},
+      ...highlights.length ? { highlights } : {}
     };
   } catch {
     return null;
@@ -7126,13 +7812,14 @@ function normalizeEntry(raw) {
   const checkoutId = typeof r6.checkoutId === "string" ? r6.checkoutId.trim() : "";
   const sponsorId = toSponsorId(r6.sponsorId);
   if (!checkoutId || sponsorId === void 0) return null;
-  return { checkoutId, sponsorId, name: nameOf(r6.name), logoUrl: urlOrNull(r6.logoUrl) };
+  const channelId = channelIdOf(r6.channelId);
+  return { checkoutId, sponsorId, name: nameOf(r6.name), logoUrl: urlOrNull(r6.logoUrl), ...channelId ? { channelId } : {} };
 }
 function readEntries() {
-  const store = storageRefusedWrite ? null : sessionStore();
-  if (store) {
+  const store2 = storageRefusedWrite ? null : sessionStore();
+  if (store2) {
     try {
-      const raw = store.getItem(CHECKOUT_SPONSOR_STORAGE_KEY);
+      const raw = store2.getItem(CHECKOUT_SPONSOR_STORAGE_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -7145,10 +7832,10 @@ function readEntries() {
 }
 function writeEntries(entries) {
   inMemory = entries.slice();
-  const store = sessionStore();
-  if (!store) return;
+  const store2 = sessionStore();
+  if (!store2) return;
   try {
-    store.setItem(CHECKOUT_SPONSOR_STORAGE_KEY, JSON.stringify(entries));
+    store2.setItem(CHECKOUT_SPONSOR_STORAGE_KEY, JSON.stringify(entries));
   } catch {
     storageRefusedWrite = true;
   }
@@ -7166,8 +7853,9 @@ function rememberCheckoutSponsor(checkoutId, sponsor) {
       name = previous.name;
       logoUrl = previous.logoUrl;
     }
+    const channelId = channelIdOf(sponsor.channelId) ?? (previous && previous.sponsorId === sponsorId ? previous.channelId : void 0);
     const next = entries.filter((e7) => e7.checkoutId !== id);
-    next.push({ checkoutId: id, sponsorId, name, logoUrl });
+    next.push({ checkoutId: id, sponsorId, name, logoUrl, ...channelId ? { channelId } : {} });
     writeEntries(next.slice(-CHECKOUT_SPONSOR_MEMORY_MAX));
   } catch {
   }
@@ -7194,6 +7882,20 @@ function rememberedSponsor(sponsorId) {
   } catch {
     return null;
   }
+}
+function highlightsOf(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const { icon, title, text: text3 } = item;
+    const t4 = typeof title === "string" ? title.trim() : "";
+    if (!t4) continue;
+    const body = typeof text3 === "string" ? text3.trim() : "";
+    out.push({ icon: typeof icon === "string" ? icon.trim() : "", title: t4, ...body ? { text: body } : {} });
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 // src/core/checkout/payments/apple-pay.ts
@@ -7555,11 +8257,8 @@ async function mountKlarnaExpressButton(opts) {
   const returnUrl = opts.returnUrl ?? (typeof window !== "undefined" ? window.location.origin + window.location.pathname : "");
   let settled = false;
   button.on("click", () => {
-    if (opts.pendingKey && opts.pendingContext && typeof sessionStorage !== "undefined") {
-      try {
-        sessionStorage.setItem(opts.pendingKey, JSON.stringify(opts.pendingContext));
-      } catch {
-      }
+    if (opts.pendingKey && opts.pendingContext) {
+      storageSet("session", opts.pendingKey, JSON.stringify(opts.pendingContext));
     }
     const promise = sdk.Payment.initiate(() => ({
       currency: opts.paymentRequest.currency,
@@ -8638,7 +9337,75 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.28.0";
+var SDK_VERSION = "0.37.0";
+
+// src/core/checkout/phone.ts
+var CALLING_CODES = {
+  NO: "47",
+  SE: "46",
+  DK: "45",
+  FI: "358",
+  IS: "354",
+  DE: "49",
+  GB: "44",
+  UK: "44",
+  IE: "353",
+  NL: "31",
+  BE: "32",
+  FR: "33",
+  ES: "34",
+  PT: "351",
+  IT: "39",
+  AT: "43",
+  CH: "41",
+  PL: "48",
+  EE: "372",
+  LV: "371",
+  LT: "370",
+  CZ: "420",
+  SK: "421",
+  HU: "36",
+  US: "1",
+  CA: "1"
+};
+var KNOWN_CODES = [...new Set(Object.values(CALLING_CODES))].sort((a3, b3) => b3.length - a3.length);
+var NATIONAL_LENGTH = {
+  "47": [8, 8],
+  "45": [8, 8],
+  "46": [7, 9],
+  "358": [6, 10],
+  "49": [10, 11],
+  "44": [10, 10],
+  "1": [10, 10]
+};
+function callingCodeFor(country) {
+  return CALLING_CODES[String(country ?? "").trim().toUpperCase()] ?? null;
+}
+function parsePhone(raw, country) {
+  const typed = String(raw ?? "").trim().replace(/[\s\-().]/g, "");
+  if (!typed) return null;
+  let code = null;
+  let national;
+  if (/^(\+|00)/.test(typed)) {
+    const digits = typed.replace(/^(\+|00)/, "");
+    if (!/^\d+$/.test(digits)) return null;
+    code = KNOWN_CODES.find((c4) => digits.startsWith(c4)) ?? null;
+    if (!code) return null;
+    national = digits.slice(code.length);
+  } else {
+    if (!/^\d+$/.test(typed)) return null;
+    code = callingCodeFor(country);
+    if (!code) return null;
+    national = typed;
+  }
+  if (national.startsWith("0") && code !== "47" && code !== "45") national = national.slice(1);
+  const [min, max] = NATIONAL_LENGTH[code] ?? [6, 12];
+  if (national.length < min || national.length > max) return null;
+  return { phone: national, phone_code: code };
+}
+function isValidPhone(raw, country) {
+  return parsePhone(raw, country) !== null;
+}
 
 // src/core/checkout/checkout-manager.ts
 function describeError(err) {
@@ -8657,6 +9424,7 @@ function describeError(err) {
   }
   return String(err);
 }
+var KLARNA_CONFIRMED_KEY = "vio.klarna.confirmed.v1";
 var KLARNA_PENDING_KEY = "vio.klarna.pending.v1";
 var KLARNA_SHIPPING_OPTIONS = [
   {
@@ -8820,14 +9588,19 @@ function buildCheckoutAddress(address) {
   const zip2 = address.postalCode || address.postal_code || address.zip || null;
   const country_code = address.countryCode || address.country_code || address.country || getGlobalCountryCode();
   if (!firstName && !lastName && !address1 && !city && !zip2) return null;
+  const phone = parsePhone(address.phone, country_code);
   return {
     first_name: firstName,
     last_name: lastName,
     address1,
     city,
     zip: zip2,
-    country_code
+    country_code,
+    ...phone ? { phone: phone.phone, phone_code: phone.phone_code } : {}
   };
+}
+function isCompleteCheckoutAddress(a3) {
+  return !!a3 && ["first_name", "last_name", "address1", "city", "zip"].every((k2) => String(a3[k2] ?? "").trim().length > 0);
 }
 function adyenReturnUrl(params) {
   let page = null;
@@ -8853,6 +9626,11 @@ function adyenReturnUrl(params) {
   const bare = new URL(page.toString());
   bare.search = "";
   return build(bare);
+}
+function paymentMethodName(method) {
+  if (typeof method !== "string") return void 0;
+  const name = method.trim().toLowerCase().replace(/\s+/g, "-");
+  return name || void 0;
 }
 function resolveHttpsReturnUrl(overrideUrl, params = null) {
   let url = overrideUrl ?? void 0;
@@ -8885,8 +9663,20 @@ function resolveHttpsReturnUrl(overrideUrl, params = null) {
   }
   return url;
 }
-async function executeKlarnaGraphQL(query, variables, sponsorId) {
-  return executeCartGraphQL(query, variables, await getCartGraphQLOptions(sponsorId));
+async function executeKlarnaGraphQL(query, variables, options) {
+  return executeCartGraphQL(query, variables, options);
+}
+function usesStripe(methods) {
+  if (!Array.isArray(methods)) return false;
+  return methods.some((m2) => {
+    if (String(m2?.name ?? "").toLowerCase() !== "stripe") return false;
+    const config = Array.isArray(m2?.config) ? m2.config : [];
+    const key = config.find((c4) => c4?.name === "publishableKey")?.value;
+    return typeof key === "string" && key.startsWith("pk_");
+  });
+}
+function cartTotal(items) {
+  return items.reduce((sum, i5) => sum + (Number(i5.unitPrice) || 0) * (Number(i5.quantity) || 0), 0);
 }
 var CheckoutManager = class _CheckoutManager extends EventTarget {
   constructor(cartManager, deps = {}) {
@@ -8896,6 +9686,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.currentStateValue = null;
     /** The last checkout + identity written to the memory — the state is set on every keystroke of the form. */
     this.lastRememberedSponsor = "";
+    /** Backend checkouts this page load announced with `vio:checkout-created`: one event each. */
+    this.announcedCheckouts = /* @__PURE__ */ new Set();
     /** Counts `open()` calls — see CheckoutState.session. */
     this.sessionSeq = 0;
     this.applePayAvailableCache = null;
@@ -8934,10 +9726,17 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     this.paymentMethodsCache = /* @__PURE__ */ new Map();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.paymentMethodsPromises = /* @__PURE__ */ new Map();
+    /** What the open checkout's cart looked like when it was last emitted. */
+    this.lastCartSignature = null;
     /** In-flight `getOrderReference` per checkout id (see there). */
     this.referenceInFlight = /* @__PURE__ */ new Map();
     this.kustomController = null;
-    preloadStripeJs();
+    if (Configuration.isInitialized && Configuration.get()?.stripePublishableKey) {
+      preloadStripeJs();
+    }
+    if (typeof cartManager.addEventListener === "function") {
+      cartManager.addEventListener("change", () => this.onCartChange());
+    }
   }
   /**
    * Every write of the state goes through here: a state that names its
@@ -8948,13 +9747,67 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     return this.currentStateValue;
   }
   set state(next) {
+    if (next?.checkoutId && next.sponsorId && !next.channelId) {
+      const remembered = rememberedCheckoutSponsor(next.checkoutId);
+      const channelId = (remembered?.sponsorId === next.sponsorId ? remembered.channelId : void 0) ?? this.cartManager.getCart(next.sponsorId)?.channelId;
+      if (channelId) next = { ...next, channelId };
+    }
     this.currentStateValue = next;
-    if (next?.checkoutId && next.sponsorId) this.rememberSponsorOfCheckout(next.checkoutId, next.sponsorId);
+    if (next?.checkoutId && next.sponsorId) {
+      this.rememberSponsorOfCheckout(next.checkoutId, next.sponsorId, next.channelId);
+    }
+  }
+  /**
+   * The options of a call for a sponsor's cart or checkout: the key of the
+   * channel the checkout lives on — what this tab remembered for the
+   * checkout (a return from a redirect, after the cart was cleared), the open
+   * checkout's, else the cart's — even if a bootstrap refresh no longer lists
+   * it (an open checkout keeps paying with its own key). Without any, the
+   * sponsor's block as `getCartGraphQLOptions` resolves it.
+   */
+  async gqlOptions(sponsorId, checkoutId) {
+    const channelId = this.channelOf(sponsorId, checkoutId);
+    return getCartGraphQLOptions(sponsorId, channelId ? { channelId, retired: true } : void 0);
+  }
+  /** See `gqlOptions`. */
+  channelOf(sponsorId, checkoutId) {
+    try {
+      if (!sponsorId) return void 0;
+      const state = this.state?.sponsorId === sponsorId ? this.state : null;
+      const id = checkoutId ?? state?.checkoutId;
+      if (id) {
+        const remembered = rememberedCheckoutSponsor(id);
+        if (remembered?.channelId && remembered.sponsorId === sponsorId) return remembered.channelId;
+        if (state?.checkoutId === id && state.channelId) return state.channelId;
+      }
+      const cart = this.cartManager.getCart(sponsorId);
+      return cart?.cartId ? cart.channelId : void 0;
+    } catch {
+      return void 0;
+    }
+  }
+  /** The open checkout's lines as a signature, to tell a real change from an echo. */
+  cartSignature(sponsorId) {
+    return (this.cartManager.getCart(sponsorId)?.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}:${i5.unitPrice}`).join("|");
+  }
+  /** The open checkout follows its cart: subtotal recomputed and `change` said when the lines differ. */
+  onCartChange() {
+    const state = this.state;
+    if (!state) return;
+    const subtotal = this.cartManager.subtotalForSponsor(state.sponsorId);
+    const signature = this.cartSignature(state.sponsorId);
+    if (subtotal === state.subtotal && signature === this.lastCartSignature) return;
+    this.lastCartSignature = signature;
+    this.state = { ...state, subtotal };
+    this.emit();
   }
   open(sponsorId) {
     const cart = this.cartManager.getCart(sponsorId);
     if (!cart || cart.items.length === 0) {
       throw new Error(`[VioCheckout] sponsor ${sponsorId} has no cart items`);
+    }
+    if (!(cartTotal(cart.items) > 0)) {
+      throw new Error(`[VioCheckout] sponsor ${sponsorId} has a cart that totals 0`);
     }
     this.state = {
       sponsorId,
@@ -8964,6 +9817,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       // the host may have switched currency since the cart was created.
       currency: getGlobalCurrency()
     };
+    this.lastCartSignature = this.cartSignature(sponsorId);
     this.emit();
     return this.state;
   }
@@ -8988,9 +9842,15 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       return void 0;
     }
   }
-  /** Create the backend checkout for the sponsor's cart (auto-accepts terms); born attributed when the facade knows the attribution. */
-  async createCheckout(sponsorId) {
+  /**
+   * Create the backend checkout for the sponsor's cart (auto-accepts terms);
+   * born attributed when the facade knows the attribution. `paymentMethod` is
+   * the method it is created to pay with, when the caller knows it (else the
+   * state's): it goes on `vio:checkout-created`.
+   */
+  async createCheckout(sponsorId, paymentMethod) {
     await this.cartManager.waitForCartMutations(sponsorId);
+    await this.cartManager.refreshFromServer(sponsorId);
     const cart = this.cartManager.getCart(sponsorId);
     let cartId = cart?.cartId;
     if (!cartId) {
@@ -8999,7 +9859,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${sponsorId}`);
       }
     }
-    const opts = await getCartGraphQLOptions(sponsorId);
+    const opts = await this.gqlOptions(sponsorId);
     const attribution = await this.attributionFor(sponsorId);
     const checkout = attribution ? await createCheckout(cartId, opts, { attribution }) : await createCheckout(cartId, opts);
     if (checkout?.id) {
@@ -9010,6 +9870,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         checkout
       };
       this.emit();
+      this.announceCheckout(checkout.id, sponsorId, paymentMethod ?? this.state?.paymentMethod, {
+        campaignId: attribution?.campaign_id
+      });
       try {
         const updated = await updateCheckout(
           {
@@ -9032,10 +9895,54 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     return checkout;
   }
+  /**
+   * `vio:checkout-created` on `window` — `{ sponsorId, checkoutId,
+   * paymentMethod, campaignId?, redirect }` — the moment a backend checkout
+   * exists for a payment, before anything is asked of the provider. Analytics
+   * answers it with `add_payment_info` (ADR-0039: the one link from the
+   * order Commerce confirms back to this browser's session); `redirect: true`
+   * when the page is about to leave for the provider. Once per checkout per
+   * page load; never throws.
+   */
+  announceCheckout(checkoutId, sponsorId, paymentMethod, opts = {}) {
+    if (!checkoutId || this.announcedCheckouts.has(checkoutId)) return;
+    this.announcedCheckouts.add(checkoutId);
+    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+    const method = paymentMethodName(paymentMethod);
+    try {
+      window.dispatchEvent(
+        new CustomEvent("vio:checkout-created", {
+          detail: {
+            sponsorId,
+            checkoutId,
+            ...method ? { paymentMethod: method } : {},
+            ...typeof opts.campaignId === "number" ? { campaignId: opts.campaignId } : {},
+            redirect: opts.redirect === true
+          }
+        })
+      );
+    } catch {
+    }
+  }
+  /**
+   * Nothing is created or paid for a cart that is empty or totals 0 — as
+   * the SERVER has it (the callers read it from the server first). Throws,
+   * so a payment button ends in its error path, never at a provider asking
+   * for 0 kr.
+   */
+  assertPayableCart(sponsorId) {
+    const cart = this.cartManager.getCart(sponsorId);
+    if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
+      throw new Error(`[CheckoutManager] the cart of sponsor ${sponsorId} is empty \u2014 nothing to pay`);
+    }
+    if (!(cartTotal(cart.items) > 0)) {
+      throw new Error(`[CheckoutManager] the cart of sponsor ${sponsorId} totals 0 \u2014 nothing to pay`);
+    }
+  }
   /** Update the backend checkout (terms are re-asserted unless overridden; the attribution rides along unless the caller gives its own). */
   async updateCheckout(variables, sponsorId) {
     const spId = sponsorId ?? this.state?.sponsorId;
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     const attribution = "attribution" in variables ? void 0 : await this.attributionFor(spId);
     const fullVars = {
       buyerAcceptsPurchaseConditions: true,
@@ -9051,7 +9958,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     return updated;
   }
   async getCheckout(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getCheckout(checkoutId, opts);
   }
   /**
@@ -9074,8 +9981,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!request2) {
       const asked = (async () => {
         try {
-          const opts = await getCartGraphQLOptions(
-            sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId
+          const opts = await this.gqlOptions(
+            sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId,
+            checkoutId
           );
           return await getCheckoutReference(checkoutId, opts);
         } catch {
@@ -9128,7 +10036,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * sponsor's name and logo as known now — so a confirmation after a redirect
    * or a reload can name the brand. Written again only when something changed.
    */
-  rememberSponsorOfCheckout(checkoutId, sponsorId) {
+  rememberSponsorOfCheckout(checkoutId, sponsorId, channelId) {
     try {
       let identity = null;
       try {
@@ -9138,10 +10046,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
       const name = identity?.name || this.cartManager.getCart(sponsorId)?.sponsorName || "";
       const logoUrl = identity?.logoUrl ?? null;
-      const key = JSON.stringify([checkoutId, sponsorId, name, logoUrl]);
+      const key = JSON.stringify([checkoutId, sponsorId, name, logoUrl, channelId ?? null]);
       if (key === this.lastRememberedSponsor) return;
       this.lastRememberedSponsor = key;
-      rememberCheckoutSponsor(checkoutId, { sponsorId, name, logoUrl });
+      rememberCheckoutSponsor(checkoutId, { sponsorId, name, logoUrl, channelId });
     } catch {
     }
   }
@@ -9159,9 +10067,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (inFlight) return inFlight;
     const promise = (async () => {
       try {
-        const opts = await getCartGraphQLOptions(spId);
+        const opts = await this.gqlOptions(spId);
         const res = await getAvailablePaymentMethods(opts);
         if (res) this.paymentMethodsCache.set(spId, res);
+        if (usesStripe(res)) preloadStripeJs();
         return res;
       } finally {
         this.paymentMethodsPromises.delete(spId);
@@ -9195,7 +10104,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         cartId = await this.cartManager.ensureCartId(spId);
       }
       if (!cartId) return [];
-      const opts = await getCartGraphQLOptions(spId);
+      const opts = await this.gqlOptions(spId);
       const supplierGroups = await getLineItemsBySupplier(cartId, opts);
       this.shippingsResolved = Array.isArray(supplierGroups);
       const firstGroup = Array.isArray(supplierGroups) ? supplierGroups[0] : null;
@@ -9249,7 +10158,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!spId) return null;
     const cart = this.cartManager.getCart(spId);
     if (!cart?.cartId) return null;
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     const updated = await updateShippingsBySupplier(cart.cartId, data, opts);
     if (updated) {
       this.cartManager.updateFromBackendCart(spId, updated);
@@ -9261,10 +10170,21 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * backend cart + checkout exist, push email/address onto the checkout, and
    * return everything the payment mutation needs.
    */
-  async prepareRedirectPayment(sponsorId, formData, extraUpdateVars = {}) {
+  async prepareRedirectPayment(sponsorId, formData, extraUpdateVars = {}, leaving = false, vippsWithAddress = false) {
     const spId = sponsorId ?? this.state?.sponsorId;
     if (!spId) throw new Error("[CheckoutManager] no sponsor for payment");
     await this.cartManager.waitForCartMutations(spId);
+    await this.cartManager.refreshFromServer(spId);
+    this.assertPayableCart(spId);
+    const isVipps = extraUpdateVars?.paymentMethod === "Vipps";
+    const addr = typeof formData === "object" && formData !== null ? formData : this.state?.address;
+    const built = buildCheckoutAddress(addr);
+    if (isVipps && vippsWithAddress && !(isCompleteCheckoutAddress(built) && built?.phone)) {
+      throw new Error(
+        "[CheckoutManager] the standard Vipps payment needs the complete delivery address (name, street, postcode, city and a mobile number) \u2014 no payment started"
+      );
+    }
+    const addressObj = !isVipps ? built : vippsWithAddress ? built : null;
     const cart = this.cartManager.getCart(spId);
     let cartId = cart?.cartId;
     if (!cartId) {
@@ -9273,19 +10193,20 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!cartId) {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     const attribution = await this.attributionFor(spId);
-    let checkoutId = this.state?.checkoutId;
+    let checkoutId = this.state?.sponsorId === spId ? this.state.checkoutId : void 0;
     if (!checkoutId) {
       const checkoutRes = attribution ? await createCheckout(cartId, opts, { attribution }) : await createCheckout(cartId, opts);
       checkoutId = checkoutRes?.id;
+      this.announceCheckout(checkoutId, spId, String(extraUpdateVars.paymentMethod ?? "") || this.state?.paymentMethod, {
+        redirect: leaving,
+        campaignId: attribution?.campaign_id
+      });
     }
     if (!checkoutId) {
       throw new Error("[CheckoutManager] no backend checkout \u2014 cannot start the payment");
     }
-    const isVipps = extraUpdateVars?.paymentMethod === "Vipps";
-    const addr = typeof formData === "object" && formData !== null ? formData : this.state?.address;
-    const addressObj = !isVipps ? buildCheckoutAddress(addr) : null;
     const emailVal = (typeof formData === "string" ? formData : formData?.email) || this.state?.address?.email || "";
     const hasEmail = !!emailVal && emailVal.includes("@");
     if (!hasEmail && !isVipps) {
@@ -9347,7 +10268,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
       sponsorId,
       formData,
-      { paymentMethod: "Stripe" }
+      { paymentMethod: "Stripe" },
+      true
     );
     const successUrl = resolveHttpsReturnUrl(null, {
       vio_payment: "success",
@@ -9379,6 +10301,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * so the caller can open the ordinary checkout instead. Without the flag
    * the backend decides: Express while the cart has no delivery yet, a
    * plain payment once the shopper chose one in our form.
+   *
+   * `express: false` is the checkout's standard path (2026-10-28): the
+   * form's address — name, street, mobile — goes on the checkout before the
+   * payment is created, and the delivery already chosen on the cart is what
+   * Vipps charges for.
    */
   async startVippsPayment(sponsorId, formData, options = {}) {
     const waitFor = sponsorId ?? this.state?.sponsorId;
@@ -9386,7 +10313,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
       sponsorId,
       formData,
-      { paymentMethod: "Vipps" }
+      { paymentMethod: "Vipps" },
+      true,
+      options.express === false
     );
     const returnUrl = resolveHttpsReturnUrl(null, {
       vio_payment: "success",
@@ -9423,7 +10352,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   /** Vipps' own payment state for the checkout — see getVippsStatus in
    * cart-queries.ts for why this exists instead of trusting GetCheckout. */
   async getVippsStatus(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getVippsStatus({ checkoutId }, opts);
   }
   /**
@@ -9440,10 +10369,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!cartId) {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await this.createCheckout(spId);
+      const checkoutRes = await this.createCheckout(spId, "kustom");
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -9486,7 +10415,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const spId = sponsorId ?? this.state?.sponsorId;
     const checkoutId = this.state?.checkoutId;
     if (!spId || !checkoutId) return null;
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     suspendKustom();
     try {
       return await syncPaymentKustom(checkoutId, opts);
@@ -9496,7 +10425,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /** Re-read a Kustom order — used on the confirmation return trip. */
   async getKustomOrder(orderId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.state?.sponsorId);
     return getKustomOrder(orderId, opts);
   }
   /** Render a Kustom html_snippet (e.g. the confirmation receipt) into a container. */
@@ -9516,10 +10445,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!cartId) {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await this.createCheckout(spId);
+      const checkoutRes = await this.createCheckout(spId, "qliro");
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -9586,7 +10515,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /** Re-read the Qliro order owned by a checkout — the confirmation trip. */
   async getQliroOrder(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getQliroOrder(checkoutId, opts);
   }
   /**
@@ -9604,10 +10533,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!cartId) {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await this.createCheckout(spId);
+      const checkoutRes = await this.createCheckout(spId, "walley");
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -9641,7 +10570,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /** Re-read the Walley session owned by a checkout — the confirmation trip. */
   async getWalleyOrder(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getWalleyOrder(checkoutId, opts);
   }
   /**
@@ -9667,7 +10596,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!cartId) {
       throw new Error(`[CheckoutManager] Failed to obtain cart_id for sponsor ${spId}`);
     }
-    const opts = await getCartGraphQLOptions(spId);
+    const opts = await this.gqlOptions(spId);
     const stored = resume ? readNexiPending() : null;
     const pending2 = stored && stored.paymentId === resume?.paymentId ? stored : null;
     let checkoutId = this.state?.checkoutId;
@@ -9676,7 +10605,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       if (this.state) this.state = { ...this.state, checkoutId };
     }
     if (!checkoutId) {
-      const checkoutRes = await this.createCheckout(spId);
+      const checkoutRes = await this.createCheckout(spId, "nexi");
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -9901,7 +10830,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /** Re-read the Nexi payment owned by a checkout. */
   async getNexiOrder(checkoutId, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getNexiOrder(checkoutId, opts);
   }
   /**
@@ -9979,7 +10908,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * finalised on the server.
    */
   async getAdyenPayment(checkoutId, proof = {}, sponsorId) {
-    const opts = await getCartGraphQLOptions(sponsorId ?? this.state?.sponsorId);
+    const opts = await this.gqlOptions(sponsorId ?? this.sponsorIdOfCheckout(checkoutId) ?? this.state?.sponsorId, checkoutId);
     return getAdyenPayment({ checkoutId, ...proof }, opts);
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -10241,7 +11170,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     return async (raw) => {
       let checkoutId = this.state?.checkoutId;
       if (!checkoutId) {
-        const created = await this.createCheckout(spId);
+        const created = await this.createCheckout(spId, "apple-pay");
         checkoutId = created?.id ?? this.state?.checkoutId;
       }
       if (!checkoutId) {
@@ -10258,7 +11187,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
           console.warn("[VioCheckout] updateCheckout before Apple Pay confirm failed:", err);
         }
       }
-      const gqlOpts = await getCartGraphQLOptions(spId);
+      const gqlOpts = await this.gqlOptions(spId);
       const createRes = await createPaymentApplePay({ checkoutId }, gqlOpts);
       const gatewayId = String(createRes?.gateway_merchant_id ?? "");
       if (gatewayId.startsWith("pk_")) this.applePayPublishableKey = gatewayId;
@@ -10473,7 +11402,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     }
     let checkoutId = ctx.checkoutId ?? this.state.checkoutId;
     try {
-      const checkoutRes = await this.createCheckout(sponsorId);
+      const checkoutRes = await this.createCheckout(sponsorId, "klarna");
       if (checkoutRes?.id) {
         checkoutId = checkoutRes.id;
         ctx.checkoutId = checkoutRes.id;
@@ -10510,7 +11439,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const json = await executeKlarnaGraphQL(
       CREATE_PAYMENT_KLARNA_NATIVE_MUTATION,
       variables,
-      sponsorId
+      await this.gqlOptions(sponsorId, checkoutId)
     );
     const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
     if (!nativeRes || !nativeRes.client_token) {
@@ -10525,6 +11454,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (nativeRes.checkout_id) {
       ctx.checkoutId = nativeRes.checkout_id;
       this.state = { ...this.state, checkoutId: nativeRes.checkout_id };
+      this.announceCheckout(nativeRes.checkout_id, sponsorId, "klarna");
     }
     if (nativeRes.session_id) {
       ctx.sessionId = nativeRes.session_id;
@@ -10622,7 +11552,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     try {
       let checkoutId = ctx.checkoutId ?? this.state.checkoutId;
       try {
-        const checkoutRes = await this.createCheckout(sponsorId);
+        const checkoutRes = await this.createCheckout(sponsorId, "klarna");
         if (checkoutRes?.id) {
           checkoutId = checkoutRes.id;
           ctx.checkoutId = checkoutRes.id;
@@ -10659,7 +11589,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       const json = await executeKlarnaGraphQL(
         CREATE_PAYMENT_KLARNA_NATIVE_MUTATION,
         variables,
-        sponsorId
+        await this.gqlOptions(sponsorId, checkoutId)
       );
       const nativeRes = json?.data?.Payment?.CreatePaymentKlarnaNative;
       if (!nativeRes || !nativeRes.client_token) {
@@ -10668,6 +11598,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       if (nativeRes.checkout_id) {
         ctx.checkoutId = nativeRes.checkout_id;
         this.state = { ...this.state, checkoutId: nativeRes.checkout_id };
+        this.announceCheckout(nativeRes.checkout_id, sponsorId, "klarna");
       }
       if (nativeRes.session_id) {
         ctx.sessionId = nativeRes.session_id;
@@ -10721,14 +11652,13 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * the SDK's resumed `complete` event — finish creating the order + confirm.
    */
   async resumeKlarnaReturn() {
-    if (typeof sessionStorage === "undefined") return;
-    const raw = sessionStorage.getItem(KLARNA_PENDING_KEY);
+    const raw = storageGet("session", KLARNA_PENDING_KEY);
     if (!raw) return;
     let pending2;
     try {
       pending2 = JSON.parse(raw);
     } catch {
-      sessionStorage.removeItem(KLARNA_PENDING_KEY);
+      storageRemove("session", KLARNA_PENDING_KEY);
       return;
     }
     const fromUrl = readKlarnaTokenFromUrl();
@@ -10786,7 +11716,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   async completeKlarnaOrder(authorizationToken, ctx, result) {
     if (this.klarnaOrderInFlight) return;
     this.klarnaOrderInFlight = true;
-    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.klarna.confirmed.v1") === authorizationToken) {
+    if (storageGet("session", KLARNA_CONFIRMED_KEY) === authorizationToken) {
       this.klarnaOrderInFlight = false;
       return;
     }
@@ -10801,12 +11731,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         shippingAddress: buildKlarnaAddress(address),
         customer: buildKlarnaCustomer(address)
       };
+      const klarnaSponsorId = ctx?.sponsorId ?? this.state?.sponsorId;
+      const klarnaOptions = await this.gqlOptions(klarnaSponsorId, ctx?.checkoutId ?? this.state?.checkoutId);
       const json = await withBuyerRef(
-        (withRef) => executeKlarnaGraphQL(
-          confirmPaymentKlarnaNativeMutation(withRef),
-          variables,
-          ctx?.sponsorId ?? this.state?.sponsorId
-        )
+        (withRef) => executeKlarnaGraphQL(confirmPaymentKlarnaNativeMutation(withRef), variables, klarnaOptions)
       );
       const confirmRes = json?.data?.Payment?.ConfirmPaymentKlarnaNative;
       if (!confirmRes) {
@@ -10814,10 +11742,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
       const orderData = confirmRes.order || confirmRes;
       const buyerRef = normalizeBuyerRef(confirmRes[BUYER_REF_FIELD]);
-      if (typeof sessionStorage !== "undefined") {
-        sessionStorage.setItem("vio.klarna.confirmed.v1", authorizationToken);
-        sessionStorage.removeItem(KLARNA_PENDING_KEY);
-      }
+      storageSet("session", KLARNA_CONFIRMED_KEY, authorizationToken);
+      storageRemove("session", KLARNA_PENDING_KEY);
       const state = this.state ?? { sponsorId: ctx.sponsorId, subtotal: ctx.orderAmount, currency: ctx.currency };
       this.dispatchEvent(
         new CustomEvent("payment-complete", {
@@ -11059,6 +11985,139 @@ function safeCall(fn) {
   }
 }
 
+// src/core/analytics/internal-traffic.ts
+var INTERNAL_KEY = "vio.internal.v1";
+var INTERNAL_PARAM = "vio_internal";
+function defaultInternalEnvironment() {
+  return {
+    location: typeof location !== "undefined" ? location : null,
+    storage: localStorageOrNull()
+  };
+}
+function resolveInternal(env = defaultInternalEnvironment()) {
+  const param = internalParam(env.location?.search);
+  if (param !== void 0) {
+    writeInternal(param, env.storage);
+    return param;
+  }
+  return readInternal(env.storage);
+}
+function readInternal(storage2 = defaultInternalEnvironment().storage) {
+  try {
+    return storage2?.getItem(INTERNAL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeInternal(internal, storage2 = defaultInternalEnvironment().storage) {
+  try {
+    if (internal) storage2?.setItem(INTERNAL_KEY, "1");
+    else storage2?.removeItem?.(INTERNAL_KEY);
+  } catch {
+  }
+}
+function internalParam(search) {
+  try {
+    const value = new URLSearchParams(typeof search === "string" ? search : "").get(INTERNAL_PARAM)?.trim();
+    if (value === "1") return true;
+    if (value === "0") return false;
+  } catch {
+  }
+  return void 0;
+}
+function localStorageOrNull() {
+  try {
+    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+// src/core/analytics/cta.ts
+var CTA_LOCATIONS = ["detail", "cart", "card", "checkout", "host", "block"];
+var CTA_ID_PATTERN = /^[a-z0-9_.:-]{1,64}$/;
+var CTA_VARIANT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
+var CTA_TEXT_MAX_LENGTH = 64;
+var ID_MAX_LENGTH = 128;
+function isCtaId(value) {
+  return typeof value === "string" && CTA_ID_PATTERN.test(value);
+}
+function ctaText(value, max = CTA_TEXT_MAX_LENGTH) {
+  if (typeof value !== "string" && typeof value !== "number") return void 0;
+  const clean = String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return void 0;
+  if (clean.length <= max) return clean;
+  let cut4 = clean.slice(0, max);
+  const last = cut4.charCodeAt(cut4.length - 1);
+  if (last >= 55296 && last <= 56319) cut4 = cut4.slice(0, -1);
+  return cut4.trimEnd() || void 0;
+}
+function idOf(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : void 0;
+  if (typeof value !== "string") return void 0;
+  const v2 = value.trim();
+  return v2 && v2.length <= ID_MAX_LENGTH ? v2 : void 0;
+}
+function positive(value) {
+  const n6 = toNumber(value);
+  return n6 !== void 0 && Number.isInteger(n6) && n6 > 0 ? n6 : void 0;
+}
+function warn(message) {
+  try {
+    console.warn(`[Vio.trackCta] ${message}`);
+  } catch {
+  }
+}
+function ctaContextOf(input) {
+  const cta = input?.cta;
+  if (!isCtaId(cta)) {
+    warn(`ignored: cta must be 1\u201364 chars of [a-z0-9_.:-], got ${JSON.stringify(cta)}`);
+    return null;
+  }
+  let location2 = "host";
+  if (input.location !== void 0 && input.location !== null && input.location !== "") {
+    if (CTA_LOCATIONS.includes(String(input.location))) {
+      location2 = input.location;
+    } else {
+      warn(`unknown location ${JSON.stringify(input.location)} \u2014 sent as 'host' (${CTA_LOCATIONS.join(" | ")})`);
+    }
+  }
+  let variant;
+  if (input.variant !== void 0 && input.variant !== null && input.variant !== "") {
+    if (typeof input.variant === "string" && CTA_VARIANT_PATTERN.test(input.variant)) variant = input.variant;
+    else warn(`variant left out: 1\u201364 chars of [A-Za-z0-9._:-], got ${JSON.stringify(input.variant)}`);
+  }
+  const i5 = input;
+  const layout = normalizeLayoutOrigin(i5.layout);
+  const contentId = typeof i5.contentId === "number" ? Number.isFinite(i5.contentId) ? i5.contentId : void 0 : idOf(i5.contentId);
+  const slot = typeof i5.slot === "string" && i5.slot.trim() ? i5.slot.trim() : void 0;
+  const ctx = {
+    cta,
+    ctaLocation: location2,
+    ctaLabel: ctaText(i5.label),
+    ctaVariant: variant,
+    optionValue: ctaText(i5.optionValue),
+    productId: idOf(i5.productId),
+    productVariantId: idOf(i5.productVariantId),
+    sponsorId: positive(i5.sponsorId),
+    campaignId: positive(i5.campaignId),
+    slot,
+    contentId,
+    contentTitle: typeof i5.contentTitle === "string" && i5.contentTitle.trim() ? i5.contentTitle.trim() : void 0,
+    componentTemplateId: idOf(i5.componentTemplateId),
+    ...layout.layoutId ? {
+      layoutId: layout.layoutId,
+      layoutRevision: layout.layoutRevision ?? "",
+      experimentId: layout.experimentId,
+      variantId: layout.variantId
+    } : {}
+  };
+  for (const key of Object.keys(ctx)) {
+    if (ctx[key] === void 0) delete ctx[key];
+  }
+  return ctx;
+}
+
 // src/core/cart/slices.ts
 function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
   if (!Array.isArray(lines) || lines.length === 0) return [];
@@ -11093,7 +12152,8 @@ function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
       if (Number.isFinite(sponsorId)) slice.sponsors.add(sponsorId);
       if (origin.slot) slice.slots.add(origin.slot);
       if (origin.contentId) slice.contents.add(origin.contentId);
-      const itemKey = `${line.productId}::${line.variantId ?? ""}`;
+      const layout = itemLayoutOf(origin);
+      const itemKey = `${line.productId}::${line.variantId ?? ""}::${layoutKeyOf(layout)}`;
       const item = slice.items.get(itemKey);
       if (item) item.quantity = (item.quantity ?? 0) + origin.quantity;
       else {
@@ -11103,7 +12163,8 @@ function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
           brand: line.brand,
           variantId: line.variantId,
           price: unitPrice,
-          quantity: origin.quantity
+          quantity: origin.quantity,
+          ...layout
         });
       }
       slice.value += unitPrice * origin.quantity;
@@ -11125,6 +12186,48 @@ function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
 function hasExplicitCampaign(lines) {
   return lines.some((line) => lineOrigins(line).some((o7) => o7.campaignId !== void 0));
 }
+function itemLayoutOf(origin) {
+  const l3 = normalizeLayoutOrigin(origin);
+  if (!l3.layoutId) return {};
+  return {
+    layoutId: l3.layoutId,
+    layoutRevision: l3.layoutRevision ?? "",
+    experimentId: l3.experimentId ?? "",
+    experimentVariantId: l3.variantId ?? ""
+  };
+}
+function layoutKeyOf(layout) {
+  return layout.layoutId ? [layout.layoutId, layout.layoutRevision, layout.experimentId, layout.experimentVariantId].join("|") : "";
+}
+function lineItemsByLayout(lines) {
+  const out = [];
+  for (const line of lines) {
+    if (!line || typeof line !== "object") continue;
+    const base = {
+      productId: line.productId,
+      name: line.name,
+      brand: line.brand,
+      variantId: line.variantId,
+      price: line.unitPrice,
+      quantity: line.quantity
+    };
+    const origins = lineOrigins(line);
+    if (!origins.some((o7) => normalizeLayoutOrigin(o7).layoutId)) {
+      out.push(base);
+      continue;
+    }
+    const parts = /* @__PURE__ */ new Map();
+    for (const origin of origins) {
+      const layout = itemLayoutOf(origin);
+      const key = layoutKeyOf(layout);
+      const part = parts.get(key);
+      if (part) part.quantity = (part.quantity ?? 0) + origin.quantity;
+      else parts.set(key, { ...base, quantity: origin.quantity, ...layout });
+    }
+    out.push(...parts.values());
+  }
+  return out;
+}
 
 // src/core/analytics/analytics-manager.ts
 var ORDER_NUMBER_BACKOFF_MS = [500, 1e3, 2e3, 3e3, 3e3];
@@ -11135,6 +12238,7 @@ var FLUSH_AT_COUNT = 20;
 var MAX_QUEUE = 500;
 var RETRY_BACKOFF_MS = [2e3, 4e3, 8e3];
 var ANON_KEY = "vio.anon.v1";
+var MAX_ITEMS = 100;
 var SESSION_KEY = "vio.session.v1";
 var IMPRESSION_THRESHOLD = 0.5;
 var IMPRESSION_DWELL_MS = 1e3;
@@ -11142,7 +12246,14 @@ var AnalyticsManager = class extends EventTarget {
   constructor() {
     super(...arguments);
     this.started = false;
-    this.options = { host: "custom", collector: true, dataLayer: false, debug: false, autoTrack: true };
+    this.options = {
+      host: "custom",
+      collector: true,
+      dataLayer: false,
+      debug: false,
+      autoTrack: true,
+      privateContent: false
+    };
     this.queue = [];
     this.flushTimer = null;
     this.retryAttempt = 0;
@@ -11163,8 +12274,18 @@ var AnalyticsManager = class extends EventTarget {
     this.client = null;
     /** The landing it was read from — persisted later when consent arrives after the first event. */
     this.landing = null;
+    /**
+     * Internal traffic (ADR-0041): `client.internal: true` on every event while
+     * set. Read once (`?vio_internal=1|0`, else `localStorage`) at `Vio.init()`
+     * or on the first event; `setInternal()` changes it. `null` = not read yet.
+     */
+    this.internal = null;
+    /** The console line for testers goes out once per page load. */
+    this.internalAnnounced = false;
     /** Checkouts (`c:<id>`) and orders (`o:<number>`) this page load reported a `purchase` for: one each. */
     this.purchased = /* @__PURE__ */ new Set();
+    /** Checkouts this page load reported an `add_payment_info` for: one each. */
+    this.paymentInfoReported = /* @__PURE__ */ new Set();
     /** Purchases still waiting for Vio's order number: each sends at once, with what it has, when called. */
     this.pendingPurchases = /* @__PURE__ */ new Set();
     /** Between `pagehide` and `pageshow` (bfcache): nothing waits, it all goes out now. */
@@ -11210,7 +12331,8 @@ var AnalyticsManager = class extends EventTarget {
       collector: options.collector ?? this.options.collector,
       dataLayer: options.dataLayer ?? this.options.dataLayer,
       debug: options.debug ?? this.options.debug,
-      autoTrack: options.autoTrack ?? this.options.autoTrack
+      autoTrack: options.autoTrack ?? this.options.autoTrack,
+      privateContent: options.privateContent ?? this.options.privateContent
     };
     if (options.sessionId) this.externalSessionId = options.sessionId;
     if (this.started || !hasDom()) return;
@@ -11232,7 +12354,7 @@ var AnalyticsManager = class extends EventTarget {
     this.teardown.push(() => window.removeEventListener("pageshow", onPageShow2));
     if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
       const onVisibility = () => {
-        if (document.visibilityState !== "hidden" || this.pendingPurchases.size === 0) return;
+        if (document.visibilityState !== "hidden") return;
         this.settlePendingPurchases();
         this.flushWithBeacon();
       };
@@ -11253,6 +12375,43 @@ var AnalyticsManager = class extends EventTarget {
   identify(externalUserId) {
     this.externalUserId = externalUserId ?? void 0;
   }
+  /**
+   * Mark (or unmark) this browser as Vio's own traffic (ADR-0041): while
+   * marked, every event carries `client.internal: true` and the collector's
+   * reads leave it out. Remembered in `localStorage` (`vio.internal.v1`) —
+   * the same mark `?vio_internal=1` / `?vio_internal=0` sets on any page.
+   */
+  setInternal(internal) {
+    this.internal = internal === true;
+    writeInternal(this.internal);
+    this.announceInternal();
+  }
+  /** Whether this browser is marked as internal traffic (reads the mark the first time). */
+  get isInternal() {
+    return this.syncInternal();
+  }
+  /**
+   * Read the mark: the page's `?vio_internal=1|0` (remembered), else what the
+   * browser remembers. Once per page load — `Vio.init()` calls it so a page
+   * with the parameter marks the browser even if it never starts analytics;
+   * `force` reads again.
+   */
+  syncInternal(force = false) {
+    if (this.internal === null || force) {
+      this.internal = hasDom() ? resolveInternal() : readInternal(null);
+      this.announceInternal();
+    }
+    return this.internal;
+  }
+  /** One console line when marked, so a tester can see the mark took. */
+  announceInternal() {
+    if (!this.internal || this.internalAnnounced) return;
+    this.internalAnnounced = true;
+    try {
+      console.info("[Vio.analytics] this browser is marked as internal traffic (vio_internal=1): its events are not counted. Open any page with ?vio_internal=0 to undo.");
+    } catch {
+    }
+  }
   /** Queue one event. Works pre-init and pre-start (SSR: no-op). */
   track(name, opts = {}) {
     if (!hasDom()) return;
@@ -11272,6 +12431,20 @@ var AnalyticsManager = class extends EventTarget {
     this.queue.push(event);
     if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
     if (this.queue.length >= FLUSH_AT_COUNT) void this.flush();
+  }
+  /**
+   * One `cta_click` — a tap on a button (README «Button tracking»). What
+   * `Vio.trackCta()` calls for a host's own buttons; the SDK's elements reach
+   * it through `vio:cta-click`. Only once `start()` ran — like the funnel
+   * events of the elements, never queued before. An invalid `cta` is ignored
+   * with one `console.warn`; consent, `privateContent`, internal traffic,
+   * batching and attribution are those of every event.
+   */
+  trackCta(input) {
+    if (!hasDom() || !this.started) return;
+    const context = ctaContextOf(input);
+    if (!context) return;
+    this.track("cta_click", { context });
   }
   /**
    * Impression helper: observes an element and tracks ONE
@@ -11297,7 +12470,7 @@ var AnalyticsManager = class extends EventTarget {
               this.ensureSession();
               if (this.impressedComponents.has(key)) return;
               this.impressedComponents.add(key);
-              this.track(name, { context });
+              this.track(name, { context, commerce: impressionCommerce(opts.commerce) });
               opts.onImpression?.();
               observer.disconnect();
             }, IMPRESSION_DWELL_MS);
@@ -11378,31 +12551,48 @@ var AnalyticsManager = class extends EventTarget {
       // one is usually the tracking tail, not the page. The other host-given
       // fields (broadcastId, componentTemplateId, errorCode, variant, …) are
       // the host's responsibility: the SDK does not touch them.
-      content_url: capContentUrl(ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0)),
+      // Con `privateContent` ninguno de los tres sale del dispositivo.
+      content_url: this.options.privateContent ? void 0 : capContentUrl(ctx.contentUrl ?? (typeof location !== "undefined" ? location.href : void 0)),
       // The host's own content id — its join key back onto its reporting.
       // Explicit on the event when it fits, else what the SDK resolved for
       // the page (already capped per source), else nothing.
-      content_id: explicitContentId ?? fitsId(content.id),
+      content_id: this.options.privateContent ? void 0 : explicitContentId ?? fitsId(content.id),
       // Deletion-proof reporting: sources have no trash bin — the title
       // snapshotted at event time keeps reports legible if content dies.
       error_code: ctx.errorCode,
-      content_title: capTitle(
+      content_title: this.options.privateContent ? void 0 : capTitle(
         ctx.contentTitle ?? content.title ?? (typeof document !== "undefined" && document.title ? document.title : void 0)
       ),
-      variant: ctx.variant
+      variant: ctx.variant,
+      // The detail layout shown (0.34) — `view_item` of a non-default layout.
+      layout_id: ctx.layoutId,
+      layout_revision: ctx.layoutRevision,
+      experiment_id: ctx.experimentId,
+      variant_id: ctx.variantId,
+      // `cta_click` (./cta.ts). Con `privateContent` el texto del botón y el
+      // valor elegido no salen del dispositivo: pueden nombrar el producto.
+      cta: ctx.cta,
+      cta_location: ctx.ctaLocation,
+      cta_label: this.options.privateContent ? void 0 : ctx.ctaLabel,
+      cta_variant: ctx.ctaVariant,
+      option_value: this.options.privateContent ? void 0 : ctx.optionValue,
+      product_id: ctx.productId,
+      product_variant_id: ctx.productVariantId
     });
     const com = opts.commerce;
     const commerce = com ? compact({
-      items: com.items?.map(
-        (i5) => compact({
+      // The collector rejects an event with more lines than its cap, whole.
+      items: com.items?.slice(0, MAX_ITEMS).map((i5) => ({
+        ...compact({
           product_id: String(i5.productId),
-          name: i5.name,
-          brand: i5.brand,
+          name: this.options.privateContent ? void 0 : i5.name,
+          brand: this.options.privateContent ? void 0 : i5.brand,
           variant_id: i5.variantId !== void 0 ? String(i5.variantId) : void 0,
           price: i5.price,
           quantity: i5.quantity
-        })
-      ),
+        }),
+        ...itemLayoutWire(i5)
+      })),
       value: com.value,
       currency: com.currency,
       order_id: com.orderId,
@@ -11414,7 +12604,8 @@ var AnalyticsManager = class extends EventTarget {
       // ids does not carry a stable identifier of a person either.
       buyer_id: this.canPersist ? normalizeBuyerRef(com.buyerId) : void 0
     }) : void 0;
-    const client = this.clientBlock();
+    const base = this.clientBlock();
+    const client = this.syncInternal() ? { ...base ?? {}, internal: true } : base;
     return {
       event_id: uuid(),
       name,
@@ -11558,16 +12749,19 @@ var AnalyticsManager = class extends EventTarget {
       this.track("add_to_cart", {
         context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), componentTemplateId: templateOf(d3), ...contentOf(d3) },
         commerce: {
-          items: [
+          // The detail layout the units were added from (0.34): the add's own
+          // (`detail.layout`, set by <vio-product-detail>), '' when none.
+          items: withLineLayouts([
             {
               productId: d3.productId ?? line?.productId ?? "",
               name: line?.name,
               brand: line?.brand,
               variantId: d3.variantId ?? line?.variantId,
               price: line?.unitPrice,
-              quantity: d3.quantity ?? 1
+              quantity: d3.quantity ?? 1,
+              ...itemLayoutOf(normalizeLayoutOrigin(d3.layout))
             }
-          ],
+          ]),
           value: line ? line.unitPrice * (d3.quantity ?? 1) : void 0,
           currency: line?.currency
         }
@@ -11579,16 +12773,17 @@ var AnalyticsManager = class extends EventTarget {
       this.track("remove_from_cart", {
         context: { sponsorId: d3.sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) },
         commerce: {
-          items: [
+          items: withLineLayouts([
             {
               productId: d3.productId,
               variantId: d3.variantId,
               name: d3.name,
               brand: d3.brand,
               price: d3.price,
-              quantity: d3.quantity
+              quantity: d3.quantity,
+              ...itemLayoutOf(normalizeLayoutOrigin(d3.layout))
             }
-          ],
+          ]),
           value: (d3.price ?? 0) * (d3.quantity ?? 1),
           currency: d3.currency
         }
@@ -11619,6 +12814,10 @@ var AnalyticsManager = class extends EventTarget {
         }
       });
     });
+    on("vio:cta-click", (ev) => {
+      const d3 = ev.detail;
+      if (d3) this.trackCta(d3);
+    });
     on("vio:open-cart", () => {
       const snap = this.cartCommerce();
       this.track("view_cart", snap ? { commerce: snap } : {});
@@ -11644,6 +12843,34 @@ var AnalyticsManager = class extends EventTarget {
         context: this.singleSliceContext(slices[0], explicit, base),
         ...snap || buyerId !== void 0 ? { commerce: { ...snap ?? {}, ...buyer } } : {}
       });
+    });
+    on("vio:checkout-created", (ev) => {
+      const d3 = ev.detail ?? {};
+      const checkoutId = firstId(d3.checkoutId);
+      if (!checkoutId || this.paymentInfoReported.has(checkoutId)) return;
+      this.paymentInfoReported.add(checkoutId);
+      const sponsorId = toNumber(d3.sponsorId);
+      const base = { sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
+      const payment = {
+        checkoutId,
+        ...typeof d3.paymentMethod === "string" && d3.paymentMethod ? { paymentMethod: d3.paymentMethod } : {}
+      };
+      const { slices, explicit } = this.cartSlices(sponsorId);
+      if (slices.length > 1) {
+        for (const slice of slices) {
+          this.track("add_payment_info", {
+            context: this.sliceContext(slice, base),
+            commerce: { ...sliceCommerce(slice), ...payment },
+            props: { slice: slice.slice, slices: slice.slices }
+          });
+        }
+      } else {
+        this.track("add_payment_info", {
+          context: this.singleSliceContext(slices[0], explicit, base),
+          commerce: { ...this.cartCommerce(sponsorId) ?? {}, ...payment }
+        });
+      }
+      if (d3.redirect === true) this.flushWithBeacon();
     });
     on("vio:payment-success", (ev) => {
       const d3 = ev.detail ?? {};
@@ -11725,6 +12952,7 @@ var AnalyticsManager = class extends EventTarget {
         }
         this.record(event);
       }
+      this.sendNow();
     };
     const ask = ids.orderIdKind === "checkout" ? this.orderReferenceAsker(ids.checkoutId, sponsorId) : null;
     if (!ask) {
@@ -11733,7 +12961,6 @@ var AnalyticsManager = class extends EventTarget {
     }
     if (this.isPageHidden()) {
       send();
-      this.flushWithBeacon();
       return;
     }
     let done = false;
@@ -11746,6 +12973,14 @@ var AnalyticsManager = class extends EventTarget {
     const settleNow = () => settle();
     this.pendingPurchases.add(settleNow);
     void waitForOrderNumber(ask, () => done).then(settle, () => settle());
+  }
+  /**
+   * Sends the queue now, not at the next tick: by beacon when the page is
+   * hidden or going away (a request may not survive it), else by fetch.
+   */
+  sendNow() {
+    if (this.isPageHidden()) this.flushWithBeacon();
+    else void this.flush();
   }
   /** Sends every purchase still waiting for its order number, at once, with what it has. */
   settlePendingPurchases() {
@@ -11855,14 +13090,8 @@ var AnalyticsManager = class extends EventTarget {
     }
     if (items.length === 0) return null;
     return {
-      items: items.map((i5) => ({
-        productId: i5.productId,
-        name: i5.name,
-        brand: i5.brand,
-        variantId: i5.variantId,
-        price: i5.unitPrice,
-        quantity: i5.quantity
-      })),
+      // One item per line and detail layout (0.34), each saying its layout.
+      items: withLineLayouts(lineItemsByLayout(items)),
       value: items.reduce((sum, i5) => sum + i5.unitPrice * (i5.quantity ?? 1), 0),
       currency: items[0]?.currency ?? this.lastCartSnapshot?.currency
     };
@@ -11906,6 +13135,36 @@ function safeStorageSet(key, value) {
     window.localStorage.setItem(key, value);
   } catch {
   }
+}
+function impressionCommerce(read) {
+  if (!read) return void 0;
+  try {
+    const commerce = read();
+    return commerce?.items?.length ? commerce : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function itemLayoutWire(i5) {
+  if (i5.layoutId === void 0 && i5.layoutRevision === void 0 && i5.experimentId === void 0 && i5.experimentVariantId === void 0) {
+    return {};
+  }
+  const token = (v2) => layoutToken(v2) ?? "";
+  return {
+    layout_id: token(i5.layoutId),
+    layout_revision: token(i5.layoutRevision),
+    experiment_id: token(i5.experimentId),
+    experiment_variant_id: token(i5.experimentVariantId)
+  };
+}
+function withLineLayouts(items) {
+  return items?.map((i5) => ({
+    ...i5,
+    layoutId: i5.layoutId ?? "",
+    layoutRevision: i5.layoutRevision ?? "",
+    experimentId: i5.experimentId ?? "",
+    experimentVariantId: i5.experimentVariantId ?? ""
+  }));
 }
 function compact(obj) {
   const out = {};
@@ -11974,7 +13233,7 @@ function capTitle(value) {
   return value.length > CONTENT_TITLE_MAX_LENGTH ? value.slice(0, CONTENT_TITLE_MAX_LENGTH) : value;
 }
 function sliceCommerce(slice) {
-  return { items: slice.items, value: slice.value, currency: slice.currency };
+  return { items: withLineLayouts(slice.items), value: slice.value, currency: slice.currency };
 }
 function slotOf(detail) {
   return typeof detail.slot === "string" && detail.slot.trim() ? detail.slot.trim() : void 0;
@@ -12082,6 +13341,7 @@ function pushGa4(event) {
     "add_to_cart",
     "view_cart",
     "begin_checkout",
+    "add_payment_info",
     "purchase"
   ]);
   if (!commerceNames.has(event.name)) return;
@@ -12095,6 +13355,7 @@ function pushGa4(event) {
       currency: commerce.currency,
       value: commerce.value,
       transaction_id: commerce.order_id,
+      payment_type: event.name === "add_payment_info" ? commerce.payment_method : void 0,
       items: commerce.items?.map(
         (i5) => compact({
           item_id: i5.product_id,
@@ -12178,6 +13439,8 @@ function cut3(value, max) {
 
 // src/core/client.ts
 var SLOT_DECLARATION_DEBOUNCE_MS = 1e3;
+var BOOTSTRAP_MAX_AGE_MS = 5 * 6e4;
+var BOOTSTRAP_REFRESH_BACKOFF_MS = 6e4;
 var PRIVACY_MODE_TIMEOUT_MS = 1500;
 var PRIVACY_UNKNOWN_TTL_MS = 6e4;
 function privacyModeOf(value) {
@@ -12193,9 +13456,23 @@ function privacyModeOfSurface(res) {
 var VioFacade = class {
   constructor() {
     this.apiInstance = null;
+    /** Commerce clients by sponsor AND key: one sponsor may sell on several channels (one per campaign). */
     this.commerceClients = /* @__PURE__ */ new Map();
     this.bootstrapPromise = null;
     this.cachedBootstrap = null;
+    /** When the cached bootstrap arrived (ms epoch). */
+    this.bootstrapAt = 0;
+    /** A refresh of the bootstrap in flight (`refreshStaleBootstrap`). */
+    this.bootstrapRefresh = null;
+    this.bootstrapRefreshFailedAt = 0;
+    /** The `visibilitychange` listener is installed once per page. */
+    this.visibilityHooked = false;
+    /**
+     * Every selling block this page has seen, by `sponsorId:channelId` — so a
+     * checkout opened on a channel keeps its key after a bootstrap refresh no
+     * longer lists that channel (`sponsorCommerce(…, { retired: true })`).
+     */
+    this.seenChannels = /* @__PURE__ */ new Map();
     /** Last bootstrap failure — short backoff so cart mutations don't hammer a
      * dead endpoint on every call. */
     this.bootstrapFailedAt = 0;
@@ -12219,7 +13496,17 @@ var VioFacade = class {
     this.warnedDeclarationCap = false;
     // Client-side managers — created lazily on first access. They don't
     // need Vio.init() to work (state is purely local).
-    this.cartManager = null;
+    /**
+     * One cart manager per connection (environment + key), each with its own
+     * storage entry; `Vio.cart` is a stable front for the current one, so a
+     * re-init with another key switches carts without the page re-subscribing.
+     * A manager left behind keeps its carts (they come back if the page switches
+     * back) and finishes its requests into ITS carts, never the new one's.
+     */
+    this.cartManagers = /* @__PURE__ */ new Map();
+    this.cartScope = "";
+    this.cartFront = null;
+    this.cartEvents = new EventTarget();
     this.checkoutManager = null;
     this.analyticsManager = null;
     /** What the surface answered of its privacy mode (`GET /v2/mobile/surface`) and when; `unknown` expires after a minute. */
@@ -12229,15 +13516,28 @@ var VioFacade = class {
   }
   init(config) {
     Configuration.init(config);
+    try {
+      const resolved = Configuration.get();
+      this.switchCartScope(cartScopeOf(resolved.environment, resolved.apiKey));
+    } catch {
+    }
     this.apiInstance = null;
     this.commerceClients.clear();
     this.bootstrapPromise = null;
     this.cachedBootstrap = null;
+    this.bootstrapAt = 0;
+    this.bootstrapRefresh = null;
+    this.bootstrapRefreshFailedAt = 0;
+    this.seenChannels.clear();
     this.bootstrapFailedAt = 0;
     this.generation++;
     this.surfaceMode = null;
     this.surfaceRequest = null;
     this.preloadPrivacyMode();
+    try {
+      this.analytics.syncInternal(true);
+    } catch {
+    }
     this.checkoutManager?.clearPaymentMethodsCache();
     if (this.slotDeclareTimer) {
       clearTimeout(this.slotDeclareTimer);
@@ -12267,6 +13567,42 @@ var VioFacade = class {
     }
     return resolveContent(init);
   }
+  /**
+   * Page-wide options of every `<vio-product-detail>` (0.34). `layout` orders
+   * the sections below the gallery — `{ id, revision, sections, experimentId?,
+   * variantId? }`; `null` goes back to the default; a detail's own `layout`
+   * wins. Open details re-render at once, later ones open with it. A key left
+   * out of the call is left as it is. See README «Section order and layout
+   * tracking».
+   */
+  configureDetail(options = {}) {
+    if (options && typeof options === "object" && "layout" in options) setGlobalDetailLayout(options.layout ?? null);
+    if (options && typeof options === "object" && "descriptionLabel" in options) setGlobalDescriptionLabel(options.descriptionLabel ?? null);
+  }
+  /**
+   * The layout a `<vio-product-detail>` without its own `layout` applies now:
+   * the page's (`source: 'global'`) or the default. A detail's own is
+   * `el.appliedLayout`. A copy; never throws.
+   */
+  detailLayout() {
+    return copyAppliedLayout(resolveDetailLayout(null));
+  }
+  /**
+   * Report a tap on one of the host's own buttons (its cards, its article
+   * blocks) as `cta_click`, the event the SDK's own buttons send — so the
+   * dashboard compares them on one scale. `{ cta, location?, label?,
+   * variant?, optionValue?, productId?, productVariantId?, sponsorId?,
+   * campaignId?, slot?, contentId?, layout? }`; `location` is `host` by
+   * default (`card` / `block` for the host's cards and article blocks). An
+   * invalid `cta` is ignored with one `console.warn`. Nothing is sent before
+   * `Vio.analytics.start()`. Never throws. See README «Button tracking».
+   */
+  trackCta(input) {
+    try {
+      this.analytics.trackCta(input);
+    } catch {
+    }
+  }
   get isInitialized() {
     return Configuration.isInitialized;
   }
@@ -12276,8 +13612,66 @@ var VioFacade = class {
   // MARK: - Client-side managers (no init required)
   /** Multi-sponsor cart manager. Reactive — listen via addEventListener('change', ...). */
   get cart() {
-    if (!this.cartManager) this.cartManager = new CartManager();
-    return this.cartManager;
+    if (!this.cartFront) this.cartFront = this.makeCartFront();
+    return this.cartFront;
+  }
+  /** The cart manager of the page's connection now (created on first use). */
+  currentCartManager() {
+    const scope = this.cartScope;
+    let manager = this.cartManagers.get(scope);
+    if (!manager) {
+      const created = new CartManager(scope);
+      for (const type of ["change", "error"]) {
+        created.addEventListener(type, (e7) => {
+          if (this.cartManagers.get(this.cartScope) !== created) return;
+          this.cartEvents.dispatchEvent(new CustomEvent(type, { detail: e7.detail }));
+        });
+      }
+      this.cartManagers.set(scope, created);
+      manager = created;
+    }
+    return manager;
+  }
+  /**
+   * `Vio.cart`: every property and method is the current connection's
+   * manager's; the listeners live on the front, so they survive a switch.
+   */
+  makeCartFront() {
+    const events = this.cartEvents;
+    const listenerMethods = {
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events),
+      dispatchEvent: events.dispatchEvent.bind(events)
+    };
+    return new Proxy(Object.create(CartManager.prototype), {
+      get: (_target, prop) => {
+        if (typeof prop === "string" && prop in listenerMethods) return listenerMethods[prop];
+        const manager = this.currentCartManager();
+        const value = Reflect.get(manager, prop, manager);
+        if (typeof value !== "function" || Object.prototype.hasOwnProperty.call(manager, prop)) return value;
+        return value.bind(manager);
+      },
+      set: (_target, prop, value) => Reflect.set(this.currentCartManager(), prop, value),
+      has: (_target, prop) => Reflect.has(this.currentCartManager(), prop),
+      // A property defined on Vio.cart (a test's spy, a host's patch) lands on
+      // the current manager, where its own methods find it.
+      defineProperty: (_target, prop, descriptor) => Reflect.defineProperty(this.currentCartManager(), prop, descriptor),
+      deleteProperty: (_target, prop) => Reflect.deleteProperty(this.currentCartManager(), prop),
+      getOwnPropertyDescriptor: (_target, prop) => {
+        const own = Reflect.getOwnPropertyDescriptor(this.currentCartManager(), prop);
+        return own ? { ...own, configurable: true } : void 0;
+      }
+    });
+  }
+  /** After `init`: the carts are the new connection's. Says `change` when that switched them. */
+  switchCartScope(scope) {
+    if (scope === this.cartScope) return;
+    this.cartManagers.get(this.cartScope)?.setActive(false);
+    this.cartScope = scope;
+    if (!this.cartFront) return;
+    const manager = this.currentCartManager();
+    manager.setActive(true);
+    manager.announce();
   }
   /** Checkout flow manager. Subscribes to cart state via the CartManager; asks here for the order's attribution. */
   get checkout() {
@@ -12325,7 +13719,7 @@ var VioFacade = class {
     const promise = this.api.bootstrap(Configuration.get().platform).then(
       (res) => {
         if (generation !== this.generation) return this.bootstrap();
-        this.cachedBootstrap = res;
+        this.adoptBootstrap(res);
         this.bootstrapFailedAt = 0;
         if (this.slotsDirty) this.scheduleSlotDeclaration();
         this.preloadPrivacyMode();
@@ -12344,6 +13738,85 @@ var VioFacade = class {
   }
   get bootstrapCache() {
     return this.cachedBootstrap;
+  }
+  /** A bootstrap becomes the page's: when it arrived, the channels it lists, and the tab-visible refresh. */
+  adoptBootstrap(res) {
+    this.cachedBootstrap = res;
+    this.bootstrapAt = Date.now();
+    try {
+      const ids = /* @__PURE__ */ new Set();
+      const add = (s4) => {
+        const id = toSponsorId(s4?.id);
+        if (id !== void 0) ids.add(id);
+      };
+      add(res?.primarySponsor);
+      if (Array.isArray(res?.secondarySponsors)) res.secondarySponsors.forEach(add);
+      if (Array.isArray(res?.campaigns)) {
+        for (const c4 of res.campaigns) {
+          if (!c4 || typeof c4 !== "object") continue;
+          add(c4.primarySponsor);
+          if (Array.isArray(c4.secondarySponsors)) c4.secondarySponsors.forEach(add);
+        }
+      }
+      for (const id of ids) {
+        for (const { sponsor } of sellingBlocksIn(res, id)) {
+          const channel = channelIdOf(sponsor.commerce.channelId);
+          if (channel !== void 0) this.seenChannels.set(`${id}:${channel}`, sponsor);
+        }
+      }
+    } catch {
+    }
+    this.hookVisibility();
+  }
+  /**
+   * The bootstrap is cached for the page's life, but a tab can stay open for
+   * days: when it becomes visible again and the cached one is older than
+   * five minutes, it is fetched again (new campaigns, channels). The old one
+   * stays until the new one arrives — and stays if the refresh fails. Carts
+   * keep their lines; a cart whose channel the new bootstrap no longer lists
+   * is moved to the current channel the next time it is used (CartManager),
+   * and an open checkout keeps paying with the key of its own channel.
+   */
+  hookVisibility() {
+    if (this.visibilityHooked) return;
+    if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+    this.visibilityHooked = true;
+    document.addEventListener("visibilitychange", () => {
+      try {
+        if (document.visibilityState === "visible") void this.refreshStaleBootstrap();
+      } catch {
+      }
+    });
+  }
+  /** Fetch the bootstrap again when the cached one is older than `maxAgeMs`; never throws, never clears the cache. */
+  refreshStaleBootstrap(maxAgeMs = BOOTSTRAP_MAX_AGE_MS) {
+    try {
+      if (this.bootstrapRefresh) return this.bootstrapRefresh;
+      if (!this.cachedBootstrap || this.bootstrapPromise || !Configuration.isInitialized) return Promise.resolve();
+      const now = Date.now();
+      if (now - this.bootstrapAt < maxAgeMs) return Promise.resolve();
+      if (this.bootstrapRefreshFailedAt && now - this.bootstrapRefreshFailedAt < BOOTSTRAP_REFRESH_BACKOFF_MS) {
+        return Promise.resolve();
+      }
+      const generation = this.generation;
+      const refresh = this.api.bootstrap(Configuration.get().platform).then(
+        (res) => {
+          if (generation !== this.generation || !res || typeof res !== "object") return;
+          this.adoptBootstrap(res);
+          this.bootstrapRefreshFailedAt = 0;
+          if (this.slotsDirty) this.scheduleSlotDeclaration();
+        },
+        () => {
+          if (generation === this.generation) this.bootstrapRefreshFailedAt = Date.now();
+        }
+      ).finally(() => {
+        if (this.bootstrapRefresh === refresh) this.bootstrapRefresh = null;
+      });
+      this.bootstrapRefresh = refresh;
+      return refresh;
+    } catch {
+      return Promise.resolve();
+    }
   }
   /**
    * Who a sponsor is to a shopper — `{ id, name, logoUrl, avatarUrl }` — by
@@ -12379,22 +13852,60 @@ var VioFacade = class {
     }
   }
   /**
-   * Get a CommerceClient scoped to a specific sponsor (via bootstrap).
-   * Throws if bootstrap hasn't been called or the sponsor is unknown.
+   * The block a sponsor sells with — its `commerce.apiKey` and `channelId` —
+   * by the rule one article = one campaign = one channel = one sponsor (see
+   * `sponsorCommerceIn`): `ctx.channelId` → that channel's block only (a cart
+   * created on a channel is only called with its key); else the campaign in
+   * context — `ctx.campaignId` candidates (the click's, the element's
+   * `vio-campaign`, an ancestor's `data-vio-campaign`), then
+   * `Vio.init({ campaignId })` — when the sponsor takes part in it; else the
+   * sponsor's first block that sells (the behaviour before). `campaignId:
+   * null` means no campaign at all, not even `Vio.init`'s. `retired: true`
+   * also answers a channel the current bootstrap no longer lists with the
+   * block this page saw for it (an open checkout after a bootstrap refresh).
+   * Blocks with `commerce: null` are skipped. `null` when none; never throws.
    */
-  commerceFor(sponsorId) {
+  sponsorCommerce(sponsorId, ctx = {}) {
+    try {
+      const id = toSponsorId(sponsorId);
+      if (id === void 0) return null;
+      const channel = channelIdOf(ctx?.channelId);
+      if (channel !== void 0) {
+        const listed = sponsorCommerceIn(this.cachedBootstrap, id, { channelId: channel });
+        if (listed) return listed;
+        return ctx.retired ? this.seenChannels.get(`${id}:${channel}`) ?? null : null;
+      }
+      const campaignId = ctx?.campaignId === null ? [] : this.pageCampaignCandidates(ctx?.campaignId);
+      return sponsorCommerceIn(this.cachedBootstrap, id, { campaignId }) ?? null;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Get a CommerceClient scoped to a sponsor (via bootstrap) — on the
+   * channel of the campaign in context (`ctx.campaignId`, the element's
+   * candidates first; see `sponsorCommerce`) or of `ctx.channelId`. Without
+   * `ctx`, the page's campaign (`Vio.init`) when the sponsor takes part in
+   * it, else the sponsor's first selling block, as before. Clients are kept
+   * per sponsor and key. Throws if bootstrap hasn't been called or nothing of
+   * the sponsor sells there.
+   */
+  commerceFor(sponsorId, ctx) {
     sponsorId = Number(sponsorId);
-    const existing = this.commerceClients.get(sponsorId);
-    if (existing) return existing;
-    const sponsor = this.findSponsor(sponsorId);
+    const sponsor = this.sponsorCommerce(sponsorId, ctx ?? {});
     if (!sponsor) {
+      const channel = channelIdOf(ctx?.channelId);
       throw new Error(
-        `[Vio] Sponsor ${sponsorId} not found in bootstrap. Call Vio.bootstrap() first or pass commerce-key directly.`
+        channel !== void 0 ? `[Vio] Channel ${channel} of sponsor ${sponsorId} not found in bootstrap.` : `[Vio] Sponsor ${sponsorId} not found in bootstrap. Call Vio.bootstrap() first or pass commerce-key directly.`
       );
     }
+    const apiKey = sponsor.commerce.apiKey;
+    const cacheKey = `${sponsorId}:${apiKey}`;
+    const existing = this.commerceClients.get(cacheKey);
+    if (existing) return existing;
     const cfg = Configuration.get();
-    const client = createCommerceClient({ endpoint: cfg.graphQLBase, apiKey: sponsor.commerce.apiKey });
-    this.commerceClients.set(sponsorId, client);
+    const client = createCommerceClient({ endpoint: cfg.graphQLBase, apiKey });
+    this.commerceClients.set(cacheKey, client);
     return client;
   }
   /** Get a CommerceClient using an explicit commerce apiKey (skip bootstrap). */
@@ -12419,7 +13930,7 @@ var VioFacade = class {
       const all = normalizeSlotLocations(slots);
       if (all.length === 0) return null;
       if (!Configuration.isInitialized) {
-        warn("declareSlots() before Vio.init() \u2014 nothing declared");
+        warn2("declareSlots() before Vio.init() \u2014 nothing declared");
         return null;
       }
       const cfg = Configuration.get();
@@ -12429,15 +13940,15 @@ var VioFacade = class {
       for (const l3 of all) {
         if (l3.campaignId !== void 0 && l3.campaignId === pageCampaignId) delete l3.campaignId;
       }
-      const memory = readSlotDeclaration(storageKey);
+      const memory2 = readSlotDeclaration(storageKey);
       const keyOf = (l3) => slotDeclarationKey(l3, pageCampaignId);
-      const pending2 = new Set(pendingSlotKeys(memory, all.map(keyOf), now));
+      const pending2 = new Set(pendingSlotKeys(memory2, all.map(keyOf), now));
       let locations = opts.force ? all : all.filter((l3) => pending2.has(keyOf(l3)));
       if (locations.length === 0) return null;
       if (locations.length > MAX_LOCATIONS_PER_DECLARATION) {
         if (!this.warnedLocationCap) {
           this.warnedLocationCap = true;
-          warn(
+          warn2(
             `declareSlots(): ${locations.length} slots on one page \u2014 only the first ${MAX_LOCATIONS_PER_DECLARATION} are declared`
           );
         }
@@ -12447,7 +13958,7 @@ var VioFacade = class {
       if (!opts.force && this.declarationsThisLoad >= MAX_DECLARATIONS_PER_LOAD) {
         if (!this.warnedDeclarationCap) {
           this.warnedDeclarationCap = true;
-          warn(
+          warn2(
             `declareSlots(): already ${MAX_DECLARATIONS_PER_LOAD} manifests this page load \u2014 further ones are skipped (force: true to override)`
           );
         }
@@ -12464,12 +13975,12 @@ var VioFacade = class {
       if (result?.mode === "merge") {
         const unhandled = this.campaignNotTakenUp(result, locations, pageCampaignId);
         const settled = keys.filter((k2) => !unhandled.has(k2));
-        let next = rememberSlotKeys(memory, settled, now);
+        let next = rememberSlotKeys(memory2, settled, now);
         if (unhandled.size > 0) next = rememberSlotKeys(next, [...unhandled], failedAt(now));
         writeSlotDeclaration(storageKey, next);
       } else {
-        writeSlotDeclaration(storageKey, rememberSlotKeys(memory, keys, failedAt(now)));
-        warn(
+        writeSlotDeclaration(storageKey, rememberSlotKeys(memory2, keys, failedAt(now)));
+        warn2(
           "slots declared but the server ignored mode=merge (old server); not caching, will retry next load"
         );
       }
@@ -12478,7 +13989,7 @@ var VioFacade = class {
       if (storageKey && keys.length > 0) {
         writeSlotDeclaration(storageKey, rememberSlotKeys(readSlotDeclaration(storageKey), keys, failedAt(now)));
       }
-      warn("declareSlots() failed \u2014", err);
+      warn2("declareSlots() failed \u2014", err);
       return null;
     }
   }
@@ -12733,9 +14244,10 @@ var VioFacade = class {
    * The attribution of the order a sponsor's cart is about to become
    * (ADR-0035 phase B) — what `CreateCheckout` / `UpdateCheckout` send as
    * `attribution` and shopcart writes on the order: the surface (its SDK
-   * key), the page's campaign (`pageCampaign()`; without one, the campaign
-   * that explains most units of the cart under the same rule `purchase` is
-   * split by — `cartSlices`) and, on a surface KNOWN to be `standard`
+   * key), the campaign of the order — always one the cart's sponsor takes part
+   * in (`orderCampaign`: the cart lines' own campaign, else the page's;
+   * without one, the campaign that explains most units of the cart under the
+   * same rule `purchase` is split by — `cartSlices`) and, on a surface KNOWN to be `standard`
    * (`privacyModeNow`), the page (`content()`'s url as origin + path, and
    * title) and where the session came in: the landing the session REMEMBERS
    * (`storedLanding`, else the one analytics resolved on this page) — never
@@ -12747,10 +14259,13 @@ var VioFacade = class {
     try {
       const config = Configuration.isInitialized ? Configuration.get() : void 0;
       const content = this.content();
+      const sponsor = toSponsorId(sponsorId);
+      const belongs = (campaignId) => campaignId === void 0 || campaignTakesSponsor(this.cachedBootstrap, campaignId, sponsor);
       return checkoutAttributionOf({
         surfaceKey: config?.apiKey,
-        pageCampaignId: toNumber(this.pageCampaign()?.id),
-        slices: this.cartSlices(sponsorId),
+        pageCampaignId: this.orderCampaign(sponsor),
+        // The fallback campaign of the slices, too, only when it is the sponsor's.
+        slices: this.cartSlices(sponsorId).filter((slice) => belongs(slice.campaignId)),
         content: { url: content.url, title: content.title },
         landing: this.rememberedLanding(),
         privacyMode: this.privacyModeNow()
@@ -12758,6 +14273,29 @@ var VioFacade = class {
     } catch {
       return void 0;
     }
+  }
+  /**
+   * The campaign an order of `sponsorId` is credited to — one article = one
+   * campaign = one sponsor, so it is always one the sponsor takes part in:
+   * the campaign the cart's own lines were added from (their origins; the one
+   * that explains most units), else the page's — the elements' campaigns on
+   * the page (`vio-campaign` / `data-vio-campaign`, in document order), then
+   * `Vio.init({ campaignId })` — the first one active with that sponsor.
+   * `undefined` when neither says one (the slices then decide). Without a
+   * sponsor, the page's campaign as before.
+   */
+  orderCampaign(sponsorId) {
+    const boot = this.cachedBootstrap;
+    if (sponsorId !== void 0) {
+      const lines = [...this.cart.getCart(sponsorId)?.items ?? []];
+      const fromLines = dominantCampaignOf(
+        cartSlicesFrom(lines, () => void 0).filter(
+          (slice) => slice.campaignId !== void 0 && campaignTakesSponsor(boot, slice.campaignId, sponsorId)
+        )
+      );
+      if (fromLines !== void 0) return fromLines;
+    }
+    return toNumber(activeCampaignEntry(boot, this.pageCampaignCandidates(documentCampaignHints()), sponsorId)?.id);
   }
   /** The landing the session remembers: what the first page stored, else what analytics resolved on this page load (consent pending); null otherwise. */
   rememberedLanding() {
@@ -12813,11 +14351,11 @@ var VioFacade = class {
       if (sentCampaign === void 0) continue;
       if (l3.assignment === "dashboard" && !this.warnedDashboardSlots.has(l3.locationId)) {
         this.warnedDashboardSlots.add(l3.locationId);
-        warn(`slot ${l3.locationId} is assigned from the dashboard; the page's campaign is ignored there`);
+        warn2(`slot ${l3.locationId} is assigned from the dashboard; the page's campaign is ignored there`);
       }
       if (l3.assignment === "replaced" && !this.warnedReplacedSlots.has(l3.locationId)) {
         this.warnedReplacedSlots.add(l3.locationId);
-        warn(`slot ${l3.locationId} moved to campaign ${sentCampaign} by this page (it replaced an earlier page assignment)`);
+        warn2(`slot ${l3.locationId} moved to campaign ${sentCampaign} by this page (it replaced an earlier page assignment)`);
       }
     }
   }
@@ -12860,7 +14398,36 @@ var VioFacade = class {
     return findSponsorIn(this.cachedBootstrap, sponsorId);
   }
 };
-function warn(...args) {
+function campaignTakesSponsor(boot, campaignId, sponsorId) {
+  if (sponsorId === void 0 || !boot) return true;
+  try {
+    const listed = (Array.isArray(boot.campaigns) ? boot.campaigns : []).filter(
+      (c4) => !!c4 && typeof c4 === "object" && toNumber(c4.id) === campaignId
+    );
+    if (listed.length > 0) return listed.some((c4) => campaignSponsorIds(c4).includes(sponsorId));
+    if (toNumber(boot.campaign?.id) === campaignId) {
+      const entry = defaultCampaignEntry(boot);
+      return !!entry && campaignSponsorIds(entry).includes(sponsorId);
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+function documentCampaignHints() {
+  try {
+    if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return [];
+    const out = [];
+    document.querySelectorAll("[vio-campaign], [data-vio-campaign]").forEach((el) => {
+      const value = el.getAttribute("vio-campaign") || el.getAttribute("data-vio-campaign");
+      if (value) out.push(value);
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+function warn2(...args) {
   if (typeof console !== "undefined") console.warn("[Vio]", ...args);
 }
 function failedAt(now) {
@@ -13719,6 +15286,61 @@ function closestAcrossShadow(start, selector) {
   return null;
 }
 
+// src/ui/cta.ts
+function labelOf(button) {
+  if (button.hasAttribute("data-vio-cta-label")) return ctaText(button.getAttribute("data-vio-cta-label"));
+  return ctaText(button.getAttribute("aria-label")) ?? ctaText(button.textContent);
+}
+function emitCta(host, location2, cta, contextOf, extra = {}, button = null) {
+  try {
+    const context = contextOf(cta, button);
+    if (context === null) return;
+    const detail = { ...context, ...stripUndefined(extra), cta, location: location2 };
+    host.dispatchEvent(new CustomEvent("vio:cta-click", { bubbles: true, composed: true, detail }));
+  } catch {
+  }
+}
+function stripUndefined(obj) {
+  const out = {};
+  for (const [k2, v2] of Object.entries(obj)) if (v2 !== void 0) out[k2] = v2;
+  return out;
+}
+function trackCtaClicks(host, location2, contextOf) {
+  const root = host.renderRoot ?? host.shadowRoot;
+  if (!root || typeof root.addEventListener !== "function") return () => {
+  };
+  const onClick = (ev) => {
+    try {
+      const button = markedButton(ev, root);
+      if (!button) return;
+      const cta = button.getAttribute("data-vio-cta") ?? "";
+      if (button.tagName === "SUMMARY" && button.parentElement?.open) return;
+      const option = button.getAttribute("data-vio-cta-option");
+      emitCta(
+        host,
+        location2,
+        cta,
+        contextOf,
+        { label: labelOf(button), ...option !== null ? { optionValue: option } : {} },
+        button
+      );
+    } catch {
+    }
+  };
+  root.addEventListener("click", onClick, { capture: true });
+  return () => root.removeEventListener("click", onClick, { capture: true });
+}
+function markedButton(ev, root) {
+  const path = typeof ev.composedPath === "function" ? ev.composedPath() : [];
+  for (const node of path) {
+    if (node === root) break;
+    if (!(node instanceof Element)) continue;
+    if (node.getRootNode() !== root) continue;
+    if (node.hasAttribute("data-vio-cta")) return node;
+  }
+  return null;
+}
+
 // src/ui/components/vio-product.ts
 var VioProduct = class extends i4 {
   constructor() {
@@ -13726,6 +15348,10 @@ var VioProduct = class extends i4 {
     this.brand = "";
     this.name = "";
     this.price = "";
+    this.description = "";
+    this.showDescription = false;
+    this.buttonStyle = "icon";
+    this.buttonLabel = "Kj\xF8p";
     this.retailer = "";
     this.imageUrl = "";
     this.productId = "";
@@ -13747,6 +15373,21 @@ var VioProduct = class extends i4 {
     this.cartQty = 0;
     this.justAdded = false;
     this.boundCartChange = () => this.updateInCart();
+    /** Stops reporting the taps on the buttons (`vio:cta-click`). */
+    this.stopCtaClicks = null;
+    /** What a tap on the card says (`vio:cta-click`): its product, sponsor and attribution. */
+    this.ctaContext = () => {
+      const a3 = this.attribution();
+      return {
+        productId: this.productId || void 0,
+        sponsorId: this.sponsorId || this.sponsorFromAttribution(),
+        campaignId: a3.campaignId,
+        slot: a3.slot,
+        contentId: a3.contentId,
+        contentTitle: a3.contentTitle,
+        componentTemplateId: a3.componentTemplateId
+      };
+    };
   }
   /** The slot id in effect: `vio-slot`, else the auto id (`card-N`). Read-only. */
   get effectiveSlot() {
@@ -13794,20 +15435,29 @@ var VioProduct = class extends i4 {
       box-sizing: border-box;
       width: 100%;
       cursor: pointer;
-      font-family: var(--vio-font-sans, -apple-system, sans-serif);
+      font-family: var(--vio-card-font, var(--vio-font-sans, -apple-system, sans-serif));
       color: var(--vio-color-text, #0a0a0a);
       -webkit-tap-highlight-color: transparent;
     }
+    /* Every --vio-card-* below defaults to the look the card always had; a
+       host restyles the card with them (they cross the carousel's shadow
+       root, ::part would not). E.g. a framed card with a buy button:
+       --vio-card-border, --vio-card-meta-padding, --vio-card-image-fit: contain. */
     .card {
       display: flex;
       flex-direction: column;
       height: 100%;
+      box-sizing: border-box;
+      border: var(--vio-card-border, none);
+      background: var(--vio-card-bg, transparent);
+      transition: border-color 0.2s ease;
     }
+    :host(:hover) .card { border-color: var(--vio-card-border-hover-color, var(--vio-color-border, #e5e5e5)); }
     .image {
       position: relative;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: var(--vio-card-image-aspect, 1 / 1);
       width: 100%;
-      background-color: var(--vio-color-surface-muted, #f2f2f2);
+      background-color: var(--vio-card-image-bg, var(--vio-color-surface-muted, #f2f2f2));
       display: flex;
       align-items: center;
       justify-content: center;
@@ -13822,8 +15472,8 @@ var VioProduct = class extends i4 {
       position: absolute;
       right: 10px;
       bottom: 10px;
-      width: 40px;
-      height: 40px;
+      width: var(--vio-card-add-size, 40px);
+      height: var(--vio-card-add-size, 40px);
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.96);
       border: none;
@@ -13843,7 +15493,7 @@ var VioProduct = class extends i4 {
     .add-btn.in-cart { background: #0a0a0a; color: #fff; }
     .add-btn.in-cart:hover { background: #222; }
     .add-btn.pop { animation: vio-add-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1); }
-    .add-btn svg { width: 18px; height: 18px; }
+    .add-btn svg { width: var(--vio-card-add-icon-size, 18px); height: var(--vio-card-add-icon-size, 18px); }
     .add-btn .add-count { font-size: 15px; font-weight: 700; line-height: 1; }
     @keyframes vio-add-pop {
       0% { transform: scale(1); }
@@ -13854,47 +15504,87 @@ var VioProduct = class extends i4 {
     .image img {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      box-sizing: border-box;
+      padding: var(--vio-card-image-padding, 0);
+      object-fit: var(--vio-card-image-fit, cover);
       display: block;
     }
     .meta {
-      padding-top: 14px;
+      padding: var(--vio-card-meta-padding, 14px 0 0);
       display: flex;
       flex-direction: column;
       flex: 1;
     }
     .brand {
-      font-size: var(--vio-size-xs, 12px);
-      letter-spacing: var(--vio-tracking-label, 0.1em);
+      font-size: var(--vio-card-brand-size, var(--vio-size-xs, 12px));
+      letter-spacing: var(--vio-card-brand-tracking, var(--vio-tracking-label, 0.1em));
       text-transform: uppercase;
-      color: var(--vio-color-text-secondary, #666);
-      font-weight: 500;
-      margin-bottom: 6px;
+      color: var(--vio-card-brand-color, var(--vio-color-text-secondary, #666));
+      font-weight: var(--vio-card-brand-weight, 500);
+      margin-bottom: var(--vio-card-brand-gap, 6px);
     }
     .name {
-      font-size: var(--vio-size-md, 16px);
-      font-weight: 500;
+      font-family: var(--vio-card-name-font, inherit);
+      font-size: var(--vio-card-name-size, var(--vio-size-md, 16px));
+      font-weight: var(--vio-card-name-weight, 500);
       line-height: 1.3;
-      margin: 0 0 10px;
+      margin: 0 0 var(--vio-card-name-gap, 10px);
       display: -webkit-box;
       -webkit-line-clamp: 2;
       line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    /* show-description: cut after --vio-card-description-lines (4). */
+    .description {
+      display: -webkit-box;
+      -webkit-line-clamp: var(--vio-card-description-lines, 4);
+      line-clamp: var(--vio-card-description-lines, 4);
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      font-size: var(--vio-card-description-size, 14px);
+      line-height: 1.45;
+      color: var(--vio-card-description-color, var(--vio-color-text-secondary, #737373));
+      margin: 0 0 var(--vio-card-description-gap, 12px);
+    }
     .price {
-      font-size: var(--vio-size-md, 16px);
-      font-weight: 700;
-      margin-bottom: 16px;
+      font-family: var(--vio-card-price-font, inherit);
+      font-size: var(--vio-card-price-size, var(--vio-size-md, 16px));
+      font-weight: var(--vio-card-price-weight, 700);
+      margin-bottom: var(--vio-card-price-gap, 16px);
     }
+    /* Who sells it. --vio-card-retailer-order: -1 lifts it above the name
+       (where a brand line goes), for catalogues without a brand of their own. */
     .retailer {
-      font-size: var(--vio-size-xs, 12px);
-      letter-spacing: var(--vio-tracking-label, 0.1em);
+      display: var(--vio-card-retailer-display, block);
+      order: var(--vio-card-retailer-order, 0);
+      font-size: var(--vio-card-retailer-size, var(--vio-size-xs, 12px));
+      letter-spacing: var(--vio-card-retailer-tracking, var(--vio-tracking-label, 0.1em));
       text-transform: uppercase;
-      color: var(--vio-color-text-tertiary, #999);
-      font-weight: 500;
-      margin-top: auto;
+      color: var(--vio-card-retailer-color, var(--vio-color-text-tertiary, #999));
+      font-weight: var(--vio-card-retailer-weight, 500);
+      margin: var(--vio-card-retailer-margin, auto 0 0);
     }
+    /* button-style="bar": the Vev card's bar — full width under the price,
+       uppercase, the accent colour, 6px corners (--vio-card-bar-radius). */
+    .bar-btn {
+      width: 100%;
+      margin-top: auto;
+      padding: 14px;
+      border: none;
+      border-radius: var(--vio-card-bar-radius, 6px);
+      background: var(--vio-card-accent, var(--vio-color-text, #0a0a0a));
+      color: var(--vio-card-accent-text, #fff);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    .bar-btn:hover { opacity: 0.88; }
+    .bar-btn.pop { animation: vio-add-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1); }
   `;
   }
   connectedCallback() {
@@ -13902,8 +15592,12 @@ var VioProduct = class extends i4 {
     this.updateInCart();
     this.slotRegistration.connect(this.slotAttributes());
     Vio.cart.addEventListener("change", this.boundCartChange);
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = trackCtaClicks(this, "card", this.ctaContext);
   }
   disconnectedCallback() {
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = null;
     Vio.cart.removeEventListener("change", this.boundCartChange);
     this.slotRegistration.clear();
     super.disconnectedCallback();
@@ -13953,6 +15647,7 @@ var VioProduct = class extends i4 {
   onKeydown(e7) {
     if (e7.key === "Enter" || e7.key === " ") {
       e7.preventDefault();
+      if (e7.target === e7.currentTarget) emitCta(this, "card", "open", this.ctaContext);
       this.onClick();
     }
   }
@@ -14003,6 +15698,8 @@ var VioProduct = class extends i4 {
     return b2`
       <div
         class="card"
+        data-vio-cta="open"
+        data-vio-cta-label=""
         @click=${this.onClick}
         @keydown=${this.onKeydown}
         role="button"
@@ -14011,8 +15708,10 @@ var VioProduct = class extends i4 {
       >
         <div class="image">
           ${this.imageUrl ? b2`<img src=${this.imageUrl} alt=${this.name || this.brand} loading="lazy" />` : ""}
-          <button
+          ${this.buttonStyle === "icon" ? b2`<button
             class="add-btn ${this.inCart ? "in-cart" : ""} ${this.justAdded ? "pop" : ""}"
+            data-vio-cta="add"
+            data-vio-cta-label="Legg i kurv"
             @click=${this.onAdd}
             aria-label=${this.inCart ? "I handlekurven \u2013 legg til en til" : "Legg i kurv"}
             title=${this.inCart ? "I handlekurven" : "Legg i kurv"}
@@ -14024,14 +15723,18 @@ var VioProduct = class extends i4 {
                   <line x1="3" y1="6" x2="21" y2="6"></line>
                   <path d="M16 10a4 4 0 0 1-8 0"></path>
                 </svg>`}
-          </button>
+          </button>` : ""}
         </div>
         ${this.hideMeta ? "" : b2`
         <div class="meta">
           ${this.brand ? b2`<div class="brand">${this.brand}</div>` : ""}
           ${this.name ? b2`<div class="name">${this.name}</div>` : ""}
+          ${this.showDescription && this.description ? b2`<p class="description">${this.description}</p>` : ""}
           ${this.price ? b2`<div class="price">${this.price}</div>` : ""}
           ${this.retailer ? b2`<div class="retailer">${this.retailer}</div>` : ""}
+          ${this.buttonStyle === "bar" ? b2`<button class="bar-btn ${this.justAdded ? "pop" : ""}" data-vio-cta="add" data-vio-cta-label=${this.buttonLabel} @click=${this.onAdd}>
+                ${this.inCart ? `${this.buttonLabel} \xB7 ${this.cartQty}` : this.buttonLabel}
+              </button>` : ""}
         </div>`}
       </div>
     `;
@@ -14046,6 +15749,18 @@ __decorateClass([
 __decorateClass([
   n5({ type: String })
 ], VioProduct.prototype, "price", 2);
+__decorateClass([
+  n5({ type: String })
+], VioProduct.prototype, "description", 2);
+__decorateClass([
+  n5({ type: Boolean, attribute: "show-description" })
+], VioProduct.prototype, "showDescription", 2);
+__decorateClass([
+  n5({ type: String, attribute: "button-style" })
+], VioProduct.prototype, "buttonStyle", 2);
+__decorateClass([
+  n5({ type: String, attribute: "button-label" })
+], VioProduct.prototype, "buttonLabel", 2);
 __decorateClass([
   n5({ type: String })
 ], VioProduct.prototype, "retailer", 2);
@@ -14166,6 +15881,12 @@ var VioProductCarousel = class extends i4 {
     this.sponsorId = 0;
     this.productRefs = "";
     this.currency = "NOK";
+    this.layout = "";
+    this.showDescription = false;
+    this.descriptions = {};
+    this.buttonStyle = "icon";
+    this.buttonLabel = "Kj\xF8p";
+    this.resolvedLayout = "carousel";
     this.vioSlot = "";
     this.vioSlotName = "";
     this.vioScope = "";
@@ -14179,7 +15900,11 @@ var VioProductCarousel = class extends i4 {
     this.fetchError = "";
     // ── Analytics (auto) ──────────────────────────────────────────────
     // component_impression on the contract rule (≥50% visible ≥1s, once per
-    // session) + view_item_list with the rendered products. No-ops unless
+    // session) with the products shown in `commerce.items` (ADR-0041: the
+    // collector counts per-product impressions from them) + view_item_list with
+    // the rendered products. While products load the impression is not
+    // observed: it starts once they are here (or the fetch failed — slotted
+    // fallback is still an impression, without items). No-ops unless
     // Vio.analytics.start() ran.
     this.unobserveImpression = null;
     this.impressed = false;
@@ -14288,6 +16013,21 @@ var VioProductCarousel = class extends i4 {
       .scroller { padding: 0 var(--vio-space-lg, 24px) 8px; }
     }
     .scroller::-webkit-scrollbar { display: none; }
+    /* layout="list": one card under the other, as wide as the column. */
+    .viewport.list .scroller {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--vio-carousel-list-gap, 32px);
+      max-width: var(--vio-carousel-list-max-width, 480px);
+      margin: 0 auto;
+      padding: 0 var(--vio-space-lg, 24px);
+      overflow: visible;
+      scroll-snap-type: none;
+    }
+    .viewport.list .scroller vio-product,
+    .viewport.list ::slotted(*),
+    .viewport.list .skeleton { flex: 0 0 auto; width: 100%; }
+    .viewport.list .nav-btn { display: none; }
     ::slotted(*),
     vio-product {
       flex: 0 0 240px;
@@ -14360,13 +16100,32 @@ var VioProductCarousel = class extends i4 {
     }
   `;
   }
+  overrideFor(p3) {
+    const own = this.descriptions?.[String(p3.id)];
+    return typeof own === "string" ? own : void 0;
+  }
+  descriptionFor(p3) {
+    return this.overrideFor(p3) ?? cardDescription(p3.description);
+  }
+  /** The editor's text always shows (unless empty); the catalogue's only with show-description. */
+  showsDescription(p3) {
+    const own = this.overrideFor(p3);
+    return own !== void 0 ? own.trim() !== "" : this.showDescription;
+  }
+  willUpdate(changed) {
+    if (changed.has("layout") || !this.hasUpdated) {
+      const fromTheme = typeof getComputedStyle === "function" ? getComputedStyle(this).getPropertyValue("--vio-carousel-layout") : "";
+      const value = (this.layout || fromTheme).trim().replace(/^["']|["']$/g, "").toLowerCase();
+      this.resolvedLayout = value === "list" ? "list" : "carousel";
+    }
+  }
   connectedCallback() {
     super.connectedCallback();
     this.slotRegistration.connect(this.slotAttributes());
-    this.observeForAnalytics();
     if (this.productRefs.trim() || this.productIds.trim()) {
       void this.autoFetch();
     }
+    this.observeForAnalytics();
   }
   disconnectedCallback() {
     this.unobserveImpression?.();
@@ -14388,6 +16147,21 @@ var VioProductCarousel = class extends i4 {
    * sponsor of the campaign the slot shows (ADR-0034 — "the campaign of the
    * block is its sponsor"), else 0 (unknown).
    */
+  /**
+   * The campaign whose channel sells a sponsor's products here (one article =
+   * one campaign = one channel): the campaign this slot credits for that
+   * sponsor (`Vio.attribution`), then the element's own (`vio-campaign`, an
+   * ancestor's `data-vio-campaign`).
+   */
+  commerceCampaigns(sponsorId) {
+    const own = this.slotRegistration.campaignHint;
+    try {
+      const resolved = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot || null, { sponsorId, campaignId: own }).campaignId : void 0;
+      return resolved !== void 0 ? [resolved, ...own] : own;
+    } catch {
+      return own;
+    }
+  }
   effectiveSponsorId() {
     if (this.sponsorId > 0) return this.sponsorId;
     const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.effectiveSlot || null, { campaignId: this.slotRegistration.campaignHint })?.primarySponsor?.id) : NaN;
@@ -14400,6 +16174,10 @@ var VioProductCarousel = class extends i4 {
     }
     this.isLoading = true;
     this.fetchError = "";
+    if (!this.impressed) {
+      this.unobserveImpression?.();
+      this.unobserveImpression = null;
+    }
     try {
       if (this.productRefs.trim() === "" && !this.commerceKey && this.sponsorId <= 0 && !Vio.bootstrapCache) {
         try {
@@ -14421,7 +16199,7 @@ var VioProductCarousel = class extends i4 {
       }
       const fetched = await Promise.all(
         Array.from(bySponsor.entries()).map(async ([sponsorId2, ids]) => {
-          const commerce = this.commerceKey && this.productRefs.trim() === "" ? Vio.commerceWithKey(this.commerceKey) : Vio.commerceFor(sponsorId2);
+          const commerce = this.commerceKey && this.productRefs.trim() === "" ? Vio.commerceWithKey(this.commerceKey) : Vio.commerceFor(sponsorId2, { campaignId: this.commerceCampaigns(sponsorId2) });
           const products = await commerce.channel.product.getByIds({
             product_ids: ids,
             currency: this.currency,
@@ -14443,10 +16221,11 @@ var VioProductCarousel = class extends i4 {
       this.fetchError = err instanceof Error ? err.message : String(err);
     } finally {
       this.isLoading = false;
+      this.observeForAnalytics();
     }
   }
   observeForAnalytics() {
-    if (this.unobserveImpression) return;
+    if (this.unobserveImpression || this.isLoading || !this.isConnected) return;
     try {
       this.unobserveImpression = Vio.analytics.observeImpression(
         this,
@@ -14461,7 +16240,8 @@ var VioProductCarousel = class extends i4 {
           onImpression: () => {
             this.impressed = true;
             this.maybeTrackList();
-          }
+          },
+          commerce: () => this.listCommerce()
         }
       );
     } catch {
@@ -14482,18 +16262,24 @@ var VioProductCarousel = class extends i4 {
           locationId: this.effectiveSlot || this.label || void 0,
           ...this.attribution()
         },
-        commerce: {
-          items: entries.map(({ product, sponsorId: sponsorId2 }) => ({
-            productId: product.id,
-            name: product.title,
-            price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0
-          })),
-          currency: entries[0]?.product.price?.currency_code
-        },
+        commerce: this.listCommerce() ?? void 0,
         props: this.label ? { list_name: this.label } : void 0
       });
     } catch {
     }
+  }
+  /** The products on show as analytics lines (impression and view_item_list); null before they load. */
+  listCommerce() {
+    const entries = this.fetched ?? [];
+    if (entries.length === 0) return null;
+    return {
+      items: entries.map(({ product }) => ({
+        productId: product.id,
+        name: product.title,
+        price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0
+      })),
+      currency: entries[0]?.product.price?.currency_code
+    };
   }
   parseRefs(raw) {
     return raw.split(",").map((pair) => pair.trim()).filter((s4) => s4.length > 0).map((pair) => {
@@ -14534,6 +16320,10 @@ var VioProductCarousel = class extends i4 {
             name=${p3.title}
             price=${displayPrice(p3)}
             retailer=${retailer}
+            description=${this.descriptionFor(p3)}
+            ?show-description=${this.showsDescription(p3)}
+            button-style=${this.buttonStyle}
+            button-label=${this.buttonLabel}
             image-url=${img}
             ?has-variants=${(p3.variants?.length ?? 0) > 1}
             .vioSlot=${this.effectiveSlot}
@@ -14559,7 +16349,7 @@ var VioProductCarousel = class extends i4 {
         </div>
         ${this.seeAllHref ? b2`<a class="see-all" href=${this.seeAllHref}>${this.seeAllLabel}</a>` : ""}
       </div>
-      <div class="viewport">
+      <div class="viewport ${this.resolvedLayout}">
         <button
           class="nav-btn prev"
           @click=${() => this.scrollByDirection(-1)}
@@ -14611,6 +16401,24 @@ __decorateClass([
   n5({ type: String })
 ], VioProductCarousel.prototype, "currency", 2);
 __decorateClass([
+  n5({ type: String, reflect: true })
+], VioProductCarousel.prototype, "layout", 2);
+__decorateClass([
+  n5({ type: Boolean, attribute: "show-description" })
+], VioProductCarousel.prototype, "showDescription", 2);
+__decorateClass([
+  n5({ type: Object })
+], VioProductCarousel.prototype, "descriptions", 2);
+__decorateClass([
+  n5({ type: String, attribute: "button-style" })
+], VioProductCarousel.prototype, "buttonStyle", 2);
+__decorateClass([
+  n5({ type: String, attribute: "button-label" })
+], VioProductCarousel.prototype, "buttonLabel", 2);
+__decorateClass([
+  r5()
+], VioProductCarousel.prototype, "resolvedLayout", 2);
+__decorateClass([
   n5({ type: String, attribute: "vio-slot" })
 ], VioProductCarousel.prototype, "vioSlot", 2);
 __decorateClass([
@@ -14643,6 +16451,10 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductCarousel.prototype, "fetchError", 2);
+function cardDescription(description) {
+  if (!description) return "";
+  return description.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+}
 
 // src/ui/payment-redirect.ts
 var OVERLAY_CLASS = "vio-redirect-overlay";
@@ -14740,6 +16552,21 @@ function returnCancelled(detail) {
   emit("vio:payment-redirect-cancel", { ...detail, reason: "cancelled" });
 }
 
+// src/ui/vipps-cart-payment.ts
+var VIPPS_CART_PAYMENT_VAR = "--vio-vipps-cart-payment";
+function resolveVippsCartPayment(el, own) {
+  let fromTheme = "";
+  if (!own) {
+    try {
+      fromTheme = typeof getComputedStyle === "function" ? getComputedStyle(el).getPropertyValue(VIPPS_CART_PAYMENT_VAR) : "";
+    } catch {
+      fromTheme = "";
+    }
+  }
+  const value = String(own || fromTheme || "").trim().replace(/^["']|["']$/g, "").toLowerCase();
+  return value === "checkout" ? "checkout" : "express";
+}
+
 // src/core/checkout/method-taxonomy.ts
 function normalizeMethodName(name) {
   return String(name ?? "").toLowerCase().replace(/[^a-z]/g, "");
@@ -14750,7 +16577,7 @@ var NO_EXPRESS_BUTTON_METHODS = [
   ...EMBEDDED_METHODS,
   ...FORM_FIRST_WIDGET_METHODS
 ];
-var COLLECTS_OWN_ADDRESS = [...EMBEDDED_METHODS, "vipps"];
+var COLLECTS_OWN_ADDRESS = [...EMBEDDED_METHODS];
 var isEmbeddedMethod = (name) => EMBEDDED_METHODS.includes(normalizeMethodName(name));
 var isFormFirstWidgetMethod = (name) => FORM_FIRST_WIDGET_METHODS.includes(normalizeMethodName(name));
 var collectsOwnAddress = (name) => COLLECTS_OWN_ADDRESS.includes(normalizeMethodName(name));
@@ -14964,6 +16791,8 @@ var BottomSheet = class {
     this.locked = false;
     this.drag = null;
     this.dragEndedAt = -Infinity;
+    /** A finger down in the content, not yet known to be a pull (down) or a scroll. */
+    this.pull = null;
     this.onPointerDown = (e7) => {
       if (!e7.isPrimary || e7.pointerType === "mouse" && e7.button !== 0) return;
       if (this.drag || !isPhoneSheet()) return;
@@ -14989,45 +16818,54 @@ var BottomSheet = class {
       if (!drag.moving) {
         if (dy < -SLOP) return this.abandon();
         if (dy <= SLOP) return;
-        drag.moving = true;
-        const sheet2 = this.opts.sheet();
-        if (sheet2) sheet2.style.transition = "none";
-        const backdrop2 = this.opts.backdrop?.();
-        if (backdrop2) backdrop2.style.transition = "none";
+        this.startMoving(drag);
       }
-      const dt = e7.timeStamp - drag.lastT;
-      if (dt > 0) drag.velocity = 0.8 * ((e7.clientY - drag.lastY) / dt) + 0.2 * drag.velocity;
-      drag.lastY = e7.clientY;
-      drag.lastT = e7.timeStamp;
-      drag.offset = Math.max(0, dy);
-      const sheet = this.opts.sheet();
-      if (sheet) sheet.style.transform = `translateY(${drag.offset}px)`;
-      const backdrop = this.opts.backdrop?.();
-      if (backdrop && sheet) {
-        const height = sheet.getBoundingClientRect().height || window.innerHeight;
-        backdrop.style.opacity = String(Math.max(0, 1 - drag.offset / height));
-      }
+      this.follow(drag, e7.clientY, e7.timeStamp);
       if (e7.cancelable) e7.preventDefault();
     };
     this.onPointerUp = (e7) => {
       const drag = this.drag;
       if (!drag || e7.pointerId !== drag.pointerId) return;
       this.stopTracking();
-      this.drag = null;
-      if (!drag.moving) return;
-      this.dragEndedAt = performance.now();
+      this.finish(drag);
+    };
+    // ── Pull from the content (touch) ─────────────────────────────────────────
+    this.onTouchStart = (e7) => {
+      this.pull = null;
+      if (this.drag || e7.touches.length !== 1 || !isPhoneSheet()) return;
       const sheet = this.opts.sheet();
-      const height = sheet?.getBoundingClientRect().height || window.innerHeight;
-      const far = drag.offset >= Math.min(CLOSE_DISTANCE, height / 4);
-      const flick = drag.velocity >= FLICK_VELOCITY && drag.offset >= FLICK_MIN;
-      const allowed = !this.opts.canClose || this.opts.canClose();
-      this.release();
-      if ((far || flick) && allowed) {
-        if (sheet) sheet.style.transform = "translateY(100%)";
-        this.opts.close();
-      } else if (sheet) {
-        sheet.style.transform = "";
+      if (!sheet || !e7.composedPath().includes(sheet)) return;
+      if (inZone(e7, sheet, this.opts.dragZones)) return;
+      const t4 = e7.touches[0];
+      if (t4) this.pull = { startX: t4.clientX, startY: t4.clientY };
+    };
+    this.onTouchMove = (e7) => {
+      const t4 = e7.touches[0];
+      if (!t4) return;
+      if (this.pull) {
+        const dx = t4.clientX - this.pull.startX;
+        const dy = t4.clientY - this.pull.startY;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) <= SLOP) return;
+        const startY = this.pull.startY;
+        this.pull = null;
+        if (Math.abs(dx) >= Math.abs(dy) || dy < 0 || this.scrolledDown(e7)) return;
+        this.drag = { pointerId: -1, startY, lastY: startY, lastT: e7.timeStamp, velocity: 0, moving: false, offset: 0 };
+        this.startMoving(this.drag);
       }
+      const drag = this.drag;
+      if (!drag || drag.pointerId !== -1) return;
+      this.follow(drag, t4.clientY, e7.timeStamp);
+      if (e7.cancelable) e7.preventDefault();
+    };
+    this.onTouchEnd = (e7) => {
+      this.pull = null;
+      const drag = this.drag;
+      if (!drag || drag.pointerId !== -1 || e7.touches.length > 0) return;
+      this.finish(drag);
+    };
+    this.onTouchCancel = () => {
+      this.pull = null;
+      if (this.drag?.pointerId === -1) this.abandon();
     };
     this.onPointerCancel = (e7) => {
       if (!this.drag || e7.pointerId !== this.drag.pointerId) return;
@@ -15062,12 +16900,21 @@ var BottomSheet = class {
     }
     this.opts.host.addEventListener("pointerdown", this.onPointerDown);
     this.opts.host.addEventListener("click", this.onClickCapture, true);
+    this.opts.host.addEventListener("touchstart", this.onTouchStart, { passive: true });
+    this.opts.host.addEventListener("touchmove", this.onTouchMove, { passive: false });
+    this.opts.host.addEventListener("touchend", this.onTouchEnd);
+    this.opts.host.addEventListener("touchcancel", this.onTouchCancel);
   }
   closed() {
     this.opts.host.removeEventListener("pointerdown", this.onPointerDown);
     this.opts.host.removeEventListener("click", this.onClickCapture, true);
+    this.opts.host.removeEventListener("touchstart", this.onTouchStart);
+    this.opts.host.removeEventListener("touchmove", this.onTouchMove);
+    this.opts.host.removeEventListener("touchend", this.onTouchEnd);
+    this.opts.host.removeEventListener("touchcancel", this.onTouchCancel);
     this.stopTracking();
     this.drag = null;
+    this.pull = null;
     const sheet = this.opts.sheet();
     if (sheet) {
       sheet.style.transform = "";
@@ -15081,6 +16928,58 @@ var BottomSheet = class {
     if (this.locked) {
       this.locked = false;
       unlockPageScroll();
+    }
+  }
+  /** Is the content under the finger scrolled away from its top (the sheet's scroller, or one inside it)? */
+  scrolledDown(e7) {
+    const sheet = this.opts.sheet();
+    const scroller = this.opts.scroller?.() ?? sheet;
+    if (scroller && scroller.scrollTop > 0) return true;
+    for (const node of e7.composedPath()) {
+      if (node === sheet) break;
+      if (node instanceof HTMLElement && node.scrollTop > 0 && node.scrollHeight > node.clientHeight) return true;
+    }
+    return false;
+  }
+  // ── Shared by both ────────────────────────────────────────────────────────
+  /** The press is a drag now: the sheet and backdrop follow the finger without easing. */
+  startMoving(drag) {
+    drag.moving = true;
+    const sheet = this.opts.sheet();
+    if (sheet) sheet.style.transition = "none";
+    const backdrop = this.opts.backdrop?.();
+    if (backdrop) backdrop.style.transition = "none";
+  }
+  follow(drag, y3, timeStamp) {
+    const dt = timeStamp - drag.lastT;
+    if (dt > 0) drag.velocity = 0.8 * ((y3 - drag.lastY) / dt) + 0.2 * drag.velocity;
+    drag.lastY = y3;
+    drag.lastT = timeStamp;
+    drag.offset = Math.max(0, y3 - drag.startY);
+    const sheet = this.opts.sheet();
+    if (sheet) sheet.style.transform = `translateY(${drag.offset}px)`;
+    const backdrop = this.opts.backdrop?.();
+    if (backdrop && sheet) {
+      const height = sheet.getBoundingClientRect().height || window.innerHeight;
+      backdrop.style.opacity = String(Math.max(0, 1 - drag.offset / height));
+    }
+  }
+  /** Let go: close if far or fast enough (and allowed), else spring back. */
+  finish(drag) {
+    this.drag = null;
+    if (!drag.moving) return;
+    this.dragEndedAt = performance.now();
+    const sheet = this.opts.sheet();
+    const height = sheet?.getBoundingClientRect().height || window.innerHeight;
+    const far = drag.offset >= Math.min(CLOSE_DISTANCE, height / 4);
+    const flick = drag.velocity >= FLICK_VELOCITY && drag.offset >= FLICK_MIN;
+    const allowed = !this.opts.canClose || this.opts.canClose();
+    this.release();
+    if ((far || flick) && allowed) {
+      if (sheet) sheet.style.transform = "translateY(100%)";
+      this.opts.close();
+    } else if (sheet) {
+      sheet.style.transform = "";
     }
   }
   /** Give up on this press and put the sheet back where it was. */
@@ -15148,10 +17047,103 @@ function unlockPageScroll() {
   root.style.scrollBehavior = behavior;
 }
 
+// src/ui/highlights.ts
+var HIGHLIGHT_ICONS = {
+  plane: "M21.5 2.5 2.5 10l7 3m12-10.5-12 10.5m12-10.5L17 21l-7.5-8m0 0V20l3-4M5 17l-2.5 2.5M7.5 18.5 6 20",
+  heart: "M12 20.5s-8.5-5-8.5-11A4.75 4.75 0 0 1 12 6.75 4.75 4.75 0 0 1 20.5 9.5c0 6-8.5 11-8.5 11Z",
+  shirt: "M8.5 3.5 3 6l1.75 4.25L7 9.5v11h10v-11l2.25.75L21 6l-5.5-2.5a3.5 3.5 0 0 1-7 0Z",
+  truck: "M2.5 5.5h11v10h-11zM13.5 9.5h4l3 3.5v2.5h-7M6.5 18.5a2 2 0 1 0 0-.01M17 18.5a2 2 0 1 0 0-.01",
+  return: "M4 9h11.5a4.5 4.5 0 0 1 0 9H8M4 9l4-4M4 9l4 4",
+  leaf: "M5 19C5 10 10 4.5 20 4.5c0 10-5.5 15-14 15M5 19l7-7",
+  star: "m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z",
+  shield: "M12 3 4.5 6v5.5c0 4.5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5 7.5-9.5V6Z",
+  mailbox: "M3 19v-8a4 4 0 0 1 8 0v8m-8 0h18v-7a4 4 0 0 0-4-4H7m8 0V4h3M6 12h2",
+  home: "M3 11 12 4l9 7M5.5 9.5V20h13V9.5M10 20v-5h4v5",
+  pin: "M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11Zm0-8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13.5V12l3 2"
+};
+function renderHighlights(items) {
+  const list = (Array.isArray(items) ? items : []).filter((h3) => h3 && h3.title);
+  if (list.length === 0) return A;
+  return b2`<ul class="highlights" part="highlights">
+    ${list.map((h3) => {
+    const path = h3.icon ? HIGHLIGHT_ICONS[h3.icon] : void 0;
+    const icon = path ? b2`<svg class="hl-icon" viewBox="0 0 24 24" aria-hidden="true"><path d=${path}></path></svg>` : h3.icon ? b2`<img class="hl-icon" src=${h3.icon} alt="" />` : A;
+    return b2`<li class="hl" part="highlight">
+        ${icon}
+        <span class="hl-title">${h3.title}</span>
+        ${h3.text ? b2`<span class="hl-text">${h3.text}</span>` : A}
+      </li>`;
+  })}
+  </ul>`;
+}
+function highlightsStyles(scope) {
+  const display = scope === "detail" ? i`var(--vio-detail-highlights-display, grid)` : i`var(--vio-cart-highlights-display, grid)`;
+  const padding = scope === "detail" ? i`var(--vio-detail-highlights-padding, 16px 0 2px)` : i`var(--vio-cart-highlights-padding, 14px 0 2px)`;
+  return i`
+    /* Like a shop's trust strip: a thin icon, the promise in regular weight,
+       a smaller line under it — nothing bold. */
+    .highlights {
+      list-style: none;
+      margin: 0;
+      padding: ${padding};
+      display: ${display};
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      gap: 10px;
+      border-top: 1px solid var(--vio-color-border, #e5e5e5);
+    }
+    .hl { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; min-width: 0; }
+    .hl-icon {
+      width: var(--vio-detail-highlight-icon-size, 22px);
+      height: var(--vio-detail-highlight-icon-size, 22px);
+      margin-bottom: 8px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      object-fit: contain;
+    }
+    .hl-title { font-size: 12px; font-weight: 400; line-height: 1.3; letter-spacing: 0.01em; color: var(--vio-color-text, #0a0a0a); }
+    .hl-text { font-size: 10.5px; line-height: 1.35; letter-spacing: 0.01em; color: var(--vio-color-text-secondary, #666); }
+  `;
+}
+
 // src/ui/components/vio-product-detail.ts
+var layoutAttribute = {
+  fromAttribute(value) {
+    if (value === null || value.trim() === "") return null;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  },
+  toAttribute(value) {
+    return value === null || value === void 0 ? null : JSON.stringify(value);
+  }
+};
+var ADDED_TOAST_MS = 8e3;
 var STRIPE_LOGO_SRC = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
 );
+function rateIcon(method) {
+  const m2 = method.toLowerCase();
+  if (/postkasse|mailbox|brevkasse/.test(m2)) return "mailbox";
+  if (/hente|pakkeboks|automat|postkontor|pickup|utlever/.test(m2)) return "pin";
+  if (/dør|hjem|home|door/.test(m2)) return "home";
+  return "truck";
+}
+function carrierLogo(logos, carrier) {
+  if (!logos || !carrier) return "";
+  const want = carrier.trim().toLowerCase();
+  for (const [name, url] of Object.entries(logos)) if (name.trim().toLowerCase() === want && url) return url;
+  return "";
+}
+function lineIcon(name, cls = "line-icon") {
+  return b2`<svg class=${cls} viewBox="0 0 24 24" aria-hidden="true"><path d=${HIGHLIGHT_ICONS[name] ?? ""}></path></svg>`;
+}
 var VioProductDetail = class extends i4 {
   constructor() {
     super(...arguments);
@@ -15167,6 +17159,20 @@ var VioProductDetail = class extends i4 {
     this.vioCampaign = "";
     this.vioContentId = "";
     this.vioContentTitle = "";
+    this.noAddedToast = false;
+    this.vippsCartPayment = "";
+    this.gallery = "";
+    this.descriptionMode = "";
+    this.descriptionLabel = "";
+    this.highlights = [];
+    this.deliveryTime = "";
+    this.carrierLogos = {};
+    this.layout = null;
+    /** The layout the detail renders with now (resolved before each render). */
+    this.layoutNow = resolveDetailLayout(null);
+    /** The product and layout `vio:detail-layout-applied` was last said for. */
+    this.appliedFor = null;
+    this.unsubscribeLayout = null;
     this.slotRegistration = new SlotRegistration(this, "detail");
     /** What the click that opened the detail carried ('' when nothing), and for which product. */
     this.eventSlot = "";
@@ -15177,18 +17183,31 @@ var VioProductDetail = class extends i4 {
     this.product = null;
     this.sellerName = null;
     this.sellerSettled = false;
+    this.shippingFrom = null;
+    this.shippingRates = [];
     this.isLoading = false;
     this.fetchError = "";
     this.selectedOptions = {};
+    this.selectionPrompt = "";
     this.quantity = 1;
     this.activeImageIndex = 0;
     this.thumbsOverflow = false;
     this.thumbsAtStart = true;
     this.thumbsAtEnd = false;
+    this.descriptionOpen = false;
+    this.descriptionClipped = false;
+    this.galleryMode = "thumbs";
+    this.resolvedDescriptionMode = "preview";
     this.logoSquare = false;
     this.adding = false;
+    this.addedToast = null;
+    this.addedToastTimer = null;
     this.applePayOk = false;
     this.availableMethods = null;
+    this.methodsLoading = false;
+    this.vippsExpress = false;
+    /** Whose methods `availableMethods` are — another brand's are not shown while its own load. */
+    this.methodsSponsorId = 0;
     this.vippsOfficial = false;
     /** Race guard: only the latest fetch may write state (two quick taps on
      * different cards would otherwise let the slow response win). */
@@ -15197,6 +17216,10 @@ var VioProductDetail = class extends i4 {
     this.optMapCache = /* @__PURE__ */ new WeakMap();
     /** Pre-prepared Apple Pay handle — show() fires synchronously on tap. */
     this.applePayHandle = null;
+    /** The amount `applePayHandle`'s sheet shows (product × quantity when it was prepared). */
+    this.applePayAmount = null;
+    /** The amount the latest preparation was asked for — a newer one supersedes it. */
+    this.applePayAskedFor = null;
     /** Keyboard and focus while open: Escape closes, Tab stays inside, focus returns to the opener. */
     this.dialogFocus = new DialogFocus({
       host: this,
@@ -15238,6 +17261,61 @@ var VioProductDetail = class extends i4 {
       this.show();
       void this.fetchProduct();
     };
+    /** Stops reporting the taps on the buttons (`vio:cta-click`). */
+    this.stopCtaClicks = null;
+    /** The product open when the shopper last changed photo: `gallery_swipe` once per open. */
+    this.gallerySwipedFor = null;
+    /** A finger, a pen or a wheel is on the carousel: its scroll is the shopper's swipe, not the SDK's. */
+    this.galleryGesture = false;
+    /**
+     * What a tap on a button of the detail says (`vio:cta-click`, README
+     * «Button tracking»): the open product and the variant chosen (when every
+     * option is), its sponsor and attribution, and the layout shown (only a
+     * non-default one). `gallery_swipe` only once per open product.
+     */
+    this.ctaContext = (cta) => {
+      const product = this.product;
+      if (cta === "gallery_swipe") {
+        if (!product || this.gallerySwipedFor === product) return null;
+        this.gallerySwipedFor = product;
+      }
+      const a3 = this.attribution();
+      const variants = Array.isArray(product?.variants) ? product.variants : [];
+      const variant = product && (variants.length === 1 || !this.missingOption()) ? this.selectedVariant() : null;
+      const layout = layoutOriginOf(this.layoutNow);
+      return {
+        productId: product?.id ?? (this.productId || void 0),
+        productVariantId: variant?.id,
+        sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+        campaignId: a3.campaignId,
+        slot: a3.slot,
+        contentId: a3.contentId,
+        contentTitle: a3.contentTitle,
+        componentTemplateId: a3.componentTemplateId,
+        layout: layout.layoutId ? layout : null
+      };
+    };
+    /** The carousel scrolled under the shopper's finger: their first swipe of this product. */
+    this.onGalleryGesture = () => {
+      this.galleryGesture = true;
+    };
+    /** The cart changed (another tab, the drawer): the line under Vipps counts it again. */
+    this.boundCartChange = () => {
+      if (this.open) this.requestUpdate();
+    };
+    /** The photo in view is the active one (dots, Apple Pay sheet, events). */
+    this.onCarouselScroll = () => {
+      if (this.galleryGesture) {
+        this.galleryGesture = false;
+        emitCta(this, "detail", "gallery_swipe", this.ctaContext);
+      }
+      const track = this.carouselTrack();
+      const step = this.carouselStep(track);
+      if (!track || !step) return;
+      const last = track.children.length - 1;
+      const idx = Math.min(last, Math.max(0, Math.round(track.scrollLeft / step)));
+      if (idx !== this.activeImageIndex) this.activeImageIndex = idx;
+    };
     this.onThumbsScroll = () => {
       const row = this.thumbRow();
       if (!row) return;
@@ -15246,6 +17324,14 @@ var VioProductDetail = class extends i4 {
       if (atStart !== this.thumbsAtStart) this.thumbsAtStart = atStart;
       if (atEnd !== this.thumbsAtEnd) this.thumbsAtEnd = atEnd;
     };
+  }
+  /**
+   * The layout this detail applies (0.34): `{ id, revision, experimentId?,
+   * variantId?, sections, adjusted, source }` — `source` is `element` (its own
+   * `layout`), `global` (`Vio.configureDetail`) or `default`. A copy.
+   */
+  get appliedLayout() {
+    return copyAppliedLayout(resolveDetailLayout(this.layout));
   }
   /** The card's context applies to the product it opened — not to one the host opened by hand later. */
   get fromCard() {
@@ -15267,6 +17353,21 @@ var VioProductDetail = class extends i4 {
   get activeCampaignHint() {
     const own = this.slotRegistration.campaignHint;
     return this.fromCard && this.eventCampaignId !== void 0 ? [this.eventCampaignId, ...own] : own;
+  }
+  /**
+   * The campaign whose channel sells the open product (one article = one
+   * campaign = one channel): the campaign its events credit, then the opening
+   * click's and this element's own — so the product, its rates and its
+   * seller are read with that channel's key, the one the cart is created on.
+   */
+  commerceCampaigns() {
+    const hint = this.activeCampaignHint;
+    try {
+      const resolved = this.attribution().campaignId;
+      return typeof resolved === "number" ? [resolved, ...hint] : hint;
+    } catch {
+      return hint;
+    }
   }
   slotAttributes() {
     return {
@@ -15293,7 +17394,8 @@ var VioProductDetail = class extends i4 {
     };
   }
   static {
-    this.styles = i`
+    this.styles = [
+      i`
     :host { display: contents; }
 
     .backdrop {
@@ -15552,6 +17654,103 @@ var VioProductDetail = class extends i4 {
       .thumbs.overflows .thumbs-arrow { display: flex; }
     }
 
+    /* Carousel (gallery="carousel" / theme detailGallery): the same box as the
+       main image — proportion, fit, background, inset — one per photo, in a
+       row that snaps. --vio-detail-carousel-peek shows the edge of the next. */
+    .carousel {
+      position: relative;
+      margin-inline: calc(
+        var(--vio-detail-image-inset, var(--vio-detail-padding-x, var(--vio-space-lg, 24px))) -
+          var(--vio-detail-padding-x, var(--vio-space-lg, 24px))
+      );
+    }
+    .carousel-track {
+      display: flex;
+      gap: var(--vio-detail-carousel-gap, 0px);
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+      /* Sideways is the carousel's, up and down the panel's; no double-tap
+         zoom delay. The sheet only drags from its top bar, never from here. */
+      touch-action: pan-x pan-y;
+      border-radius: var(--vio-detail-image-radius, 0);
+    }
+    .carousel-track::-webkit-scrollbar { display: none; }
+    .carousel-slide {
+      flex: 0 0 calc(100% - var(--vio-detail-carousel-peek, 0px));
+      aspect-ratio: var(--vio-detail-image-aspect, 4 / 5);
+      max-height: var(--vio-detail-image-max-height, 85vh);
+      background: var(--vio-detail-image-bg, var(--vio-color-surface-muted, #f2f2f2));
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      overflow: hidden;
+    }
+    .carousel-slide img {
+      display: block;
+      /* A press on a photo is a swipe: no image drag, no long-press menu, no selection. */
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-user-drag: none;
+      -webkit-touch-callout: none;
+      width: 100%;
+      height: 100%;
+      object-fit: var(--vio-detail-image-fit, cover);
+      object-position: var(--vio-detail-image-position, center);
+      transform: scale(var(--vio-detail-image-zoom, 1));
+    }
+    /* One dot per photo over the bottom of the image: there is more than one,
+       and which one this is. White with a shadow reads on light and dark photos. */
+    .carousel-dots {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 12px;
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      pointer-events: none;
+    }
+    .carousel-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--vio-detail-dot-color, rgba(255, 255, 255, 0.6));
+      box-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+    .carousel-dot.active {
+      background: var(--vio-detail-dot-active-color, #fff);
+      transform: scale(1.35);
+    }
+    .carousel-arrow {
+      display: none;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--vio-color-border, #e5e5e5);
+      background: var(--vio-color-surface, #fff);
+      color: var(--vio-color-text, #0a0a0a);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font: 18px/1 sans-serif;
+    }
+    .carousel-arrow.prev { left: 12px; }
+    .carousel-arrow.next { right: 12px; }
+    .carousel-arrow:disabled { visibility: hidden; }
+    @media (hover: hover) and (pointer: fine) {
+      .carousel-arrow { display: flex; }
+    }
+
     /* Info column */
     .info { display: flex; flex-direction: column; gap: var(--vio-detail-info-gap, 20px); min-width: 0; }
     .brand {
@@ -15569,11 +17768,63 @@ var VioProductDetail = class extends i4 {
       margin: 0;
       letter-spacing: -0.01em;
     }
+    /* «Frakt & retur»: same fold as «Beskrivelse», with a small list of rates.
+       --vio-detail-shipping-returns-display: none hides it (theme detailShippingReturnsDisplay). */
+    .shipping-returns { display: var(--vio-detail-shipping-returns-display, block); }
+    .description.shipping-returns-body { white-space: normal; }
+    .shipping-returns-body p { margin: 0 0 10px; }
+    .sr-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: var(--vio-tracking-label, 0.1em);
+      color: var(--vio-color-text-secondary, #666);
+      font-weight: 600;
+      margin: 4px 0 6px;
+    }
+    .sr-rates { list-style: none; margin: 0 0 10px; padding: 0; }
+    /* One row per carrier: «Helthjem» over «Til postkasse/dørmatte», price right. */
+    .sr-rates li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--vio-color-border, #eee);
+    }
+    .sr-rates li:last-child { border-bottom: none; }
+    .sr-rate { flex: 1; display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+    .line-icon { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+    .sr-icon { flex: 0 0 auto; width: 20px; height: 20px; color: var(--vio-color-text, #0a0a0a); }
+    .sr-line { display: flex; align-items: center; gap: 12px; }
+    /* A carrier's logo in a fixed box, so rows line up whatever its shape. */
+    .sr-logo { flex: 0 0 auto; width: var(--vio-detail-carrier-logo-width, 56px); height: 24px; object-fit: contain; object-position: left center; }
+    .sr-carrier { font-weight: 600; color: var(--vio-color-text, #0a0a0a); }
+    .sr-method { font-size: 13px; }
+    .sr-time { margin: 0 0 14px; }
+    .sr-price { font-weight: 600; color: var(--vio-color-text, #0a0a0a); white-space: nowrap; }
+    .sr-links { display: flex; gap: 16px; padding-left: 32px; }
+    .sr-links a { color: inherit; }
+    /* Name and price read as one block (stock on the name's line, right);
+       the sizes come after a wider gap, then shipping/returns by the buttons. */
+    .headline { display: flex; flex-direction: column; gap: var(--vio-detail-headline-gap, 8px); }
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .title-row .name { min-width: 0; }
+    .title-row .stock { flex: 0 0 auto; white-space: nowrap; }
     .price-row {
       display: flex;
       align-items: baseline;
       gap: 16px;
     }
+    /* The sizes follow the price closely: they are the next thing to do. */
+    .headline + .purchase { margin-top: calc(var(--vio-detail-sizes-gap, 2px) - var(--vio-detail-info-gap, 20px)); }
+    /* A layout with the sizes apart from the buy zone (0.34): they follow the
+       price closely instead, and the buy zone keeps the normal gap. */
+    .headline + .buy-options.options-apart { margin-top: calc(var(--vio-detail-sizes-gap, 2px) - var(--vio-detail-info-gap, 20px)); }
+    .headline + .purchase.options-apart { margin-top: 0; }
     .price {
       font-size: var(--vio-detail-price-size, 24px);
       font-weight: var(--vio-detail-price-weight, 700);
@@ -15582,6 +17833,11 @@ var VioProductDetail = class extends i4 {
       font-size: 16px;
       color: var(--vio-color-text-tertiary, #999);
       text-decoration: line-through;
+    }
+    .delivery-note {
+      margin-top: calc(var(--vio-detail-info-gap, 20px) * -0.6);
+      font-size: 13px;
+      color: var(--vio-color-text-secondary, #666);
     }
     .stock {
       font-size: 12px;
@@ -15594,8 +17850,15 @@ var VioProductDetail = class extends i4 {
     .stock.out-of-stock { color: var(--vio-color-text-tertiary, #999); }
 
     /* Option pickers */
-    .option-group { display: flex; flex-direction: column; gap: 6px; }
+    .option-group { display: flex; flex-direction: column; gap: 8px; }
+    /* The prompt sits on the label's own line: tapping a buy button before
+       choosing must not push the pills down under the shopper's finger. */
     .option-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 1.4em;
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: var(--vio-tracking-label, 0.1em);
@@ -15641,6 +17904,19 @@ var VioProductDetail = class extends i4 {
       background: repeating-linear-gradient(-45deg, #fafafa, #fafafa 5px, #f0f0f0 5px, #f0f0f0 10px);
     }
     .option-pill.unavailable:hover { border-color: var(--vio-color-border, #e5e5e5); }
+    /* The value chosen, beside the option's name: «Størrelse: M». */
+    .option-chosen { color: var(--vio-color-text, #0a0a0a); font-weight: 700; }
+    /* A buy button was tapped before choosing: say what is missing. */
+    .option-prompt {
+      text-transform: none;
+      letter-spacing: normal;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--vio-color-accent, #c14a3b);
+    }
+    .option-group.needs-choice .option-pill:not(.unavailable) {
+      border-color: var(--vio-color-accent, #c14a3b);
+    }
 
     /* The buy zone: Vipps first, then quantity + add to cart, then the other
        ways to pay. --vio-detail-buy-position: sticky pins it to the bottom of
@@ -15657,6 +17933,37 @@ var VioProductDetail = class extends i4 {
       box-shadow: var(--vio-detail-buy-shadow, none);
     }
     .buy > * { margin-top: 0 !important; }
+    /* The buy zone and the description, apart from the name, price and stock:
+       a pinned buy zone can slide up over what is in this box (the
+       description) but never above it — never over the name, the price or
+       the stock line (Mote & Livsstil, 2026-10-28). */
+    .purchase { display: flex; flex-direction: column; gap: var(--vio-detail-info-gap, 20px); }
+    /* The pickers live in the buy zone: when it is pinned to the bottom of the
+       panel (desktop, or a host's sticky), it can never cover them — they
+       travel with the buttons they gate (Mote & Livsstil, 2026-10-28). */
+    .buy-options {
+      display: flex;
+      flex-direction: column;
+      gap: var(--vio-detail-info-gap, 20px);
+      padding-bottom: 4px;
+    }
+    /* Where the express buttons go while the brand's methods load: neutral,
+       the height of one button, no method named. */
+    .buy-pending {
+      height: var(--vio-detail-button-height, 52px);
+      border-radius: var(--vio-detail-button-radius, 0);
+      background: linear-gradient(
+        100deg,
+        var(--vio-color-surface-muted, #f1f1f1) 30%,
+        rgba(255, 255, 255, 0.65) 50%,
+        var(--vio-color-surface-muted, #f1f1f1) 70%
+      );
+      background-size: 200% 100%;
+      animation: vio-skeleton-shimmer 1.4s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .buy-pending { animation: none; background: var(--vio-color-surface-muted, #f1f1f1); }
+    }
     /* Under the buttons: who the shopper is buying from. */
     .seller-note {
       margin: 2px 0 0;
@@ -15789,6 +18096,14 @@ var VioProductDetail = class extends i4 {
     }
     .buy-vipps:hover:not(:disabled) { background: #ec4f1c; }
     .buy-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Under the Express button: what happens in the app. */
+    .vipps-note {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--vio-color-text-secondary, #666);
+      text-align: center;
+    }
     /* Vipps' own button (web component) — same slot, their drawing. */
     .buy-vipps-official { display: block; width: 100%; margin-top: 10px; cursor: pointer; }
     /* Apple Pay express button — black, per Apple's button guidelines. Only
@@ -15840,6 +18155,61 @@ var VioProductDetail = class extends i4 {
       transition: transform 0.15s ease;
     }
     .description-block[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+    /* «Beskrivelse» with a preview: the same heading as the folds, then the
+       first lines fading out, then «Les mer». */
+    .desc-head {
+      all: unset;
+      box-sizing: border-box;
+      width: 100%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0 6px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: var(--vio-tracking-label, 0.1em);
+      color: var(--vio-color-text-secondary, #666);
+      font-weight: 600;
+      font-family: inherit;
+    }
+    .description-preview.clipped .desc-head::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(45deg) translateY(-2px);
+      transition: transform 0.15s ease;
+    }
+    .description-preview.open .desc-head::after { transform: rotate(-135deg) translateY(-2px); }
+    .description-preview .description { padding-bottom: 6px; }
+    .description-preview.folded .desc-head, .description-preview.open:not(.clipped) .desc-head { padding-bottom: 14px; }
+    .description-preview.folded.open .desc-head { padding-bottom: 6px; }
+    .description-preview.folded .description { padding-bottom: 14px; }
+    .description-preview:not(.clipped) .description { padding-bottom: 14px; }
+    .description.collapsed {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: var(--vio-detail-description-preview-lines, 3);
+      line-clamp: var(--vio-detail-description-preview-lines, 3);
+      overflow: hidden;
+      cursor: pointer;
+      -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
+      mask-image: linear-gradient(to bottom, #000 45%, transparent);
+    }
+    .desc-more {
+      all: unset;
+      cursor: pointer;
+      display: inline-block;
+      margin: 0 0 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--vio-color-text, #0a0a0a);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-family: inherit;
+    }
     .description {
       font-size: 14px;
       line-height: 1.6;
@@ -15847,15 +18217,13 @@ var VioProductDetail = class extends i4 {
       padding-bottom: 14px;
       white-space: pre-line;
     }
-    /* Desktop: the description above, the buy zone at the bottom of the panel
-       (sticky). Phones keep the order as it is: buy, then the description. */
+    /* Same order on every screen: buy, then the description at the very
+       bottom (folded). Hosts that want the buy zone pinned can still set
+       --vio-detail-buy-position: sticky. */
     @media (min-width: 601px) {
-      .description-block { order: 1; }
       .buy {
-        order: 2;
-        position: var(--vio-detail-buy-position, sticky);
+        position: var(--vio-detail-buy-position, static);
         padding: var(--vio-detail-buy-padding, 12px 0 16px);
-        box-shadow: var(--vio-detail-buy-shadow, 0 -1px 0 var(--vio-color-border, #e5e5e5));
       }
     }
 
@@ -15895,24 +18263,81 @@ var VioProductDetail = class extends i4 {
         background: var(--vio-color-surface-muted, #f1f1f1);
       }
     }
+    /* «Lagt i handlekurven»: above the page, below where a thumb reaches. */
+    .added-toast {
+      position: fixed;
+      left: 50%;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 1102;
+      width: min(420px, calc(100vw - 32px));
+      box-sizing: border-box;
+      padding: 14px 16px;
+      background: var(--vio-color-surface, #fff);
+      color: var(--vio-color-text, #0a0a0a);
+      border: 1px solid var(--vio-color-border, #e5e5e5);
+      border-radius: var(--vio-radius-lg, 8px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+      font-family: var(--vio-font-sans, -apple-system, sans-serif);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .added-toast-text { font-size: 14px; font-weight: 600; }
+    .added-toast-text::before { content: '✓ '; color: #2e7d32; }
+    .added-toast-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .added-toast-actions button {
+      min-height: 44px;
+      padding: 0 12px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: var(--vio-detail-button-radius, 0);
+    }
+    .added-toast-checkout {
+      background: var(--vio-color-text, #0a0a0a);
+      color: var(--vio-color-text-on-primary, #fff);
+      border: 1px solid var(--vio-color-text, #0a0a0a);
+    }
+    .added-toast-continue {
+      background: transparent;
+      color: var(--vio-color-text, #0a0a0a);
+      border: 1px solid var(--vio-color-border, #e5e5e5);
+    }
+
     .error {
       padding: 80px 24px;
       text-align: center;
       color: var(--vio-color-accent, #c14a3b);
       font-size: 14px;
     }
-  `;
+  `,
+      highlightsStyles("detail")
+    ];
   }
   connectedCallback() {
     super.connectedCallback();
+    Vio.cart.addEventListener("change", this.boundCartChange);
+    this.unsubscribeLayout?.();
+    this.unsubscribeLayout = onGlobalDetailLayoutChange(() => this.requestUpdate());
     this.slotRegistration.connect(this.slotAttributes());
     void this.loadVippsButton();
     document.addEventListener("vio:product-click", this.boundProductClick);
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = trackCtaClicks(this, "detail", this.ctaContext);
   }
   disconnectedCallback() {
+    if (this.addedToastTimer) clearTimeout(this.addedToastTimer);
+    this.addedToastTimer = null;
     document.removeEventListener("vio:product-click", this.boundProductClick);
+    Vio.cart.removeEventListener("change", this.boundCartChange);
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = null;
     this.slotRegistration.clear();
     this.bottomSheet.disconnect();
+    this.unsubscribeLayout?.();
+    this.unsubscribeLayout = null;
     super.disconnectedCallback();
   }
   updated(changed) {
@@ -15920,12 +18345,83 @@ var VioProductDetail = class extends i4 {
       this.dialogFocus.update(this.open);
       this.bottomSheet.update(this.open);
     }
-    if (changed.has("product") || changed.has("open")) this.measureThumbs();
-    if (changed.has("activeImageIndex")) this.revealActiveThumb();
+    if (changed.has("product") || changed.has("open")) {
+      this.measureThumbs();
+      this.measureDescription();
+    }
+    if ((changed.has("quantity") || changed.has("selectedOptions")) && this.product && this.applePayAskedFor !== null) {
+      if (this.unitPrice * this.quantity !== this.applePayAskedFor) this.prepareApplePaySheet();
+    }
+    if (changed.has("activeImageIndex")) {
+      this.revealActiveThumb();
+      this.revealActiveSlide();
+    }
+    if (changed.has("selectedOptions") && this.galleryMode === "carousel") {
+      if (this.activeImageIndex !== 0) this.activeImageIndex = 0;
+      else this.revealActiveSlide();
+    }
     this.measureLogo();
+    this.announceLayout();
     if (changed.has("vioSlot") || changed.has("vioSlotName") || changed.has("vioScope") || changed.has("vioScopeName") || changed.has("vioCampaign")) {
       this.slotRegistration.sync(this.slotAttributes());
     }
+  }
+  willUpdate(changed) {
+    this.layoutNow = resolveDetailLayout(this.layout);
+    if (changed.has("gallery") || changed.has("open") && this.open) this.galleryMode = this.resolveGalleryMode();
+    if (changed.has("descriptionMode") || changed.has("open") && this.open) {
+      const value = this.themeChoice(this.descriptionMode, "--vio-detail-description-mode");
+      this.resolvedDescriptionMode = value === "folded" || value === "open" ? value : "preview";
+    }
+  }
+  /**
+   * `vio:detail-layout-applied` (bubbles, composed), with the applied layout,
+   * each time a product renders with a layout it has not been shown with yet:
+   * every open of a product, and every change of layout while it is open.
+   */
+  announceLayout() {
+    const product = this.product;
+    if (!product || this.fetchError) return;
+    const signature = layoutSignature(this.layoutNow);
+    if (this.appliedFor && this.appliedFor.product === product && this.appliedFor.signature === signature) return;
+    this.appliedFor = { product, signature };
+    this.dispatchEvent(
+      new CustomEvent("vio:detail-layout-applied", {
+        bubbles: true,
+        composed: true,
+        detail: { ...copyAppliedLayout(this.layoutNow), productId: product.id, sponsorId: this.sponsorId }
+      })
+    );
+  }
+  /** An option as the element says it, else as the theme's custom property says it (lower case, unquoted). */
+  themeChoice(own, cssVar) {
+    const fromTheme = typeof getComputedStyle === "function" ? getComputedStyle(this).getPropertyValue(cssVar) : "";
+    return (own || fromTheme).trim().replace(/^["']|["']$/g, "").toLowerCase();
+  }
+  /** The attribute wins; else the theme's `--vio-detail-gallery`; else thumbnails. */
+  resolveGalleryMode() {
+    return this.themeChoice(this.gallery, "--vio-detail-gallery") === "carousel" ? "carousel" : "thumbs";
+  }
+  carouselTrack() {
+    return this.renderRoot.querySelector(".carousel-track");
+  }
+  /** One photo's width plus the gap (with a peek a photo is narrower than the row). */
+  carouselStep(track) {
+    const slide = track?.firstElementChild;
+    if (!track || !slide || slide.offsetWidth === 0) return 0;
+    return slide.offsetWidth + (parseFloat(getComputedStyle(track).columnGap) || 0);
+  }
+  /** Bring the active photo into view — only when it is not already the one a swipe is on. */
+  revealActiveSlide() {
+    const track = this.carouselTrack();
+    const step = this.carouselStep(track);
+    if (!track || !step) return;
+    const target = Math.min(this.activeImageIndex * step, track.scrollWidth - track.clientWidth);
+    if (Math.abs(track.scrollLeft - target) > step / 2) track.scrollTo({ left: target });
+  }
+  stepCarousel(direction) {
+    const last = this.allImages().length - 1;
+    this.activeImageIndex = Math.min(last, Math.max(0, this.activeImageIndex + direction));
   }
   thumbRow() {
     return this.renderRoot.querySelector(".gallery-thumbs");
@@ -15955,6 +18451,7 @@ var VioProductDetail = class extends i4 {
   }
   show() {
     this.open = true;
+    this.hideAddedToast();
   }
   close() {
     this.open = false;
@@ -15968,9 +18465,12 @@ var VioProductDetail = class extends i4 {
         this.product = null;
         this.sellerName = null;
         this.sellerSettled = false;
+        this.shippingFrom = null;
         this.selectedOptions = {};
+        this.selectionPrompt = "";
         this.quantity = 1;
         this.activeImageIndex = 0;
+        this.descriptionOpen = false;
         this.fetchError = "";
       }
     }, 400);
@@ -15986,13 +18486,14 @@ var VioProductDetail = class extends i4 {
     this.fetchError = "";
     this.sellerName = null;
     this.sellerSettled = false;
+    this.shippingFrom = null;
     let products = null;
     let lastError = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const activeCurrency = getGlobalCurrency() || this.currency;
         this.currency = activeCurrency;
-        const commerce = Vio.commerceFor(this.sponsorId);
+        const commerce = Vio.commerceFor(this.sponsorId, { campaignId: this.commerceCampaigns() });
         products = await commerce.channel.product.getByIds({
           product_ids: [productIdNum],
           currency: activeCurrency,
@@ -16015,15 +18516,23 @@ var VioProductDetail = class extends i4 {
     this.optMapCache = /* @__PURE__ */ new WeakMap();
     this.product = products?.[0] ?? null;
     if (this.product) void this.loadSeller(productIdNum, seq);
+    if (this.product) void this.loadShippingFrom(productIdNum, seq);
     if (this.product) {
       try {
         const price = Number(
           this.product.price?.amount_incl_taxes ?? this.product.price?.amount
         );
+        const shown = layoutOriginOf(resolveDetailLayout(this.layout));
         Vio.analytics.track("view_item", {
           context: {
             sponsorId: this.sponsorId > 0 ? Number(this.sponsorId) : void 0,
-            ...this.attribution()
+            ...this.attribution(),
+            ...shown.layoutId ? {
+              layoutId: shown.layoutId,
+              layoutRevision: shown.layoutRevision ?? "",
+              experimentId: shown.experimentId,
+              variantId: shown.variantId
+            } : {}
           },
           commerce: {
             items: [
@@ -16047,16 +18556,11 @@ var VioProductDetail = class extends i4 {
       const initial = {};
       for (const opt of this.product.options ?? []) {
         const values = normalizeValues(opt.values);
-        if (values.length > 0) initial[opt.name] = values[0];
+        if (values.length === 1) initial[opt.name] = values[0];
       }
       this.selectedOptions = initial;
-      void Vio.checkout.prepareApplePayFor(this.unitPrice * this.quantity, this.currency).then((handle) => {
-        this.applePayHandle = handle;
-        this.applePayOk = handle.available;
-      }).catch(() => {
-        this.applePayHandle = null;
-        this.applePayOk = false;
-      });
+      this.selectionPrompt = "";
+      this.prepareApplePaySheet();
       void this.loadAvailablePaymentMethods();
     }
     this.isLoading = false;
@@ -16065,22 +18569,41 @@ var VioProductDetail = class extends i4 {
   async loadAvailablePaymentMethods() {
     const spId = this.sponsorId || (typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.activeSlot || null, { campaignId: this.activeCampaignHint })?.primarySponsor?.id) : 0) || globalThis.__VIO_SPONSOR_ID__;
     if (!spId) return;
+    if (spId !== this.methodsSponsorId) {
+      this.availableMethods = null;
+      this.vippsExpress = false;
+    }
+    this.methodsSponsorId = spId;
+    this.methodsLoading = true;
     try {
       const methods = await Vio.checkout.getAvailablePaymentMethods(spId);
       if (Array.isArray(methods)) {
         this.availableMethods = methods.map((m2) => m2.name);
+        const vipps = methods.find(
+          (m2) => String(m2?.name ?? "").toLowerCase() === "vipps"
+        );
+        this.vippsExpress = !!vipps && vipps.config?.find((c4) => c4?.name === "express")?.value !== "false";
       } else {
         this.availableMethods = null;
+        this.vippsExpress = false;
       }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioProductDetail] Failed to load payment methods:", err);
       }
       this.availableMethods = null;
+      this.vippsExpress = false;
+    } finally {
+      this.methodsLoading = false;
     }
+  }
+  /** The methods are still on their way: a placeholder stands where the buttons go. */
+  get methodsPending() {
+    return this.methodsLoading && this.availableMethods === null;
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
   methodEnabled(...names) {
+    if (this.methodsPending) return false;
     return isMethodEnabled(this.availableMethods, ...names);
   }
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -16269,26 +18792,93 @@ var VioProductDetail = class extends i4 {
     const price = v2?.price ?? this.product?.price;
     return price?.amount_incl_taxes ?? price?.amount ?? 0;
   }
+  /**
+   * There is something to pay for — whether the express buttons show. With
+   * every option chosen, the chosen variant's price; before that, the
+   * product's or any variant's: the first variant (what `unitPrice` falls
+   * back to) at 0 must not hide Vipps for a size that costs 699.
+   */
+  get hasPrice() {
+    if (!this.missingOption()) return this.unitPrice > 0;
+    const priceOf = (p3) => Number(p3?.amount_incl_taxes ?? p3?.amount ?? 0);
+    return priceOf(this.product?.price) > 0 || (this.product?.variants ?? []).some((v2) => priceOf(v2.price) > 0);
+  }
   get compareAt() {
     const v2 = this.selectedVariant();
     const price = v2?.price ?? this.product?.price;
     return price?.compare_at_incl_taxes ?? price?.compare_at ?? null;
   }
+  /** The options the shopper has to choose (those with values), in order. */
+  choosableOptions() {
+    return (this.product?.options ?? []).filter((o7) => normalizeValues(o7.values).length > 0);
+  }
+  /** The first option still without a value, or null when every one is chosen. */
+  missingOption() {
+    return this.choosableOptions().find((o7) => !String(this.selectedOptions[o7.name] ?? "").trim()) ?? null;
+  }
+  /**
+   * Units that can be sold. With every option chosen, the chosen variant's;
+   * before that, the most any variant still matching the partial choice has
+   * — so the stepper and «Utsolgt» do not speak for a variant (the first
+   * one) the shopper never picked.
+   */
   get availableQuantity() {
+    if (this.missingOption() && Array.isArray(this.product?.variants) && this.product.variants.length > 0) {
+      const sel = this.selectedOptions;
+      const qtys = this.product.variants.filter((v3) => this.variantMatchesSelection(v3, sel)).map((v3) => this.variantSellableQty(v3));
+      return qtys.length > 0 ? Math.max(0, ...qtys) : 0;
+    }
     const v2 = this.selectedVariant();
     if (v2) return this.variantSellableQty(v2);
     return this.product?.quantity ?? 0;
   }
+  /**
+   * «Få igjen — N stk» only for the variant actually chosen: before a size is
+   * picked the count belonged to the first variant, which said «Få igjen» of
+   * a product with plenty of other sizes.
+   */
   stockLabel() {
     const qty = this.availableQuantity;
     if (qty <= 0) return { text: "Utsolgt", cls: "out-of-stock" };
-    if (qty <= 3) return { text: `F\xE5 igjen \u2014 ${qty} stk`, cls: "low-stock" };
+    if (qty <= 3 && !this.missingOption()) return { text: `F\xE5 igjen \u2014 ${qty} stk`, cls: "low-stock" };
     return { text: "P\xE5 lager", cls: "in-stock" };
+  }
+  /** «Velg størrelse» for a size, «Velg farge» for a colour… */
+  promptFor(option) {
+    const name = String(option.name ?? "").trim();
+    if (!name || /^(st(ø|o)rrelse|str\.?|size)$/i.test(name)) return "Velg st\xF8rrelse";
+    return `Velg ${name.toLowerCase()}`;
+  }
+  /**
+   * Every buy button goes through here first: with an option not chosen yet,
+   * nothing is added or paid — the picker says what is missing and comes
+   * into view (it sits right above the buttons, inside the buy zone).
+   */
+  requireSelection() {
+    const missing = this.missingOption();
+    if (!missing) {
+      this.selectionPrompt = "";
+      return true;
+    }
+    this.selectionPrompt = missing.name;
+    void this.updateComplete.then(() => {
+      const group = this.renderRoot.querySelector(".option-group.needs-choice");
+      const apart = !!group?.closest(".options-apart");
+      group?.scrollIntoView?.({ behavior: "smooth", block: apart ? "center" : "nearest" });
+    });
+    return false;
   }
   /** Pick an option value. If the exact combination doesn't exist, jump to an
    * in-stock variant that carries the value and adopt its full option map
    * (keeps the selection always resolvable to a real variant). */
   selectOption(optionName, value) {
+    this.applyOption(optionName, value);
+    if (this.selectionPrompt && !this.missingOption()) this.selectionPrompt = "";
+    else if (this.selectionPrompt) this.selectionPrompt = this.missingOption()?.name ?? "";
+    const max = this.availableQuantity;
+    if (max > 0 && this.quantity > max) this.quantity = max;
+  }
+  applyOption(optionName, value) {
     const newSelection = { ...this.selectedOptions, [optionName]: value };
     const exactInStock = this.product?.variants?.find(
       (v2) => this.variantMatchesSelection(v2, newSelection) && this.variantSellableQty(v2) > 0
@@ -16344,18 +18934,20 @@ var VioProductDetail = class extends i4 {
     const variant = this.selectedVariant();
     const sponsorName = resolveSponsorIdentity(this.sponsorId)?.name || void 0;
     const { campaignId, slot, contentId, componentTemplateId, contentUrl, contentTitle } = this.attribution();
+    const layout = layoutOriginOf(this.layoutNow);
     Vio.cart.addProduct({
       product: this.product,
       sponsorId: this.sponsorId,
       sponsorName,
       quantity: this.quantity,
       variantId: variant?.id,
-      origin: { campaignId, slot, contentId, componentKind: componentTemplateId, contentUrl, contentTitle }
+      origin: { campaignId, slot, contentId, componentKind: componentTemplateId, contentUrl, contentTitle, ...layout }
     });
     return variant?.id;
   }
   async addToCart() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.requireSelection()) return;
     this.adding = true;
     try {
       const variantId = this.addCurrentToCart();
@@ -16368,14 +18960,54 @@ var VioProductDetail = class extends i4 {
             sponsorId: this.sponsorId,
             quantity: this.quantity,
             variantId,
-            ...this.attribution()
+            ...this.attribution(),
+            // The detail layout of the add (0.34) — `variantId` above is the product's.
+            ...this.layoutNow.source !== "default" ? { layout: layoutOriginOf(this.layoutNow) } : {}
           }
         })
       );
+      this.showAddedToast();
       this.close();
     } finally {
       this.adding = false;
     }
+  }
+  /** The toast after an add; it goes by itself after a while. */
+  showAddedToast() {
+    if (this.noAddedToast) return;
+    this.addedToast = {
+      sponsorId: this.sponsorId,
+      detail: { sponsorId: this.sponsorId, express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
+    };
+    if (this.addedToastTimer) clearTimeout(this.addedToastTimer);
+    this.addedToastTimer = setTimeout(() => this.hideAddedToast(), ADDED_TOAST_MS);
+  }
+  hideAddedToast() {
+    if (this.addedToastTimer) clearTimeout(this.addedToastTimer);
+    this.addedToastTimer = null;
+    this.addedToast = null;
+  }
+  /** «Til kassen»: the checkout of the brand just added to — the host opens it on `vio:checkout-open`, as from the cart. */
+  toastToCheckout() {
+    const toast = this.addedToast;
+    this.hideAddedToast();
+    if (!toast) return;
+    const cart = Vio.cart.getCart(toast.sponsorId);
+    const total = (cart?.items ?? []).reduce((sum, i5) => sum + i5.unitPrice * i5.quantity, 0);
+    if (!cart || cart.items.length === 0 || !(total > 0)) return;
+    this.dispatchEvent(new CustomEvent("vio:checkout-open", { bubbles: true, composed: true, detail: toast.detail }));
+  }
+  renderAddedToast() {
+    if (!this.addedToast) return A;
+    return b2`
+      <div class="added-toast" part="added-toast" role="status" aria-live="polite">
+        <div class="added-toast-text">Lagt i handlekurven</div>
+        <div class="added-toast-actions">
+          <button class="added-toast-checkout" part="added-toast-checkout" data-vio-cta="checkout" @click=${this.toastToCheckout}>Til kassen</button>
+          <button class="added-toast-continue" part="added-toast-continue" @click=${this.hideAddedToast}>Fortsett å handle</button>
+        </div>
+      </div>
+    `;
   }
   /**
    * Express buy: add to cart, then open the checkout overlay with Klarna
@@ -16385,6 +19017,7 @@ var VioProductDetail = class extends i4 {
    */
   async buyWithKlarna() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.requireSelection()) return;
     this.adding = true;
     try {
       this.addCurrentToCart();
@@ -16417,6 +19050,7 @@ var VioProductDetail = class extends i4 {
    */
   buyNow() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.requireSelection()) return;
     this.addCurrentToCart();
     this.close();
     this.dispatchEvent(
@@ -16439,10 +19073,60 @@ var VioProductDetail = class extends i4 {
   }
   buyWithVipps() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.requireSelection()) return;
+    if (!(this.unitPrice > 0)) return;
+    if (this.cartHasLines() && this.vippsCartMode() === "checkout") {
+      this.addCurrentToCart();
+      this.close();
+      this.openCheckoutWithVipps();
+      return;
+    }
     const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: this.sponsorId, source: "detail" });
     this.addCurrentToCart();
     this.close();
     void this.startVippsExpressOrCheckout(redirect);
+  }
+  /**
+   * The Vipps button will open the app with Express for this product alone
+   * (see buyWithVipps): the brand has Express on, and this brand's cart is
+   * empty.
+   */
+  vippsGoesStraightToApp() {
+    return this.vippsExpress && !this.cartHasLines();
+  }
+  /** This brand's cart already has lines. */
+  cartHasLines() {
+    return (Vio.cart.getCart(this.sponsorId)?.items.length ?? 0) > 0;
+  }
+  /** `vipps-cart-payment`, else the theme's, else `express`. */
+  vippsCartMode() {
+    return resolveVippsCartPayment(this, this.vippsCartPayment);
+  }
+  /**
+   * What the Vipps button will pay when the brand's cart already has lines
+   * (`express` mode): every unit in the cart plus this product at the chosen
+   * quantity, and their total, as the cart sums it (shipping is chosen in
+   * Vipps). null with an empty cart, or in `checkout` mode.
+   */
+  wholeCartToPay() {
+    if (this.vippsCartMode() !== "express") return null;
+    const cart = Vio.cart.getCart(this.sponsorId);
+    const items = cart?.items ?? [];
+    if (items.length === 0) return null;
+    const units = items.reduce((n6, i5) => n6 + (Number(i5.quantity) || 0), 0) + this.quantity;
+    const total = items.reduce((sum, i5) => sum + (Number(i5.unitPrice) || 0) * (Number(i5.quantity) || 0), 0) + this.unitPrice * this.quantity;
+    return { units, total, currency: cart?.currency || this.currency };
+  }
+  /** The line under the Vipps button: what is paid (a cart with lines) or what happens in the app (Express, empty cart). */
+  renderVippsNote() {
+    const whole = this.wholeCartToPay();
+    if (whole) {
+      return b2`<p class="vipps-note vipps-note-cart" part="vipps-note">Betaler hele handlekurven · ${whole.units} varer · ${formatPrice(whole.total, whole.currency)}</p>`;
+    }
+    if (this.vippsGoesStraightToApp()) {
+      return b2`<p class="vipps-note" part="vipps-note">Vipps fyller inn navn og adresse – du godkjenner og betaler i appen</p>`;
+    }
+    return "";
   }
   async startVippsExpressOrCheckout(redirect) {
     let fallback = true;
@@ -16461,17 +19145,26 @@ var VioProductDetail = class extends i4 {
       redirect.fail(err instanceof Error ? err.message : String(err));
     }
     if (!fallback) return;
+    this.openCheckoutWithVipps();
+  }
+  /** The ordinary way in, Vipps preselected: the host opens the checkout on `vio:checkout-open`. */
+  openCheckoutWithVipps() {
+    this.openCheckoutWith("vipps");
+  }
+  /** The ordinary way in with a method preselected: the host opens the checkout on `vio:checkout-open`. */
+  openCheckoutWith(paymentMethod) {
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
         composed: true,
-        detail: { sponsorId: this.sponsorId, paymentMethod: "vipps", express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
+        detail: { sponsorId: this.sponsorId, paymentMethod, express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) }
       })
     );
   }
   /** Buy with Stripe — opens the checkout with Stripe preselected. */
   buyWithStripe() {
     if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.requireSelection()) return;
     this.addCurrentToCart();
     this.close();
     this.dispatchEvent(
@@ -16482,14 +19175,49 @@ var VioProductDetail = class extends i4 {
       })
     );
   }
+  /** Prepare the Apple Pay sheet for this product × quantity; the newest preparation wins. */
+  prepareApplePaySheet() {
+    const amount = this.unitPrice * this.quantity;
+    this.applePayAskedFor = amount;
+    void Vio.checkout.prepareApplePayFor(amount, this.currency).then((handle) => {
+      if (this.applePayAskedFor !== amount) return;
+      this.applePayHandle = handle;
+      this.applePayAmount = amount;
+      this.applePayOk = handle.available;
+    }).catch(() => {
+      if (this.applePayAskedFor !== amount) return;
+      this.applePayHandle = null;
+      this.applePayAmount = null;
+      this.applePayOk = false;
+    });
+  }
   /**
    * Express buy with Apple Pay. Runs synchronously inside the click so the
    * Apple Pay sheet keeps the user gesture: add to cart → open checkout (sets
    * state) → launch the sheet. On authorize, `payment-complete` drives the
    * confirmation drawer (same path as the in-checkout Apple Pay button).
+   *
+   * The sheet's amount is fixed before the tap (Apple blocks a sheet opened
+   * after an await, so it cannot wait for the server's cart), while the
+   * charge is the sponsor's WHOLE cart. So the sheet opens only when it shows
+   * what will be charged: an empty cart, and a sheet prepared for this
+   * product × quantity. Otherwise — lines already in the cart, or a quantity
+   * whose sheet is still being prepared —
+   * the product is added and the checkout opens with Apple Pay preselected:
+   * every line and the total on screen, and its own Apple Pay button pays
+   * that total.
    */
   buyWithApplePay() {
     if (!this.product || this.availableQuantity <= 0 || !this.applePayHandle) return;
+    if (!this.requireSelection()) return;
+    if (!(this.unitPrice > 0)) return;
+    const cartHasLines = (Vio.cart.getCart(this.sponsorId)?.items.length ?? 0) > 0;
+    if (cartHasLines || this.applePayAmount !== this.unitPrice * this.quantity) {
+      this.addCurrentToCart();
+      this.close();
+      this.openCheckoutWith("apple-pay");
+      return;
+    }
     this.addCurrentToCart();
     try {
       Vio.checkout.open(this.sponsorId);
@@ -16502,6 +19230,188 @@ var VioProductDetail = class extends i4 {
     void this.applePayHandle.show();
     this.close();
   }
+  /**
+   * The product's cheapest rate for the page's market — the rates the
+   * backend cart offers for its line. A rate in another currency than the
+   * product's price is not shown (never a price the shopper would not pay).
+   */
+  async loadShippingFrom(productId, seq) {
+    let rates = null;
+    try {
+      const product = Vio.commerceFor(this.sponsorId, { campaignId: this.commerceCampaigns() }).channel.product;
+      rates = typeof product.getShippingRates === "function" ? await product.getShippingRates(productId, { currency: this.currency }) : null;
+    } catch {
+      rates = null;
+    }
+    if (seq !== this.fetchSeq) return;
+    const currency = String(this.product?.price?.currency_code ?? this.currency ?? "").toUpperCase();
+    const usable = (rates ?? []).filter((r6) => !r6.currency || r6.currency.toUpperCase() === currency);
+    const cheapest = usable[0];
+    this.shippingFrom = cheapest ? { price: cheapest.price, currency: cheapest.currency || currency } : null;
+    this.shippingRates = usable.map((r6) => ({
+      name: String(r6.name ?? ""),
+      price: r6.price,
+      currency: r6.currency || currency,
+      description: String(r6.description ?? "").trim(),
+      logoUrl: String(r6.logoUrl ?? "")
+    }));
+  }
+  /**
+   * `gallery="carousel"`: every photo in one row that snaps one at a time —
+   * swipe on touch, arrows with a mouse — and a dot per photo over it
+   * instead of thumbnails, so the name, price and sizes come up higher.
+   */
+  renderCarousel(images, title) {
+    const count = images.length;
+    const current2 = Math.min(this.activeImageIndex, Math.max(0, count - 1));
+    return b2`
+      <div class="gallery carousel" part="gallery">
+        <div
+          class="carousel-track"
+          part="image"
+          @scroll=${this.onCarouselScroll}
+          @pointerdown=${this.onGalleryGesture}
+          @touchstart=${this.onGalleryGesture}
+          @wheel=${this.onGalleryGesture}
+        >
+          ${images.map(
+      (img, idx) => b2`
+              <div class="carousel-slide" part="slide" aria-label=${`Bilde ${idx + 1} av ${count}`}>
+                <img src=${img.url} alt=${idx === 0 ? title : ""} loading=${idx === 0 ? "eager" : "lazy"} />
+              </div>
+            `
+    )}
+        </div>
+        ${count > 1 ? b2`
+              <button
+                class="carousel-arrow prev"
+                part="carousel-arrow"
+                aria-label="Forrige bilde"
+                data-vio-cta="gallery_swipe"
+                ?disabled=${current2 === 0}
+                @click=${() => this.stepCarousel(-1)}
+              >‹</button>
+              <button
+                class="carousel-arrow next"
+                part="carousel-arrow"
+                aria-label="Neste bilde"
+                data-vio-cta="gallery_swipe"
+                ?disabled=${current2 === count - 1}
+                @click=${() => this.stepCarousel(1)}
+              >›</button>
+              <div class="carousel-dots" part="image-dots" aria-hidden="true">
+                ${images.map((_2, idx) => b2`<span class="carousel-dot ${idx === current2 ? "active" : ""}"></span>`)}
+              </div>
+            ` : ""}
+      </div>
+    `;
+  }
+  /**
+   * «Beskrivelse», not shut: the first lines show, fading out, and a tap on
+   * the heading, the text or «Les mer» opens the rest (Angelo, 2026-10-28).
+   * A description that fits in the preview has nothing to open.
+   */
+  /** The description fold's heading: this element's, else the page's, else «Beskrivelse». */
+  descriptionHeading() {
+    const own = this.descriptionLabel.trim();
+    return (own && own.length <= 40 ? own : "") || currentGlobalDescriptionLabel() || "Beskrivelse";
+  }
+  renderDescription(text3) {
+    const mode = this.resolvedDescriptionMode;
+    if (mode === "open") {
+      return b2`<div class="description-block description-preview open" part="description">
+        <div class="desc-head">${this.descriptionHeading()}</div>
+        <div class="description">${text3}</div>
+      </div>`;
+    }
+    const foldable = mode === "folded" || this.descriptionClipped;
+    const open = this.descriptionOpen || !foldable;
+    const toggle = () => {
+      if (foldable) this.descriptionOpen = !this.descriptionOpen;
+    };
+    const opens = foldable && !open ? "description_open" : A;
+    return b2`<div class="description-block description-preview ${open ? "open" : ""} ${foldable ? "clipped" : ""} ${mode}" part="description">
+      <button class="desc-head" type="button" aria-expanded=${open ? "true" : "false"} data-vio-cta=${opens} @click=${toggle}>${this.descriptionHeading()}</button>
+      ${mode === "folded" && !open ? A : b2`<div
+            class="description ${open ? "" : "collapsed"}"
+            data-vio-cta=${opens}
+            data-vio-cta-label=${opens === A ? A : this.descriptionHeading()}
+            @click=${() => !this.descriptionOpen && toggle()}
+          >${text3}</div>`}
+      ${mode === "preview" && this.descriptionClipped ? b2`<button class="desc-more" type="button" data-vio-cta=${opens} @click=${toggle}>${this.descriptionOpen ? "Vis mindre" : "Les mer"}</button>` : A}
+    </div>`;
+  }
+  /** Is the preview hiding part of the text? Measured with the preview applied. */
+  measureDescription() {
+    const el = this.renderRoot.querySelector(".description-preview .description");
+    if (!el || this.descriptionOpen) return;
+    const wasCollapsed = el.classList.contains("collapsed");
+    el.classList.add("collapsed");
+    const clipped = el.scrollHeight > el.clientHeight + 1;
+    if (!wasCollapsed) el.classList.remove("collapsed");
+    if (clipped !== this.descriptionClipped) this.descriptionClipped = clipped;
+  }
+  renderHighlights() {
+    const own = (Array.isArray(this.highlights) ? this.highlights : []).filter((h3) => h3 && h3.title);
+    return renderHighlights(own.length ? own : resolveSponsorIdentity(this.sponsorId)?.highlights ?? []);
+  }
+  /**
+   * «Frakt & retur», folded like «Beskrivelse»: the delivery options for the
+   * page's country with their price, and the right of withdrawal with the
+   * brand's own terms and returns pages when it gave them.
+   */
+  renderShippingReturns() {
+    const identity = resolveSponsorIdentity(this.sponsorId);
+    const rates = shippingRatesShown(this.shippingRates, [
+      this.product?.title,
+      this.product?.brand,
+      this.sellerName,
+      identity?.name
+    ]);
+    const times = [...new Set(rates.map((r6) => r6.description).filter(Boolean))];
+    const perRateTime = times.length > 1;
+    const sharedTime = times.length === 1 ? times[0] : times.length === 0 && this.deliveryTime.trim() ? `Leveringstid: ${this.deliveryTime.trim()}` : "";
+    const links = [
+      identity?.refundPolicyUrl ? b2`<a href=${identity.refundPolicyUrl} target="_blank" rel="noopener noreferrer" data-vio-cta="refund_link">Angrerett og retur</a>` : null,
+      identity?.termsUrl ? b2`<a href=${identity.termsUrl} target="_blank" rel="noopener noreferrer" data-vio-cta="terms_link">Kjøpsvilkår</a>` : null
+    ].filter(Boolean);
+    return b2`<details class="description-block shipping-returns" part="shipping-returns">
+      <summary data-vio-cta="shipping_returns_open">Frakt &amp; retur</summary>
+      <div class="description shipping-returns-body">
+        <div class="sr-title">Frakt</div>
+        ${rates.length ? b2`<ul class="sr-rates">
+              ${rates.map((r6) => {
+      const { carrier, method } = splitRateName(r6.name);
+      const logo = r6.logoUrl || carrierLogo(this.carrierLogos, carrier);
+      return b2`<li>
+                  ${logo ? b2`<img class="sr-logo" src=${logo} alt=${carrier} />` : lineIcon(rateIcon(r6.name ?? ""), "line-icon sr-icon")}
+                  <span class="sr-rate">
+                    <span class="sr-carrier">${carrier || method || "Frakt"}</span>
+                    ${carrier && method ? b2`<span class="sr-method">${method}</span>` : A}
+                    ${perRateTime && r6.description ? b2`<span class="sr-method">${r6.description}</span>` : A}
+                  </span>
+                  <span class="sr-price">${r6.price <= 0 ? "Gratis" : formatPrice(r6.price, r6.currency)}</span>
+                </li>`;
+    })}
+            </ul>` : b2`<p>Fraktprisen vises i kassen.</p>`}
+        ${sharedTime ? b2`<p class="sr-line sr-time">${lineIcon("clock", "line-icon sr-icon")}<span>${sharedTime}</span></p>` : A}
+        <div class="sr-title">Retur</div>
+        <p class="sr-line">${lineIcon("return", "line-icon sr-icon")}<span>Du har 14 dagers angrerett fra du mottar varen.</span></p>
+        ${links.length ? b2`<p class="sr-links">${links}</p>` : A}
+      </div>
+    </details>`;
+  }
+  /** Under the price: «Frakt fra X · 14 dagers angrerett» (or «Gratis frakt · …»). */
+  renderDeliveryNote() {
+    const ship = this.shippingFrom;
+    const shipping = ship ? ship.price <= 0 ? "Gratis frakt" : `Frakt fra ${formatPrice(ship.price, ship.currency)}` : "";
+    return b2`<div class="delivery-note" part="delivery-note">
+      ${shipping ? b2`<span part="delivery-shipping">${shipping}</span><span aria-hidden="true"> · </span>` : ""}<span
+        part="delivery-withdrawal"
+        >14 dagers angrerett</span
+      >
+    </div>`;
+  }
   /** The seller's Company name; the brand when there is none; nothing while asking. */
   headerName() {
     if (this.sellerName) return this.sellerName;
@@ -16510,7 +19420,7 @@ var VioProductDetail = class extends i4 {
   async loadSeller(productId, seq) {
     let name = null;
     try {
-      name = await Vio.commerceFor(this.sponsorId).channel.product.getSellerCompany(productId);
+      name = await Vio.commerceFor(this.sponsorId, { campaignId: this.commerceCampaigns() }).channel.product.getSellerCompany(productId);
     } catch {
       name = null;
     }
@@ -16549,8 +19459,8 @@ var VioProductDetail = class extends i4 {
     const name = identity?.name || this.headerName();
     if (!name) return A;
     const links = [
-      identity?.termsUrl ? b2`<a href=${identity.termsUrl} target="_blank" rel="noopener noreferrer" part="seller-terms">Kjøpsvilkår</a>` : null,
-      identity?.refundPolicyUrl ? b2`<a href=${identity.refundPolicyUrl} target="_blank" rel="noopener noreferrer" part="seller-refund">Angrerett og retur</a>` : null
+      identity?.termsUrl ? b2`<a href=${identity.termsUrl} target="_blank" rel="noopener noreferrer" part="seller-terms" data-vio-cta="terms_link">Kjøpsvilkår</a>` : null,
+      identity?.refundPolicyUrl ? b2`<a href=${identity.refundPolicyUrl} target="_blank" rel="noopener noreferrer" part="seller-refund" data-vio-cta="refund_link">Angrerett og retur</a>` : null
     ].filter(Boolean);
     return b2`<p class="seller-note" part="seller-note">
       Du handler direkte hos <strong>${name}</strong>.${links.length ? b2`<span class="seller-links">${links}</span>` : A}
@@ -16574,16 +19484,17 @@ var VioProductDetail = class extends i4 {
   }
   render() {
     return b2`
-      <div class="backdrop" @click=${this.close}></div>
+      <div class="backdrop" data-vio-cta="close" data-vio-cta-label="" @click=${this.close}></div>
       <div class="modal" role="dialog" aria-modal="true" aria-label="Produkt" tabindex="-1">
-        <div class="handle" @click=${this.close} aria-hidden="true"></div>
+        <div class="handle" data-vio-cta="close" data-vio-cta-label="" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar" part="topbar">
           <div class="topbar-sponsor ${this.logoSquare ? "is-square" : ""}" part="sponsor">${this.renderTopbarSponsor()}</div>
-          <button class="close" part="close" @click=${this.close} aria-label="Lukk">×</button>
+          <button class="close" part="close" data-vio-cta="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
         ${this.renderBody()}
       </div>
+      ${this.renderAddedToast()}
     `;
   }
   renderBody() {
@@ -16604,14 +19515,11 @@ var VioProductDetail = class extends i4 {
     }
     if (!this.product) return b2``;
     const p3 = this.product;
-    const stock = this.stockLabel();
-    const compare = this.compareAt;
-    const showCompare = compare !== null && compare > this.unitPrice;
     const images = this.allImages();
     const activeImage = this.activeImage;
     return b2`
       <div class="body">
-        <div class="gallery" part="gallery">
+        ${this.galleryMode === "carousel" ? this.renderCarousel(images, p3.title) : b2`<div class="gallery" part="gallery">
           <div class="gallery-main" part="image">
             ${activeImage?.url ? b2`<img src=${activeImage.url} alt=${p3.title} />` : ""}
           </div>
@@ -16631,6 +19539,7 @@ var VioProductDetail = class extends i4 {
                           class="gallery-thumb ${idx === this.activeImageIndex ? "active" : ""}"
                           part=${idx === this.activeImageIndex ? "thumb thumb-active" : "thumb"}
                           @click=${() => this.activeImageIndex = idx}
+                          data-vio-cta=${idx === this.activeImageIndex ? A : "gallery_swipe"}
                           aria-label=${`Bilde ${idx + 1}`}
                           aria-current=${idx === this.activeImageIndex ? "true" : "false"}
                         >
@@ -16648,26 +19557,116 @@ var VioProductDetail = class extends i4 {
                   >›</button>
                 </div>
               ` : ""}
-        </div>
+        </div>`}
 
         <div class="info" part="info">
-          ${p3.brand ? b2`<div class="brand" part="brand">${p3.brand}</div>` : ""}
-          <h2 class="name" part="title">${p3.title}</h2>
-
-          <div class="price-row">
-            <span class="price" part="price">${formatPrice(this.unitPrice, p3.price.currency_code)}</span>
-            ${showCompare ? b2`<span class="compare-at">${formatPrice(
-      compare,
-      p3.price.currency_code
-    )}</span>` : ""}
-          </div>
-
-          <div class="stock ${stock.cls}" part="stock">${stock.text}</div>
-
-          ${this.renderOptionPickers(p3.options)}
-
+          ${this.renderSections(this.layoutNow.sections)}
+        </div>
+      </div>
+    `;
+  }
+  /**
+   * The info column in the applied layout's order (0.34) — the real DOM in
+   * that order, never CSS `order`, the same on every screen. The default
+   * order renders exactly the column before 0.34: brand, `.headline` (the
+   * title row with the stock, the price row), then `.purchase` — `.buy` with
+   * the options first — and highlights, description, «Frakt & retur» in it.
+   *
+   * A run of `title` / `stock` / `price` is one `.headline`; `title`
+   * right before `stock` share the title row. `options` right before
+   * `purchase` live in `.buy` (a pinned buy zone keeps them); elsewhere they
+   * are a block of their own. Everything after `purchase` goes in
+   * `.purchase`, as the description does by default: a pinned buy zone may
+   * slide over it, never over what comes before.
+   */
+  renderSections(sections) {
+    const out = [];
+    for (let i5 = 0; i5 < sections.length; i5++) {
+      const s4 = sections[i5];
+      if (s4 === "title" || s4 === "stock" || s4 === "price") {
+        let j = i5;
+        while (j < sections.length && ["title", "stock", "price"].includes(sections[j])) j++;
+        out.push(this.renderHeadline(sections.slice(i5, j)));
+        i5 = j - 1;
+        continue;
+      }
+      if (s4 === "options" && sections[i5 + 1] === "purchase") continue;
+      if (s4 === "purchase") {
+        const optionsInBuy = sections[i5 - 1] === "options";
+        out.push(this.renderPurchase(optionsInBuy, sections.slice(i5 + 1)));
+        break;
+      }
+      out.push(this.renderSection(s4));
+    }
+    return out;
+  }
+  /** A run of title / stock / price: one `.headline`. */
+  renderHeadline(run) {
+    const p3 = this.product;
+    const stock = this.stockLabel();
+    const compare = this.compareAt;
+    const showCompare = compare !== null && compare > this.unitPrice;
+    const name = b2`<h2 class="name" part="title">${p3.title}</h2>`;
+    const stockLine = b2`<div class="stock ${stock.cls}" part="stock">${stock.text}</div>`;
+    const parts = [];
+    for (let i5 = 0; i5 < run.length; i5++) {
+      const s4 = run[i5];
+      if (s4 === "title" && run[i5 + 1] === "stock") {
+        parts.push(b2`<div class="title-row">
+              ${name}
+              ${stockLine}
+            </div>`);
+        i5++;
+      } else if (s4 === "title") {
+        parts.push(b2`<div class="title-row">${name}</div>`);
+      } else if (s4 === "stock") {
+        parts.push(stockLine);
+      } else {
+        parts.push(b2`<div class="price-row">
+              <span class="price" part="price">${formatPrice(this.unitPrice, p3.price.currency_code)}</span>
+              ${showCompare ? b2`<span class="compare-at">${formatPrice(
+          compare,
+          p3.price.currency_code
+        )}</span>` : ""}
+            </div>`);
+      }
+    }
+    return b2`<div class="headline">
+            ${parts}
+          </div>`;
+  }
+  /** One section that is not the headline nor the purchase group. */
+  renderSection(section) {
+    const p3 = this.product;
+    switch (section) {
+      case "brand":
+        return p3.brand ? b2`<div class="brand" part="brand">${p3.brand}</div>` : "";
+      case "options":
+        return p3.options.length > 0 ? b2`<div class="buy-options options-apart" part="buy-options">${this.renderOptionPickers(p3.options)}</div>` : "";
+      case "highlights":
+        return this.renderHighlights();
+      case "description":
+        return p3.description ? this.renderDescription(this.stripHtml(p3.description)) : "";
+      case "shippingReturns":
+        return this.renderShippingReturns();
+      default:
+        return "";
+    }
+  }
+  /**
+   * The SDK-managed buy group, never split: «Frakt fra…», Vipps / Apple Pay /
+   * the other ways to pay, quantity + «Legg i handlekurv», «Du handler direkte
+   * hos …». The options when they come right before it; then what follows it.
+   */
+  renderPurchase(optionsInBuy, rest) {
+    const p3 = this.product;
+    const optionsApart = !optionsInBuy && p3.options.length > 0;
+    return b2`<div class=${optionsApart ? "purchase options-apart" : "purchase"}>
           <div class="buy" part="buy">
-          ${this.availableQuantity > 0 && this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
+          ${optionsInBuy && p3.options.length > 0 ? b2`<div class="buy-options" part="buy-options">${this.renderOptionPickers(p3.options)}</div>` : ""}
+          ${this.renderDeliveryNote()}
+          ${this.methodsPending && this.availableQuantity > 0 ? b2`<div class="buy-pending" part="buy-pending" role="status" aria-label="Laster betalingsmåter"></div>` : ""}
+          ${this.availableQuantity > 0 && this.hasPrice && this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
                   <vipps-mobilepay-button
                     class="buy-vipps-official"
                     part="buy-vipps"
@@ -16679,12 +19678,14 @@ var VioProductDetail = class extends i4 {
                     stretched="true"
                     role="button"
                     aria-label="Kjøp nå med Vipps"
+                    data-vio-cta="vipps"
                     @click=${this.buyWithVipps}
                   ></vipps-mobilepay-button>
                 ` : b2`
                   <button
                     class="buy-vipps"
                     part="buy-vipps"
+                    data-vio-cta="vipps"
                     @click=${this.buyWithVipps}
                     ?disabled=${this.adding}
                     aria-label="Kjøp nå med Vipps"
@@ -16693,11 +19694,13 @@ var VioProductDetail = class extends i4 {
                     <span class="vipps-badge">vipps</span>
                   </button>
                 ` : ""}
+          ${this.availableQuantity > 0 && this.hasPrice && this.methodEnabled("vipps") ? this.renderVippsNote() : ""}
 
           <div class="qty-cta-row" part="quantity-row">
             <div class="qty-stepper">
               <button
                 class="qty-btn"
+                data-vio-cta="quantity_minus"
                 @click=${() => this.quantity = Math.max(1, this.quantity - 1)}
                 aria-label="Reduser antall"
               >
@@ -16706,6 +19709,7 @@ var VioProductDetail = class extends i4 {
               <span class="qty-value">${this.quantity}</span>
               <button
                 class="qty-btn"
+                data-vio-cta="quantity_plus"
                 @click=${() => this.quantity = Math.min(this.availableQuantity, this.quantity + 1)}
                 aria-label="Øk antall"
                 ?disabled=${this.quantity >= this.availableQuantity}
@@ -16716,6 +19720,7 @@ var VioProductDetail = class extends i4 {
             <button
               class="add-to-cart"
               part="add-to-cart"
+              data-vio-cta="add_to_cart"
               @click=${this.addToCart}
               ?disabled=${this.availableQuantity <= 0 || this.adding}
             >
@@ -16726,6 +19731,7 @@ var VioProductDetail = class extends i4 {
           ${this.availableQuantity > 0 && this.methodEnabled(...NO_EXPRESS_BUTTON_METHODS) ? b2`
                 <button
                   class="buy-now"
+                  data-vio-cta="buy_now"
                   @click=${this.buyNow}
                   ?disabled=${this.adding}
                   aria-label="Kjøp nå"
@@ -16734,9 +19740,10 @@ var VioProductDetail = class extends i4 {
                 </button>
               ` : ""}
 
-          ${this.availableQuantity > 0 && this.applePayOk && this.methodEnabled("apple-pay", "applepay") ? b2`
+          ${this.availableQuantity > 0 && this.hasPrice && this.applePayOk && this.methodEnabled("apple-pay", "applepay") ? b2`
                 <button
                   class="buy-applepay"
+                  data-vio-cta="apple_pay"
                   @click=${this.buyWithApplePay}
                   ?disabled=${this.adding}
                   aria-label="Kjøp nå med Apple Pay"
@@ -16749,6 +19756,7 @@ var VioProductDetail = class extends i4 {
           ${this.availableQuantity > 0 && this.methodEnabled("stripe") ? b2`
                 <button
                   class="buy-stripe"
+                  data-vio-cta="stripe"
                   @click=${this.buyWithStripe}
                   ?disabled=${this.adding}
                   aria-label="Kjøp nå med Stripe"
@@ -16765,6 +19773,8 @@ var VioProductDetail = class extends i4 {
           ${this.availableQuantity > 0 && this.methodEnabled("klarna") ? b2`
                 <button
                   class="buy-klarna"
+                  data-vio-cta="klarna"
+                  data-vio-cta-label="Kjøp nå med Klarna"
                   @click=${this.buyWithKlarna}
                   ?disabled=${this.adding}
                 >
@@ -16780,24 +19790,24 @@ var VioProductDetail = class extends i4 {
           ${this.renderSellerNote()}
           </div>
 
-          ${p3.description ? b2`
-                <details class="description-block" part="description">
-                  <summary>Beskrivelse</summary>
-                  <div class="description">${this.stripHtml(p3.description)}</div>
-                </details>
-              ` : ""}
-        </div>
-      </div>
-    `;
+          ${this.renderSections(rest)}
+          </div>`;
   }
   renderOptionPickers(options) {
     if (options.length === 0) return "";
     return b2`${options.map((opt) => {
       const values = normalizeValues(opt.values);
       if (values.length === 0) return "";
+      const chosen = String(this.selectedOptions[opt.name] ?? "").trim();
+      const asked = this.selectionPrompt === opt.name && !chosen;
       return b2`
-        <div class="option-group" part="option-group">
-          <div class="option-label" part="option-label">${opt.name}</div>
+        <div class="option-group ${asked ? "needs-choice" : ""}" part="option-group">
+          <div class="option-label" part="option-label">
+            <span
+              >${opt.name}${chosen ? b2`: <span class="option-chosen" part="option-chosen">${chosen}</span>` : ""}</span
+            >
+            ${asked ? b2`<span class="option-prompt" part="option-prompt" role="alert">${this.promptFor(opt)}</span>` : ""}
+          </div>
           <div class="option-values" part="options">
             ${values.map((val) => {
         const available = this.isValueAvailable(opt.name, val);
@@ -16807,6 +19817,8 @@ var VioProductDetail = class extends i4 {
                 <button
                   class="option-pill ${available ? "" : "unavailable"}"
                   part=${isSelected ? "option option-selected" : "option"}
+                  data-vio-cta="size"
+                  data-vio-cta-option=${val}
                   @click=${() => this.selectOption(opt.name, val)}
                   aria-pressed=${isSelected}
                   ?disabled=${!available}
@@ -16863,6 +19875,33 @@ __decorateClass([
   n5({ type: String, attribute: "vio-content-title" })
 ], VioProductDetail.prototype, "vioContentTitle", 2);
 __decorateClass([
+  n5({ type: Boolean, attribute: "no-added-toast" })
+], VioProductDetail.prototype, "noAddedToast", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vipps-cart-payment" })
+], VioProductDetail.prototype, "vippsCartPayment", 2);
+__decorateClass([
+  n5({ type: String })
+], VioProductDetail.prototype, "gallery", 2);
+__decorateClass([
+  n5({ type: String, attribute: "description-mode" })
+], VioProductDetail.prototype, "descriptionMode", 2);
+__decorateClass([
+  n5({ type: String, attribute: "description-label" })
+], VioProductDetail.prototype, "descriptionLabel", 2);
+__decorateClass([
+  n5({ type: Array })
+], VioProductDetail.prototype, "highlights", 2);
+__decorateClass([
+  n5({ type: String, attribute: "delivery-time" })
+], VioProductDetail.prototype, "deliveryTime", 2);
+__decorateClass([
+  n5({ type: Object, attribute: "carrier-logos" })
+], VioProductDetail.prototype, "carrierLogos", 2);
+__decorateClass([
+  n5({ attribute: "layout", converter: layoutAttribute })
+], VioProductDetail.prototype, "layout", 2);
+__decorateClass([
   r5()
 ], VioProductDetail.prototype, "product", 2);
 __decorateClass([
@@ -16873,6 +19912,12 @@ __decorateClass([
 ], VioProductDetail.prototype, "sellerSettled", 2);
 __decorateClass([
   r5()
+], VioProductDetail.prototype, "shippingFrom", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "shippingRates", 2);
+__decorateClass([
+  r5()
 ], VioProductDetail.prototype, "isLoading", 2);
 __decorateClass([
   r5()
@@ -16880,6 +19925,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "selectedOptions", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "selectionPrompt", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "quantity", 2);
@@ -16897,16 +19945,37 @@ __decorateClass([
 ], VioProductDetail.prototype, "thumbsAtEnd", 2);
 __decorateClass([
   r5()
+], VioProductDetail.prototype, "descriptionOpen", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "descriptionClipped", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "galleryMode", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "resolvedDescriptionMode", 2);
+__decorateClass([
+  r5()
 ], VioProductDetail.prototype, "logoSquare", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "adding", 2);
 __decorateClass([
   r5()
+], VioProductDetail.prototype, "addedToast", 2);
+__decorateClass([
+  r5()
 ], VioProductDetail.prototype, "applePayOk", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "methodsLoading", 2);
+__decorateClass([
+  r5()
+], VioProductDetail.prototype, "vippsExpress", 2);
 __decorateClass([
   r5()
 ], VioProductDetail.prototype, "vippsOfficial", 2);
@@ -16919,11 +19988,46 @@ function normalizeValues(raw) {
   }
   return [];
 }
+function shippingRatesShown(rates, repeats = []) {
+  return rates.map((r6) => ({ ...r6, description: shippingDescriptionOf(r6.description, [r6.name, ...repeats]) }));
+}
+function splitRateName(name) {
+  const text3 = String(name ?? "").trim();
+  const m2 = text3.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (!m2?.[1] || !m2[2]) return { carrier: "", method: text3 };
+  const method = m2[2].trim();
+  return { carrier: m2[1].trim(), method: method.charAt(0).toUpperCase() + method.slice(1) };
+}
 
 // src/ui/components/vio-cart.ts
 var STRIPE_LOGO_SRC2 = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
 );
+function ratePrice(rate, currency) {
+  const price = rate?.price;
+  if (!price) return null;
+  const amount = typeof price.amount_incl_taxes === "number" ? price.amount_incl_taxes : price.amount;
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return null;
+  if (price.currency_code && currency && price.currency_code.toUpperCase() !== currency.toUpperCase()) return null;
+  return amount;
+}
+function cartShipping(items, currency) {
+  for (const item of items) {
+    const chosen = ratePrice(item.shipping, currency);
+    if (chosen !== null) return chosen;
+  }
+  for (const item of items) {
+    const offered = (item.availableShippings ?? []).map((r6) => ratePrice(r6, currency)).filter((p3) => p3 !== null);
+    if (offered.length > 0) return Math.min(...offered);
+  }
+  return null;
+}
+function cartShippingIsFrom(items, currency) {
+  if (items.some((item) => ratePrice(item.shipping, currency) !== null)) return false;
+  return items.some(
+    (item) => (item.availableShippings ?? []).filter((r6) => ratePrice(r6, currency) !== null).length > 1
+  );
+}
 var VioCart = class extends i4 {
   constructor() {
     super(...arguments);
@@ -16931,11 +20035,15 @@ var VioCart = class extends i4 {
     this.heading = "Handlekurv";
     this.emptyLabel = "Handlekurven er tom";
     this.subtotalLabel = "Sum";
+    this.vippsCartPayment = "";
     this.carts = /* @__PURE__ */ new Map();
     this.itemCount = 0;
     this.applePayAvailable = false;
     this.availableMethods = null;
+    this.methodsLoading = false;
     this.vippsOfficial = false;
+    /** A Vipps payment is being started from here: one at a time. */
+    this.vippsStarting = false;
     /** Whether the method lookup has been attempted — see boundOnCartChange. */
     this.paymentMethodsAttempted = false;
     this.confirmedOrder = null;
@@ -16957,6 +20065,7 @@ var VioCart = class extends i4 {
       sheet: () => this.renderRoot.querySelector(".drawer"),
       backdrop: () => this.renderRoot.querySelector(".backdrop"),
       dragZones: ".handle, .header",
+      scroller: () => this.renderRoot.querySelector(".body"),
       close: () => this.close()
     });
     this.boundOnCartChange = (e7) => {
@@ -16968,9 +20077,39 @@ var VioCart = class extends i4 {
         void this.loadAvailablePaymentMethods();
       }
     };
+    /** Stops reporting the taps on the buttons (`vio:cta-click`). */
+    this.stopCtaClicks = null;
+    /**
+     * What a tap on a button of the cart says (`vio:cta-click`): a line's
+     * buttons name its product, variant and sponsor, and where its most recent
+     * units came from (campaign, slot, article); the footer's buttons name the
+     * sponsor they pay (Vipps: the one it pays; the others: the first).
+     */
+    this.ctaContext = (_cta, button) => {
+      const lineId2 = button?.getAttribute("data-vio-cta-line");
+      if (lineId2) {
+        for (const cart of this.carts.values()) {
+          const item = cart.items.find((i5) => i5.id === lineId2);
+          if (!item) continue;
+          const origin = [...lineOrigins(item)].reverse().find((o7) => o7.campaignId !== void 0 || o7.slot || o7.contentId);
+          return {
+            productId: item.productId,
+            productVariantId: item.variantId,
+            sponsorId: item.sponsorId,
+            campaignId: origin?.campaignId,
+            slot: origin?.slot,
+            contentId: origin?.contentId
+          };
+        }
+        return {};
+      }
+      const sponsorId = _cta === "vipps" ? this.vippsSponsorId() : [...this.carts.keys()][0];
+      return { sponsorId };
+    };
   }
   static {
-    this.styles = i`
+    this.styles = [
+      i`
     :host { display: contents; }
 
     .backdrop {
@@ -17161,6 +20300,14 @@ var VioCart = class extends i4 {
       cursor: pointer;
     }
     .checkout-btn:hover { opacity: 0.9; }
+    .checkout-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Where the express buttons go while the brand's methods load. */
+    .methods-pending {
+      height: 48px;
+      margin-bottom: 10px;
+      border-radius: var(--vio-radius-lg, 8px);
+      background: var(--vio-color-surface-muted, #f1f1f1);
+    }
     .footer {
       padding: var(--vio-space-lg, 24px);
       border-top: 1px solid var(--vio-color-border, #e5e5e5);
@@ -17173,6 +20320,20 @@ var VioCart = class extends i4 {
       font-size: 14px;
     }
     .subtotal-label { color: var(--vio-color-text-secondary, #666); }
+    .shipping-row,
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      margin: calc(var(--vio-space-md, 16px) * -0.5) 0 var(--vio-space-md, 16px);
+      font-size: 14px;
+    }
+    .total-row { font-weight: 700; font-size: 16px; margin-top: 0; }
+    /* Where the shipping method is chosen: in Vipps, or in the checkout. */
+    .shipping-hint {
+      margin: calc(var(--vio-space-md, 16px) * -0.5) 0 var(--vio-space-md, 16px);
+      font-size: 12px;
+      color: var(--vio-color-text-secondary, #666);
+    }
     .subtotal-value { font-weight: 700; font-size: 16px; }
 
     /* Apple Pay express — pay the whole cart directly. */
@@ -17330,7 +20491,9 @@ var VioCart = class extends i4 {
       font-family: var(--vio-font-sans, -apple-system, sans-serif);
     }
     .confirm-close:hover { background: #222; }
-  `;
+  `,
+      highlightsStyles("cart")
+    ];
   }
   connectedCallback() {
     super.connectedCallback();
@@ -17339,8 +20502,12 @@ var VioCart = class extends i4 {
     this.itemCount = Vio.cart.itemCount;
     Vio.cart.addEventListener("change", this.boundOnCartChange);
     void this.loadAvailablePaymentMethods();
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = trackCtaClicks(this, "cart", this.ctaContext);
   }
   disconnectedCallback() {
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = null;
     Vio.cart.removeEventListener("change", this.boundOnCartChange);
     this.bottomSheet.disconnect();
     super.disconnectedCallback();
@@ -17368,6 +20535,7 @@ var VioCart = class extends i4 {
       this.loadingPaymentMethods = false;
       return;
     }
+    this.methodsLoading = true;
     try {
       const methods = await Vio.checkout.getAvailablePaymentMethods(firstSponsorId);
       if (Array.isArray(methods)) {
@@ -17382,10 +20550,20 @@ var VioCart = class extends i4 {
       this.availableMethods = null;
     } finally {
       this.loadingPaymentMethods = false;
+      this.methodsLoading = false;
     }
   }
-  /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
+  /** The methods are on their way and none is known yet. */
+  get methodsPending() {
+    return this.methodsLoading && this.availableMethods === null;
+  }
+  /**
+   * Backend names arrive as e.g. "Apple Pay" — compare letters only. While
+   * the list loads, no method's button is drawn: «unknown = all» painted
+   * Stripe and Klarna for a Vipps-only brand until it came.
+   */
   methodEnabled(...names) {
+    if (this.methodsPending) return false;
     return isMethodEnabled(this.availableMethods, ...names);
   }
   updated(changed) {
@@ -17396,6 +20574,9 @@ var VioCart = class extends i4 {
     if (changed.has("open") && this.open) {
       this.confirmedOrder = null;
       this.preparedTotal = -1;
+      for (const cart of this.carts.values()) {
+        if (cart.cartId) void Vio.cart.refreshFromServer(cart.sponsorId);
+      }
     }
     if (this.open && this.itemCount > 0) {
       const total = this.totalAcrossSponsors;
@@ -17425,7 +20606,7 @@ var VioCart = class extends i4 {
   /** Apple Pay express — pay the whole cart, then show the confirmation. */
   onApplePay() {
     const handle = this.applePayHandle;
-    if (!handle || !handle.available || this.itemCount === 0) return;
+    if (!handle || !handle.available || !this.payable) return;
     const snapshot = this.buildConfirmation();
     const sponsorIds = [...this.carts.keys()];
     const sponsor = sponsorIds.length === 1 ? sponsorDetail(sponsorIds[0]) : {};
@@ -17469,7 +20650,7 @@ var VioCart = class extends i4 {
    * (betalingsmetode). The host's checkout-open handler closes this cart and
    * opens <vio-checkout> in express mode with Klarna preselected. */
   onKlarnaExpress() {
-    if (this.itemCount === 0) return;
+    if (!this.payable) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -17480,7 +20661,6 @@ var VioCart = class extends i4 {
       })
     );
   }
-  /** Vipps — opens the checkout with Vipps preselected. */
   /**
    * Open the checkout without preselecting a method.
    *
@@ -17490,7 +20670,7 @@ var VioCart = class extends i4 {
    * method present the others were unreachable from here.
    */
   onCheckout() {
-    if (this.itemCount === 0) return;
+    if (!this.payable) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -17502,21 +20682,45 @@ var VioCart = class extends i4 {
     );
   }
   /**
-   * Vipps — Express: the app collects address and delivery, so the cart
-   * goes straight to Vipps. When this cart cannot have Express (several
-   * suppliers, digital goods, no rate) or Vipps cannot be started, the
-   * checkout opens with Vipps preselected, as before.
+   * Vipps from the cart (2026-10-29: «el botón negro va con el nuestro y el
+   * botón de Vipps paga el carrito entero»): Vipps Express for the sponsor's
+   * WHOLE cart — the same Express as the detail's «Kjøp nå med Vipps»: the
+   * hand-over overlay, `vio:payment-redirect-*` with source `'cart'`, the
+   * return and its confirmation. «Til kassen» is the way into our checkout.
+   * When the brand has Express off, or this cart cannot have it (several
+   * suppliers, no rate), the checkout opens with Vipps preselected.
+   *
+   * `vipps-cart-payment="checkout"` keeps the 0.31–0.34 behaviour: the
+   * checkout opens with Vipps preselected, the standard payment.
    */
   onVipps() {
-    if (this.itemCount === 0) return;
-    const firstSponsorId = [...this.carts.keys()][0];
-    if (firstSponsorId === void 0) return;
-    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: firstSponsorId, source: "cart" });
-    void this.startVippsExpressOrCheckout(firstSponsorId, redirect);
+    if (!this.payable) return;
+    if (resolveVippsCartPayment(this, this.vippsCartPayment) === "checkout") {
+      const firstSponsorId = [...this.carts.keys()][0];
+      if (firstSponsorId === void 0) return;
+      this.openCheckoutWithVipps(firstSponsorId);
+      return;
+    }
+    if (this.vippsStarting) return;
+    const sponsorId = this.vippsSponsorId();
+    if (sponsorId === void 0) return;
+    this.vippsStarting = true;
+    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId, source: "cart" });
+    void this.startVippsExpressOrCheckout(sponsorId, redirect).finally(() => {
+      this.vippsStarting = false;
+    });
   }
-  /** Vipps' own button when its script answers; our orange one otherwise. */
-  async loadVippsButton() {
-    this.vippsOfficial = await ensureVippsButton();
+  /**
+   * The one sponsor whose cart the Vipps button pays: the first with
+   * something to pay for. Express is built on THAT sponsor's backend cart
+   * only — another sponsor's lines are never in it.
+   */
+  vippsSponsorId() {
+    for (const cart of this.carts.values()) {
+      const total = cart.items.reduce((sum, i5) => sum + i5.unitPrice * i5.quantity, 0);
+      if (cart.items.length > 0 && total > 0) return cart.sponsorId;
+    }
+    return void 0;
   }
   async startVippsExpressOrCheckout(sponsorId, redirect) {
     let fallback = true;
@@ -17536,6 +20740,10 @@ var VioCart = class extends i4 {
       redirect.fail(err instanceof Error ? err.message : String(err));
     }
     if (!fallback) return;
+    this.openCheckoutWithVipps(sponsorId);
+  }
+  /** Our checkout with Vipps preselected: the host opens it on `vio:checkout-open`. */
+  openCheckoutWithVipps(sponsorId) {
     this.dispatchEvent(
       new CustomEvent("vio:checkout-open", {
         bubbles: true,
@@ -17544,9 +20752,13 @@ var VioCart = class extends i4 {
       })
     );
   }
+  /** Vipps' own button when its script answers; our orange one otherwise. */
+  async loadVippsButton() {
+    this.vippsOfficial = await ensureVippsButton();
+  }
   /** Stripe — opens the checkout with Stripe preselected. */
   onStripe() {
-    if (this.itemCount === 0) return;
+    if (!this.payable) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -17561,12 +20773,34 @@ var VioCart = class extends i4 {
   sponsorLabel(cart) {
     return resolveSponsorIdentity(cart.sponsorId)?.name || cart.sponsorName || "";
   }
+  /** Something to pay for: lines, and a total above 0. No button opens a checkout or a payment otherwise. */
+  get payable() {
+    return this.itemCount > 0 && this.totalAcrossSponsors > 0;
+  }
   get totalAcrossSponsors() {
     let sum = 0;
     for (const cart of this.carts.values()) {
       for (const item of cart.items) sum += item.unitPrice * item.quantity;
     }
     return sum;
+  }
+  /**
+   * Shipping across the carts, from what the server cart says of its lines:
+   * the rate chosen for them, else the cheapest one offered (the one the
+   * checkout preselects). null when some cart has no known rate — the footer
+   * says it is worked out in the checkout then.
+   */
+  get shippingAcrossSponsors() {
+    let sum = 0;
+    let any = false;
+    for (const cart of this.carts.values()) {
+      if (cart.items.length === 0) continue;
+      const rate = cartShipping(cart.items, cart.currency);
+      if (rate === null) return null;
+      sum += rate;
+      any = true;
+    }
+    return any ? sum : null;
   }
   get primaryCurrency() {
     for (const cart of this.carts.values()) return cart.currency;
@@ -17588,12 +20822,12 @@ var VioCart = class extends i4 {
     const isEmpty = this.itemCount === 0;
     const sponsorCarts = [...this.carts.values()].filter((c4) => c4.items.length > 0);
     return b2`
-      <div class="backdrop" @click=${this.close}></div>
+      <div class="backdrop" data-vio-cta="close" data-vio-cta-label="" @click=${this.close}></div>
       <aside class="drawer" role="dialog" aria-modal="true" aria-label=${this.heading} tabindex="-1">
-        <div class="handle" @click=${this.close} aria-hidden="true"></div>
+        <div class="handle" data-vio-cta="close" data-vio-cta-label="" @click=${this.close} aria-hidden="true"></div>
         <div class="header">
           <h2 class="heading">${this.confirmedOrder ? "Takk!" : this.heading}</h2>
-          <button class="close" @click=${this.close} aria-label="Lukk">×</button>
+          <button class="close" data-vio-cta="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
         ${this.confirmedOrder ? this.renderConfirmation() : isEmpty ? b2`<div class="empty">${this.emptyLabel}</div>` : b2`
@@ -17615,6 +20849,8 @@ var VioCart = class extends i4 {
                                 <span class="item-qty">
                                   <button
                                     class="qty-btn"
+                                    data-vio-cta="quantity_minus"
+                                    data-vio-cta-line=${item.id}
                                     @click=${() => this.onDecrement(item)}
                                     aria-label="Reduser"
                                   >
@@ -17623,6 +20859,8 @@ var VioCart = class extends i4 {
                                   ${item.quantity}
                                   <button
                                     class="qty-btn"
+                                    data-vio-cta="quantity_plus"
+                                    data-vio-cta-line=${item.id}
                                     @click=${() => this.onIncrement(item)}
                                     aria-label="Øk"
                                   >
@@ -17630,6 +20868,8 @@ var VioCart = class extends i4 {
                                   </button>
                                   <button
                                     class="qty-btn"
+                                    data-vio-cta="remove"
+                                    data-vio-cta-line=${item.id}
                                     @click=${() => this.onRemove(item)}
                                     aria-label="Fjern"
                                     style="margin-left: 8px;"
@@ -17659,16 +20899,21 @@ var VioCart = class extends i4 {
                     ${formatPrice(this.totalAcrossSponsors, this.primaryCurrency)}
                   </span>
                 </div>
+                ${this.renderShippingRows()}
                 <button
                   class="checkout-btn"
+                  data-vio-cta="checkout"
                   @click=${this.onCheckout}
+                  ?disabled=${!this.payable}
                   aria-label="Til kassen"
                 >
                   Til kassen
                 </button>
+                ${this.methodsPending ? b2`<div class="methods-pending" role="status" aria-label="Laster betalingsmåter"></div>` : ""}
                 ${this.methodEnabled("apple-pay") && this.applePayAvailable ? b2`
                       <button
                         class="applepay-btn"
+                        data-vio-cta="apple_pay"
                         @click=${this.onApplePay}
                         aria-label="Betal med Apple Pay"
                       >
@@ -17679,6 +20924,7 @@ var VioCart = class extends i4 {
                 ${this.methodEnabled("stripe") ? b2`
                       <button
                         class="stripe-btn"
+                        data-vio-cta="stripe"
                         @click=${this.onStripe}
                         aria-label="Betal med Stripe"
                       >
@@ -17688,6 +20934,7 @@ var VioCart = class extends i4 {
                 ${this.methodEnabled("klarna") ? b2`
                       <button
                         class="klarna-btn"
+                        data-vio-cta="klarna"
                         @click=${this.onKlarnaExpress}
                         aria-label="Betal med Klarna"
                       >
@@ -17710,20 +20957,52 @@ var VioCart = class extends i4 {
                           stretched="true"
                           role="button"
                           aria-label="Betal med Vipps"
+                          data-vio-cta="vipps"
                           @click=${this.onVipps}
                         ></vipps-mobilepay-button>
                       ` : b2`
                         <button
                           class="vipps-btn"
+                          data-vio-cta="vipps"
                           @click=${this.onVipps}
                           aria-label="Betal med Vipps"
                         >
                           <span class="vipps-logo">vipps</span>
                         </button>
                       ` : ""}
+                ${this.renderBrandHighlights()}
               </div>
             `}
       </aside>
+    `;
+  }
+  /**
+   * The selling brand's promises under the ways to pay, as in the product
+   * detail (one article = one brand: the cart's brand). Hidden with the theme's
+   * `cartHighlightsDisplay: 'none'`; nothing when the brand has none.
+   */
+  renderBrandHighlights() {
+    const sponsorId = [...this.carts.keys()].find((id) => (this.carts.get(id)?.items.length ?? 0) > 0);
+    if (sponsorId === void 0) return "";
+    return renderHighlights(resolveSponsorIdentity(sponsorId)?.highlights ?? []);
+  }
+  /** «Frakt» (the chosen or cheapest rate) and «Totalt» with it; «Beregnes i kassen» when unknown. */
+  renderShippingRows() {
+    const shipping = this.shippingAcrossSponsors;
+    const from = shipping !== null && shipping > 0 && [...this.carts.values()].some(
+      (cart) => cart.items.length > 0 && cartShippingIsFrom(cart.items, cart.currency)
+    );
+    const fra = from ? "fra " : "";
+    return b2`
+      <div class="shipping-row" part="cart-shipping">
+        <span class="subtotal-label">Frakt</span>
+        <span>${shipping === null ? "Beregnes i kassen" : shipping <= 0 ? "Gratis" : `${fra}${formatPrice(shipping, this.primaryCurrency)}`}</span>
+      </div>
+      ${shipping !== null ? b2`<div class="total-row" part="cart-total">
+            <span>Totalt</span>
+            <span>${fra}${formatPrice(this.totalAcrossSponsors + shipping, this.primaryCurrency)}</span>
+          </div>` : ""}
+      <p class="shipping-hint" part="cart-shipping-hint">Frakt velger du i Vipps eller i neste steg.</p>
     `;
   }
   renderConfirmation() {
@@ -17748,7 +21027,7 @@ var VioCart = class extends i4 {
             <span>${formatPrice(o7.total, o7.currency)}</span>
           </div>
         </div>
-        <button class="confirm-close" @click=${this.closeConfirmation}>Lukk</button>
+        <button class="confirm-close" data-vio-cta="close" @click=${this.closeConfirmation}>Lukk</button>
       </div>
     `;
   }
@@ -17766,6 +21045,9 @@ __decorateClass([
   n5({ type: String, attribute: "subtotal-label" })
 ], VioCart.prototype, "subtotalLabel", 2);
 __decorateClass([
+  n5({ type: String, attribute: "vipps-cart-payment" })
+], VioCart.prototype, "vippsCartPayment", 2);
+__decorateClass([
   r5()
 ], VioCart.prototype, "carts", 2);
 __decorateClass([
@@ -17777,6 +21059,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], VioCart.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], VioCart.prototype, "methodsLoading", 2);
 __decorateClass([
   r5()
 ], VioCart.prototype, "vippsOfficial", 2);
@@ -17819,6 +21104,8 @@ function errorText(err) {
 var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
 );
+var EMPTY_CART_MESSAGE2 = "Handlekurven er tom.";
+var SHIPPING_NOT_SAVED_MESSAGE = "Kunne ikke lagre fraktmetoden. Pr\xF8v igjen.";
 var _VioCheckout = class _VioCheckout extends i4 {
   constructor() {
     super(...arguments);
@@ -17924,6 +21211,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       firstName: "",
       lastName: "",
       email: "",
+      phone: "",
       address: "",
       postalCode: "",
       city: ""
@@ -18035,6 +21323,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.paymentError = detail.method === "klarna" ? `Klarna-betalingen kunne ikke fullf\xF8res: ${detail.error}` : friendlyPaymentError(detail.error, detail.method);
       this.open = true;
     };
+    /** Stops reporting the taps on the buttons (`vio:cta-click`). */
+    this.stopCtaClicks = null;
+    /** What a tap on a button of the checkout says (`vio:cta-click`): the sponsor whose cart it pays. */
+    this.ctaContext = () => ({
+      sponsorId: this.checkoutState?.sponsorId ?? this.orderSponsor?.sponsorId
+    });
     /** Payment events still waiting for their buyer reference: settled early (without it) when the page hides or the element leaves. */
     this.pendingSuccessEmits = /* @__PURE__ */ new Set();
   }
@@ -18284,6 +21578,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       transition: border-color 0.15s;
     }
     .field input:focus { border-bottom-color: var(--vio-color-text, #0a0a0a); }
+    .field input[aria-invalid='true'] { border-bottom-color: var(--vio-color-accent, #c14a3b); }
+    .field-error { margin-top: 4px; font-size: 12px; color: var(--vio-color-accent, #c14a3b); }
 
     .payment-grid {
       display: grid;
@@ -18664,6 +21960,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     void Vio.checkout.resumeKlarnaReturn();
     void this.checkReturnPaymentStatus();
     this.requestUpdate();
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = trackCtaClicks(this, "checkout", this.ctaContext);
   }
   static {
     /**
@@ -18972,7 +22270,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.cleanReturnQueryParams(["checkout_id", "payment_processor"]);
         return;
       }
-      if (vioMethod === "klarna" && typeof sessionStorage !== "undefined" && sessionStorage.getItem("vio.klarna.pending.v1")) {
+      if (vioMethod === "klarna" && storageGet("session", "vio.klarna.pending.v1")) {
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         return;
       }
@@ -19116,6 +22414,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
   }
   disconnectedCallback() {
+    this.stopCtaClicks?.();
+    this.stopCtaClicks = null;
     Vio.checkout.removeEventListener("change", this.boundOnCheckoutChange);
     Vio.checkout.removeEventListener("payment-complete", this.boundOnPaymentComplete);
     Vio.checkout.removeEventListener("payment-error", this.boundOnPaymentError);
@@ -19137,6 +22437,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     if (changed.has("open") && this.open) {
       this.autoSelectSoleMethod();
+    }
+    if (changed.has("open") && this.open && this.checkoutState?.sponsorId && !this.orderConfirmed) {
+      void Vio.cart.refreshFromServer(this.checkoutState.sponsorId);
     }
     if ((changed.has("klarnaAvailable") && this.klarnaAvailable || changed.has("applePayAvailable") && this.applePayAvailable) && this.paymentMethodsResolved && !this.checkoutState?.paymentMethod) {
       this.autoSelectAttempted = false;
@@ -19236,12 +22539,34 @@ var _VioCheckout = class _VioCheckout extends i4 {
       (i5) => Array.isArray(i5.availableShippings) && i5.availableShippings.length > 0
     );
   }
-  /** Whether all mandatory Leveringsadresse fields are filled. */
+  /** The shipping country the mobile's calling code defaults to (no +prefix typed). */
+  get phoneCountry() {
+    return String(this.form.country || getGlobalCountryCode());
+  }
+  /**
+   * The mobile is required only for the standard Vipps payment — shopcart
+   * does not ask Vipps for the profile there. Every other method takes it
+   * when given and never waits for it (a host that pre-fills the form with
+   * `setAddress()` and no phone keeps working).
+   */
+  get phoneRequired() {
+    return this.checkoutState?.paymentMethod === "vipps";
+  }
+  /** A number typed that is not usable (nothing said while the field is empty). */
+  get phoneError() {
+    const raw = String(this.form.phone ?? "").trim();
+    return raw.length > 0 && !isValidPhone(raw, this.phoneCountry);
+  }
+  /** The mobile as the chosen method needs it: valid when required, else anything. */
+  get phoneReady() {
+    return !this.phoneRequired || isValidPhone(this.form.phone, this.phoneCountry);
+  }
+  /** Whether all mandatory Leveringsadresse fields are filled (the mobile only for Vipps). */
   get isAddressValid() {
     const f3 = this.form;
     if (!f3) return false;
     return Boolean(
-      f3.firstName && String(f3.firstName).trim().length > 0 && f3.lastName && String(f3.lastName).trim().length > 0 && f3.email && String(f3.email).trim().length > 0 && String(f3.email).includes("@") && f3.address && String(f3.address).trim().length > 0 && f3.postalCode && String(f3.postalCode).trim().length > 0 && f3.city && String(f3.city).trim().length > 0
+      f3.firstName && String(f3.firstName).trim().length > 0 && f3.lastName && String(f3.lastName).trim().length > 0 && f3.email && String(f3.email).trim().length > 0 && String(f3.email).includes("@") && f3.address && String(f3.address).trim().length > 0 && f3.postalCode && String(f3.postalCode).trim().length > 0 && f3.city && String(f3.city).trim().length > 0 && this.phoneReady
     );
   }
   /** Whether a valid shipping option is selected (when shippings exist). */
@@ -19481,21 +22806,44 @@ var _VioCheckout = class _VioCheckout extends i4 {
     });
   }
   /**
-   * Vipps from the checkout: Express when the channel allows it, so the
-   * shopper picks the delivery inside the app — our rate on the cart is the
-   * one preselected there — and never silently keeps the default our form
-   * chose for them. When the cart cannot have Express (several suppliers)
-   * the backend says so without creating a payment, and the plain payment
-   * follows: profile shared, the rate already on the cart.
+   * Vipps from the checkout: the STANDARD payment, always (Mote & Livsstil,
+   * 2026-10-28). The shopper filled our form — name, address, mobile — and
+   * chose the delivery with its price here; the payment carries that address
+   * and the rate on the cart, and Vipps only approves and pays. Express (the
+   * app filling in name and address) is the product detail's «Kjøp nå med
+   * Vipps» alone, even when the brand has Express on.
    */
   async startVippsFromCheckout() {
     const sponsorId = this.checkoutState?.sponsorId;
-    const express = await Vio.checkout.getVippsExpressEnabled(sponsorId);
-    if (express) {
-      const res = await Vio.checkout.startVippsPayment(sponsorId, this.form, { express: true });
-      if (res?.payment_url) return;
+    await Vio.checkout.startVippsPayment(sponsorId, this.form, { express: false });
+  }
+  /**
+   * The chosen delivery on the cart before a hosted payment is minted (its
+   * total depends on it). False — and the payment must not start — when it
+   * could not be saved: the selected rate has no supplier to save it under,
+   * or the backend refused. A cart with no rates at all has nothing to save.
+   */
+  async persistSelectedShipping(method) {
+    if (this.availableShippingsList.length === 0) return true;
+    const selectedOpt = this.shippingList.find((s4) => s4.id === this.selectedShipping);
+    if (!selectedOpt?.supplierId) {
+      if (typeof console !== "undefined") {
+        console.warn(`[VioCheckout] no supplier for the selected shipping \u2014 ${method} not started`);
+      }
+      return false;
     }
-    await Vio.checkout.startVippsPayment(sponsorId, this.form);
+    try {
+      const updated = await Vio.checkout.updateShippingsBySupplier(
+        [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
+        this.checkoutState?.sponsorId
+      );
+      return updated != null;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[VioCheckout] updateShippingsBySupplier on ${method} pay failed:`, err);
+      }
+      return false;
+    }
   }
   async onApplePay() {
     if (this.applePayInProgress) return;
@@ -19514,6 +22862,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.shippingBlocked) return;
     this.paymentError = null;
     this.paymentNotice = null;
+    if (!this.cartPayable) {
+      this.paymentError = EMPTY_CART_MESSAGE2;
+      return;
+    }
     if (method === "apple-pay") {
       void this.onApplePay();
       return;
@@ -19534,8 +22886,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
       Vio.checkout.selectPaymentMethod("nexi");
       return;
     }
-    if (method !== "vipps") {
-      const missing = !this.isAddressValid ? "Vennligst fyll ut alle feltene i leveringsadresse." : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode." : null;
+    {
+      const phoneMissing = method === "vipps" && !isValidPhone(this.form.phone, this.phoneCountry);
+      const missing = !this.isAddressValid || phoneMissing ? "Vennligst fyll ut alle feltene i leveringsadresse." : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode." : null;
       if (missing) {
         if (this.checkoutState?.paymentMethod !== method) {
           Vio.checkout.selectPaymentMethod(method);
@@ -19559,20 +22912,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.stripeRequested = true;
         return;
       }
-      const selectedOpt = this.shippingList.find((s4) => s4.id === this.selectedShipping);
-      if (selectedOpt?.supplierId) {
-        try {
-          await Vio.checkout.updateShippingsBySupplier(
-            [{ shipping_id: selectedOpt.id, supplier_id: Number(selectedOpt.supplierId) }],
-            this.checkoutState?.sponsorId
-          );
-        } catch (err) {
-          if (typeof console !== "undefined") {
-            console.warn("[VioCheckout] updateShippingsBySupplier on stripe pay failed:", err);
-          }
-        }
-      }
       this.stripeLoading = true;
+      if (!await this.persistSelectedShipping("stripe")) {
+        this.stripeLoading = false;
+        this.paymentError = SHIPPING_NOT_SAVED_MESSAGE;
+        return;
+      }
       void Vio.checkout.startStripePayment(this.checkoutState?.sponsorId, this.form).catch((err) => {
         if (typeof console !== "undefined") {
           console.warn("[VioCheckout] Stripe payment could not start:", err);
@@ -19584,6 +22929,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }
     if (method === "vipps") {
       this.vippsLoading = true;
+      if (!await this.persistSelectedShipping("vipps")) {
+        this.vippsLoading = false;
+        this.paymentError = SHIPPING_NOT_SAVED_MESSAGE;
+        return;
+      }
       const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: this.checkoutState?.sponsorId, source: "checkout" });
       void this.startVippsFromCheckout().catch((err) => {
         if (typeof console !== "undefined") {
@@ -19605,7 +22955,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const s4 = this.checkoutState;
     if (!s4 || !s4.paymentMethod) return;
     if (this.shippingBlocked) return;
-    if (s4.paymentMethod !== "vipps" && !this.isAddressValid) {
+    if (!this.cartPayable) {
+      this.paymentError = EMPTY_CART_MESSAGE2;
+      return;
+    }
+    if (!this.isAddressValid) {
       this.paymentError = "Vennligst fyll ut alle feltene i leveringsadresse.";
       return;
     }
@@ -19830,6 +23184,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return method === "apple-pay" || method === "klarna" || isEmbeddedMethod(method ?? "") || // Adyen's Drop-in brings its own Pay button.
     isFormFirstWidgetMethod(method ?? "");
   }
+  /**
+   * A total above 0 — every pay button needs it. The state's subtotal follows
+   * the cart (CheckoutManager.onCartChange): a cart emptied or paid in
+   * another tab drops it to 0 here.
+   */
+  get cartPayable() {
+    return (this.checkoutState?.subtotal ?? 0) > 0;
+  }
   orderTotal() {
     const s4 = this.checkoutState;
     if (!s4) return "";
@@ -19874,7 +23236,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   render() {
     return b2`
-      <div class="backdrop" @click=${this.close}></div>
+      <div class="backdrop" data-vio-cta="close" data-vio-cta-label="" @click=${this.close}></div>
       <div
         class="modal ${this.express ? "as-side" : this.orderConfirmed ? "as-confirm" : ""}"
         role="dialog"
@@ -19882,13 +23244,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
         aria-label=${this.heading}
         tabindex="-1"
       >
-        <div class="handle" @click=${this.close} aria-hidden="true"></div>
+        <div class="handle" data-vio-cta="close" data-vio-cta-label="" @click=${this.close} aria-hidden="true"></div>
         <div class="topbar">
           <div class="topbar-title">
             <h2 class="heading">${this.orderConfirmed ? "Takk!" : this.heading}</h2>
             ${this.renderTopbarSponsor()}
           </div>
-          <button class="close" @click=${this.close} aria-label="Lukk">×</button>
+          <button class="close" data-vio-cta="close" @click=${this.close} aria-label="Lukk">×</button>
         </div>
 
         <div class="body">
@@ -19985,7 +23347,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return b2`
       <section class="section provider-receipt">
         <slot name=${slot}></slot>
-        <button class="confirm-close" @click=${this.close}>Lukk</button>
+        <button class="confirm-close" data-vio-cta="close" @click=${this.close}>Lukk</button>
       </section>
     `;
   }
@@ -20081,7 +23443,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 </div>
               </div>
             ` : ""}
-        <button class="confirm-close" @click=${this.close}>Fortsett å handle</button>
+        <button class="confirm-close" data-vio-cta="close" @click=${this.close}>Fortsett å handle</button>
       </section>
     `;
   }
@@ -20667,6 +24029,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 class="payment-btn primary complete-cta"
                 ?disabled=${!ready}
                 title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
+                data-vio-cta="pay_adyen"
                 @click=${() => {
       this.adyenRequested = true;
     }}
@@ -20837,6 +24200,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 class="payment-btn primary complete-cta"
                 ?disabled=${!ready}
                 title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
+                data-vio-cta="pay_stripe"
                 @click=${() => {
       this.stripeRequested = true;
     }}
@@ -20849,6 +24213,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               <button
                 class="payment-btn primary complete-cta"
                 ?disabled=${this.stripePaying || !this.stripeReady}
+                data-vio-cta="pay_stripe_confirm"
                 @click=${() => void this.onStripePay()}
               >
                 ${this.stripePaying ? "Betaler\u2026" : `Betal ${this.payTotalLabel()}`}
@@ -20915,6 +24280,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         <div class="klarna-widget" id="vio-klarna-payments-container"></div>
         <button
           class="payment-btn primary complete-cta"
+          data-vio-cta="pay_klarna"
           @click=${() => void this.onKlarnaAuthorize()}
           ?disabled=${this.klarnaAuthorizing || !this.klarnaHandle || this.klarnaMounting || !this.express && (!this.isAddressValid || !this.hasSelectedShipping)}
         >
@@ -20975,7 +24341,6 @@ var _VioCheckout = class _VioCheckout extends i4 {
   renderCheckoutBody() {
     const method = this.checkoutState?.paymentMethod;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
-    const isVipps = method === "vipps";
     const needsOurForm = !!method && !collectsOwnAddress(method);
     return b2`
           ${needsOurForm ? b2`
@@ -21013,6 +24378,22 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 .value=${this.form.email}
                 @input=${(e7) => this.onFieldChange("email", e7.target.value)}
               />
+            </div>
+            <div class="field">
+              <label for="vio-checkout-phone">${this.phoneRequired ? "Mobilnummer *" : "Mobilnummer (valgfritt)"}</label>
+              <input
+                id="vio-checkout-phone"
+                class="phone-input"
+                type="tel"
+                ?required=${this.phoneRequired}
+                inputmode="tel"
+                autocomplete="tel"
+                placeholder=${this.phoneCountry.toUpperCase() === "NO" ? "8 siffer" : "+46 70 123 45 67"}
+                aria-invalid=${this.phoneError ? "true" : "false"}
+                .value=${this.form.phone ?? ""}
+                @input=${(e7) => this.onFieldChange("phone", e7.target.value)}
+              />
+              ${this.phoneError ? b2`<div class="field-error" role="alert">Skriv et gyldig mobilnummer (med landskode, f.eks. +46, hvis det ikke er norsk)</div>` : ""}
             </div>
             <div class="field">
               <label>Adresse *</label>
@@ -21078,22 +24459,6 @@ var _VioCheckout = class _VioCheckout extends i4 {
           </section>
           ` : ""}
 
-          ${isVipps ? b2`
-                <section class="section">
-                  <div class="section-label">Kontakt</div>
-                  <div class="field">
-                    <label>E-post * <span style="font-weight:400;opacity:0.6">(for kvittering — adresse fylles ut i Vipps)</span></label>
-                    <input
-                      type="email"
-                      required
-                      autocomplete="email"
-                      .value=${this.form.email}
-                      @input=${(e7) => this.onFieldChange("email", e7.target.value)}
-                    />
-                  </div>
-                </section>
-              ` : ""}
-
           <section class="section">
             <div class="section-label">
               ${needsOurForm ? "Steg 2" : "Betaling"}
@@ -21132,8 +24497,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "stripe" && this.stripeMode !== "native" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          data-vio-cta="pay_stripe"
                           @click=${() => void this.onPay("stripe")}
-                          ?disabled=${this.stripeLoading || !this.isAddressValid || !this.hasSelectedShipping}
+                          ?disabled=${this.stripeLoading || !this.cartPayable || !this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           ${this.stripeLoading ? "G\xE5r til Stripe\u2026" : `Betal ${this.payTotalLabel()} med Stripe`}
@@ -21142,8 +24508,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          data-vio-cta="pay_vipps"
                           @click=${() => void this.onPay("vipps")}
-                          ?disabled=${this.vippsLoading}
+                          ?disabled=${this.vippsLoading || !this.cartPayable || !this.isAddressValid || !this.hasSelectedShipping}
+                          title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           ${this.vippsLoading ? "G\xE5r til Vipps\u2026" : `Betal ${this.payTotalLabel()} med Vipps`}
                         </button>
@@ -21151,8 +24519,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${method === "apple-pay" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          data-vio-cta="pay_apple_pay"
                           @click=${() => void this.onPay("apple-pay")}
-                          ?disabled=${this.applePayInProgress || !this.isAddressValid || !this.hasSelectedShipping}
+                          ?disabled=${this.applePayInProgress || !this.cartPayable || !this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           ${this.applePayInProgress ? "\xC5pner\u2026" : `Betal ${this.payTotalLabel()} med Apple Pay`}
@@ -21161,8 +24530,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   ${showCompleteCta && method !== "stripe" && method !== "vipps" ? b2`
                         <button
                           class="payment-btn primary complete-cta"
+                          data-vio-cta=${`pay_${ctaMethod(method)}`}
                           @click=${this.onCompleteOrder}
-                          ?disabled=${!this.isAddressValid || !this.hasSelectedShipping}
+                          ?disabled=${!this.cartPayable || !this.isAddressValid || !this.hasSelectedShipping}
                           title=${!this.isAddressValid ? "Vennligst fyll ut leveringsadresse" : !this.hasSelectedShipping ? "Vennligst velg en fraktmetode" : ""}
                         >
                           Betal ${this.payTotalLabel()} med ${this.methodLabel(method ?? null)}
@@ -21189,6 +24559,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("apple-pay") && this.applePayAvailable && !this.stripeOwnsWallets() ? b2`
                           <button
                             class="payment-btn primary"
+                            data-vio-cta="select_apple_pay"
+                            data-vio-cta-label="Apple Pay"
                             @click=${() => this.onPay("apple-pay")}
                             ?disabled=${this.applePayInProgress}
                           >
@@ -21198,6 +24570,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     ${this.methodEnabled("stripe") ? b2`
                           <button
                             class="payment-btn"
+                            data-vio-cta="select_stripe"
+                            data-vio-cta-label="Stripe"
                             @click=${() => this.onPay("stripe")}
                             ?disabled=${this.stripeLoading}
                           >
@@ -21205,37 +24579,37 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           </button>
                         ` : ""}
                     ${this.methodEnabled("klarna") && this.klarnaAvailable ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("klarna")}>
+                          <button class="payment-btn" data-vio-cta="select_klarna" data-vio-cta-label="Klarna" @click=${() => this.onPay("klarna")}>
                             Klarna
                           </button>
                         ` : ""}
                     ${this.methodEnabled("kustom") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("kustom")}>
+                          <button class="payment-btn" data-vio-cta="select_kustom" data-vio-cta-label="Kustom" @click=${() => this.onPay("kustom")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Kustom</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("qliro") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("qliro")}>
+                          <button class="payment-btn" data-vio-cta="select_qliro" data-vio-cta-label="Qliro" @click=${() => this.onPay("qliro")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Qliro</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("walley") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("walley")}>
+                          <button class="payment-btn" data-vio-cta="select_walley" data-vio-cta-label="Walley" @click=${() => this.onPay("walley")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Walley</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("nexi") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("nexi")}>
+                          <button class="payment-btn" data-vio-cta="select_nexi" data-vio-cta-label="Nexi" @click=${() => this.onPay("nexi")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Nexi</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("adyen") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("adyen")}>
+                          <button class="payment-btn" data-vio-cta="select_adyen" @click=${() => this.onPay("adyen")}>
                             <span style="font-weight:700;font-size:15px;letter-spacing:-0.01em">${this.methodLabel("adyen")}</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
-                          <button class="payment-btn" @click=${() => this.onPay("vipps")} aria-label="Vipps">
+                          <button class="payment-btn" data-vio-cta="select_vipps" @click=${() => this.onPay("vipps")} aria-label="Vipps">
                             ${this.vippsOfficial ? b2`<vipps-mobilepay-button
                                   brand="vipps"
                                   variant="primary"
@@ -21453,6 +24827,9 @@ __decorateClass([
   r5()
 ], _VioCheckout.prototype, "shippingsReadyFor", 2);
 var VioCheckout = _VioCheckout;
+function ctaMethod(method) {
+  return String(method ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+}
 
 // src/ui/elements.ts
 function registerVioElements() {
@@ -21632,6 +25009,14 @@ var THEME_KEY_TO_CSS_VAR = {
   detailImageZoom: "--vio-detail-image-zoom",
   detailImageInset: "--vio-detail-image-inset",
   detailImageBg: "--vio-detail-image-bg",
+  detailGallery: "--vio-detail-gallery",
+  carouselLayout: "--vio-carousel-layout",
+  detailCarouselPeek: "--vio-detail-carousel-peek",
+  detailDescriptionMode: "--vio-detail-description-mode",
+  detailDescriptionPreviewLines: "--vio-detail-description-preview-lines",
+  detailHighlightsDisplay: "--vio-detail-highlights-display",
+  detailShippingReturnsDisplay: "--vio-detail-shipping-returns-display",
+  cartHighlightsDisplay: "--vio-cart-highlights-display",
   detailThumbSize: "--vio-detail-thumb-size",
   detailThumbGap: "--vio-detail-thumb-gap",
   detailThumbRadius: "--vio-detail-thumb-radius",
@@ -21644,13 +25029,26 @@ var THEME_KEY_TO_CSS_VAR = {
   detailButtonRadius: "--vio-detail-button-radius",
   detailBuyPosition: "--vio-detail-buy-position",
   detailBuyShadow: "--vio-detail-buy-shadow",
+  cardFont: "--vio-card-font",
+  cardBorder: "--vio-card-border",
+  cardImageAspect: "--vio-card-image-aspect",
+  cardImageFit: "--vio-card-image-fit",
+  cardImageBg: "--vio-card-image-bg",
+  cardImagePadding: "--vio-card-image-padding",
+  cardMetaPadding: "--vio-card-meta-padding",
+  cardPriceFont: "--vio-card-price-font",
+  cardAccent: "--vio-card-accent",
+  cardBarRadius: "--vio-card-bar-radius",
+  cardDescriptionLines: "--vio-card-description-lines",
+  cardRetailerOrder: "--vio-card-retailer-order",
   cartWidth: "--vio-cart-width",
   checkoutWidth: "--vio-checkout-width",
   confirmLogoHeight: "--vio-confirm-logo-height",
   confirmTitleSize: "--vio-confirm-title-size",
   confirmCheckBg: "--vio-confirm-check-bg",
   redirectBg: "--vio-redirect-bg",
-  redirectSpinner: "--vio-redirect-spinner"
+  redirectSpinner: "--vio-redirect-spinner",
+  vippsCartPayment: "--vio-vipps-cart-payment"
 };
 function applyVioTheme(overrides, target = typeof document !== "undefined" ? document.documentElement : null) {
   if (!target) return;
@@ -21673,7 +25071,8 @@ var VioProduct2 = o({
   elementClass: VioProduct,
   events: {
     onProductClick: "vio:product-click",
-    onProductAdd: "vio:product-add"
+    onProductAdd: "vio:product-add",
+    onCtaClick: "vio:cta-click"
   }
 });
 var VioProductCarousel2 = o({
@@ -21688,7 +25087,9 @@ var VioProductDetail2 = o({
   elementClass: VioProductDetail,
   events: {
     onAddedToCart: "vio:added-to-cart",
-    onCheckoutOpen: "vio:checkout-open"
+    onCheckoutOpen: "vio:checkout-open",
+    onLayoutApplied: "vio:detail-layout-applied",
+    onCtaClick: "vio:cta-click"
   }
 });
 var VioCart2 = o({
@@ -21697,7 +25098,8 @@ var VioCart2 = o({
   elementClass: VioCart,
   events: {
     onPaymentSuccess: "vio:payment-success",
-    onCheckoutOpen: "vio:checkout-open"
+    onCheckoutOpen: "vio:checkout-open",
+    onCtaClick: "vio:cta-click"
   }
 });
 var VioCheckout2 = o({
@@ -21705,7 +25107,8 @@ var VioCheckout2 = o({
   tagName: "vio-checkout",
   elementClass: VioCheckout,
   events: {
-    onPaymentSuccess: "vio:payment-success"
+    onPaymentSuccess: "vio:payment-success",
+    onCtaClick: "vio:cta-click"
   }
 });
 export {
@@ -21721,17 +25124,25 @@ export {
   CREATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION,
   CREATE_PAYMENT_STRIPE_MUTATION,
   CREATE_PAYMENT_VIPPS_MUTATION,
+  CTA_ID_PATTERN,
+  CTA_LOCATIONS,
+  CTA_TEXT_MAX_LENGTH,
+  CTA_VARIANT_PATTERN,
   CartManager,
   CheckoutManager,
   CommerceClient,
   Configuration,
   DELETE_ITEM_MUTATION,
+  DETAIL_SECTION_IDS,
+  ESSENTIAL_DETAIL_SECTIONS,
   GET_AVAILABLE_PAYMENT_METHODS_QUERY,
   GET_CART_QUERY,
   GET_CHECKOUT_QUERY,
   GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
   GET_VIPPS_STATUS_QUERY,
   GRAPHQL_INT_MAX,
+  INTERNAL_KEY,
+  INTERNAL_PARAM,
   LINE_ORIGIN_CAPS,
   SDK_VERSION,
   UPDATE_CHECKOUT_MUTATION,
@@ -21768,9 +25179,13 @@ export {
   createPaymentStripe,
   createPaymentVipps,
   createVioApi,
+  ctaContextOf,
+  ctaText,
+  defaultDetailLayout,
   deleteItem,
   displayPrice,
   dominantCampaignOf,
+  effectiveDetailSections,
   ensureVippsButton,
   entryContextOf,
   executeCartGraphQL,
@@ -21785,12 +25200,14 @@ export {
   getGlobalCurrency,
   getLineItemsBySupplier,
   getVippsStatus,
+  isCtaId,
   isUnknownFeatureError,
   isUnknownTokenError,
   landingUrl,
   lineOriginWire,
   lineOrigins,
   normalizeBuyerRef,
+  normalizeDetailLayout,
   normalizeOrigin,
   normalizeScope,
   normalizeSlotKind,
@@ -21798,10 +25215,13 @@ export {
   primaryImageUrl,
   purchaseFromPaymentSuccess,
   purchaseIdsOf,
+  readInternal,
   resetGatewayFeatures,
   resolveCampaignId,
   resolveClientContext,
   resolveContent,
+  resolveDetailLayout,
+  resolveInternal,
   resolveLanding,
   resolveSlotCampaign,
   sameOrigin,
@@ -21814,7 +25234,8 @@ export {
   updateItem,
   updateShippingsBySupplier,
   vippsButtonAttributes,
-  withGatewayFeature
+  withGatewayFeature,
+  writeInternal
 };
 /*! Bundled license information:
 

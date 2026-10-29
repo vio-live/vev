@@ -20,6 +20,7 @@ import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame, useFrameWidth } from
 import {
   productToItem,
   trackAddToCart,
+  trackCta,
   trackEvent,
   trackSelectItem,
   trackViewItem,
@@ -260,8 +261,9 @@ function resolveDiscount(p: any, mode?: string, manual?: string): string | null 
 
 /** Fetch a single product DTO (with retry). Returns { product, loading }.
  * Without a sponsor yet (no bootstrap) it keeps loading: it waits for one
- * rather than asking Commerce with a made-up id. */
-export function useVioProduct(productId?: number, sponsorId?: number | null) {
+ * rather than asking Commerce with a made-up id. `campaignId`: the block's
+ * campaign, whose channel the product is read from (SDK 0.33). */
+export function useVioProduct(productId?: number, sponsorId?: number | null, campaignId?: number | null) {
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -277,7 +279,7 @@ export function useVioProduct(productId?: number, sponsorId?: number | null) {
     }
     let cancelled = false;
     setLoading(true);
-    fetchVioProduct(productId, sponsorId).then((p) => {
+    fetchVioProduct(productId, sponsorId, campaignId).then((p) => {
       if (cancelled) return;
       setProduct(p);
       setLoading(false);
@@ -285,7 +287,7 @@ export function useVioProduct(productId?: number, sponsorId?: number | null) {
     return () => {
       cancelled = true;
     };
-  }, [productId, sponsorId]);
+  }, [productId, sponsorId, campaignId]);
   return { product, loading };
 }
 
@@ -525,6 +527,7 @@ export function ProductCardView({
   const doVipps = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!p || vippsBusy || sponsorId == null) return;
+    ctaClick("vipps", vippsLabel);
     if (hasVariants) {
       openDetail();
       return;
@@ -566,13 +569,23 @@ export function ProductCardView({
     }
   };
 
+  // A tap on one of the card's buttons, for the dashboard's «Buttons»
+  // (SDK 0.37): the SDK card's ids — `open` (the detail), `add` — and `vipps`.
+  const ctaClick = (cta: string, label?: string) => {
+    if (productId == null || sponsorId == null) return;
+    trackCta({ ...attribution(), cta, location: "card", label, variant: buttonStyle, productId, sponsorId });
+  };
+
   const onImageClick = () => {
-    if (hasVariants || imageClickAction !== "add") openDetail();
+    const opens = hasVariants || imageClickAction !== "add";
+    ctaClick(opens ? "open" : "add");
+    if (opens) openDetail();
     else doAdd();
   };
 
   const onButton = (e: React.MouseEvent) => {
     e.stopPropagation();
+    ctaClick(buttonAction === "detail" ? "open" : "add", buttonStyle === "icon" ? undefined : buttonLabel);
     buttonAction === "detail" ? openDetail() : doAdd();
   };
 
@@ -764,7 +777,9 @@ export function VioProductCardSelf({
   // sponsor ids falls to the key's primary). A campaign assigned to the
   // card's slot overrides all of that with its own sponsor.
   const activeSponsor = useActiveSponsorId(sponsorId, slotId);
-  const { product, loading } = useVioProduct(productId, activeSponsor);
+  // The channel of the card's campaign: its cart and checkout sell there.
+  const blockCampaignId = activeSponsor != null ? vioAttribution(slotId, activeSponsor).campaignId ?? null : null;
+  const { product, loading } = useVioProduct(productId, activeSponsor, blockCampaignId);
   const qty = useCartQty(productId, activeSponsor);
   // Registered once the product is known — in the editor too: its title names
   // the slot ("Lue sort · Artikkel"), `Card 2 · Artikkel` when there is none.

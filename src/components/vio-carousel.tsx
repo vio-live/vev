@@ -103,6 +103,8 @@ export default function VioProductCarousel(props: Props) {
   // The page's active sponsor, live — the same source as the card and the grid
   // — unless a campaign is assigned to this slot: then that campaign's sponsor.
   const activeSponsor = useActiveSponsorId(undefined, slot);
+  // The channel of the block's campaign: its cart and checkout sell there (SDK 0.33).
+  const blockCampaignId = activeSponsor != null ? vioAttribution(slot, activeSponsor).campaignId ?? null : null;
   // Impresión REAL del componente entero (≥50% visible ≥1s, una vez por
   // carga), con los productos que muestra. Cuenta el CONTENEDOR, no cada
   // tarjeta de adentro: eso sería doble conteo. Corre cuando hay productos,
@@ -144,7 +146,7 @@ export default function VioProductCarousel(props: Props) {
     // cards never pair sponsor B with sponsor A's products.
     setList((prev) => (prev.length ? [] : prev));
     let cancelled = false;
-    fetchVioProducts(ids, activeSponsor).then((prods) => {
+    fetchVioProducts(ids, activeSponsor, blockCampaignId).then((prods) => {
       if (cancelled) return;
       setList(prods);
       trackViewItemList(
@@ -157,7 +159,7 @@ export default function VioProductCarousel(props: Props) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, activeSponsor]);
+  }, [idsKey, activeSponsor, blockCampaignId]);
 
   const cardConfig = pickCardConfig(props);
   const perView = Math.max(1, Number(visible) || 4);

@@ -10,7 +10,7 @@ import {
   useVioSlot,
   vioAttribution,
 } from "./vio-helpers";
-import { trackViewItem } from "./analytics";
+import { trackCta, trackViewItem } from "./analytics";
 
 /**
  * Vio · Open Product Info — an ACTION addon. Attach it to ANY element and pick a
@@ -43,7 +43,10 @@ export default function VioOpenProduct({ product, className, children, slot, slo
     const sponsorId = sponsorForSlot(slotId, sponsorForCommerce(product?.sponsorId));
     // detail opens → product view (id only here); typed as the detail, the
     // component the reader actually sees (COMPONENT_TEMPLATE_ID.open).
-    trackViewItem({ productId }, vioAttribution(slotId, sponsorId, COMPONENT_TEMPLATE_ID.open));
+    const attr = vioAttribution(slotId, sponsorId, COMPONENT_TEMPLATE_ID.open);
+    trackViewItem({ productId }, attr);
+    // The tap itself, for the dashboard's «Buttons» (an article block).
+    trackCta({ ...attr, cta: "open", location: "block", productId, sponsorId: sponsorId ?? undefined });
     openProductInfo(Number(productId), product?.sponsorId, undefined, slotId);
   };
 

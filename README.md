@@ -231,10 +231,29 @@ as its `vio-scope` / `vio-scope-name`, so a title the store resolves late still 
   the package loads at all — and the collector's `minimal` privacy mode.
 - `content_title` and the detail's slot carry the Vev page (see *Page identity* above).
 
-The vendored SDK is **0.25.0** (built from `vio-web-sdk` branch `feat/contexto-estandar-0.25.0`, commit `5e252c8`, before its npm publish) (`Vio.registerSlot` / `campaignForSlot` / `attribution` /
-`content` / `cartSlices` / `pageCampaign`, `campaignId` in `Vio.init`, `origins` on the cart
-lines). The blocks still check for that API before calling it — a block must never throw
-into the editor — so with an older bundle they behave as before, unregistered.
+**With the 0.37.0 bundle** (2026-10-29):
+
+- `add_payment_info` when a backend checkout exists (the SDK's `vio:checkout-created`,
+  dispatched on `window`), with `commerce.checkout_id` and the method it was created for,
+  split per campaign like `begin_checkout`. It is what ties the order Commerce confirms
+  (`order_paid`) back to the visit: the dashboard's «Went to Vipps» and «Vipps payments»
+  count it. Since 0.35 the cart's Vipps button and the detail's Vipps-with-lines pay the
+  sponsor's whole cart by Express without `vio:checkout-open`, so for those this is the
+  only trace. `purchase` carries `checkout_id` too. Neither reaches GA4.
+- `cta_click` (the dashboard's «Buttons»): the SDK's detail, cart and checkout announce
+  their taps with `vio:cta-click`, which goes to `Vio.trackCta` (the SDK sends nothing
+  itself with `autoTrack: false`); the card's own buttons send `open`, `add` and `vipps`
+  at location `card`, and the open-product action / interaction `open` at `block`.
+- The detail runs with `noAddedToast`: Vev opens its cart drawer after an add, and the
+  SDK's «Lagt i handlekurven» toast would sit on top of it.
+- Cards, carousels and grids read their products on the channel of their block's
+  campaign (`Vio.commerceFor(sponsor, { campaignId })`), the one their cart and checkout
+  sell on (SDK 0.33).
+- A key change no longer clears the carts: each connection keeps its own since 0.33.
+
+The vendored SDK is **0.37.0**, built from `vio-web-sdk` `main` `b49ebbb` (what npm `0.37.0`
+was published from). The blocks still check for the API they call — a block must never
+throw into the editor — so with an older bundle they behave as before.
 
 ## Development
 
@@ -269,10 +288,15 @@ The blocks import the Vio core from [`vio-sdk/index.js`](./vio-sdk/index.js) —
 the SDK itself:
 
 ```bash
-cd ../vio-web-sdk && npx tsc --noEmit
-npx esbuild src/_vev-entry.ts --bundle --format=esm --external:react --external:react-dom \
-  --tsconfig=tsconfig.json --outfile=../vio-vev/vio-sdk/index.js
+cd ../vio-web-sdk && git checkout main && git pull --ff-only && npm ci && npm run typecheck
+# esbuild comes with the SDK's devDependencies (0.25.12): run `npm ci` first, or npx pulls the latest
+node_modules/.bin/esbuild src/_vev-entry.ts --bundle --format=esm --external:react --external:react-dom \
+  --tsconfig=tsconfig.json --outfile=../vev/vio-sdk/index.js
+grep -n 'var SDK_VERSION' ../vev/vio-sdk/index.js   # the version you meant
 ```
+
+One warning (`ignored-bare-import` for `src/ui/tokens.ts`) is expected: the design tokens
+are still injected.
 
 ### Deploy
 
