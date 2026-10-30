@@ -269,7 +269,11 @@ back filled from the checkout it left with, so «Betal … med Vipps» can be pr
 order — a paid Kustom order no longer comes back to «Vi kunne ikke bekrefte betalingen»
 (vio-web-sdk #128).
 
-The vendored SDK is **0.37.3**, built from `vio-web-sdk` `main` `e8d47fc` (the 0.37.3 release
+**With the 0.37.4 bundle** (2026-10-30): a provider's return read (Kustom, Qliro, Walley, Adyen) is
+tried again while the commerce API refuses the key — Vev boots in steps and the returning
+checkout's channel key is not known for the first seconds (vio-web-sdk #130).
+
+The vendored SDK is **0.37.4**, built from `vio-web-sdk` `main` `182a459` (the 0.37.4 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
