@@ -9337,7 +9337,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.1";
+var SDK_VERSION = "0.37.2";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -22354,6 +22354,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.verifyingReturn = null;
         this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
+        if (outcome !== "paid" && outcome !== "duplicate") {
+          await this.prefillFormFromCheckout(checkoutId, sponsorId);
+        }
       } else if (vioPayment === "success") {
         let outcome = "pending";
         let sawStatus = false;
@@ -22805,6 +22808,40 @@ var _VioCheckout = class _VioCheckout extends i4 {
   onFieldChange(field, value) {
     this.form = { ...this.form, [field]: value };
     Vio.checkout.setAddress(this.form);
+  }
+  /**
+   * The delivery form after a provider's return, from the checkout it left
+   * with. The page reloads on the way back and the form came back empty,
+   * though the shopper typed it before leaving — and the backend checkout has
+   * it: the standard Vipps payment puts the form's address on the checkout
+   * before the payment is created. A cancelled Vipps payment came back with
+   * «Betal … med Vipps» greyed out under «Vennligst fyll ut leveringsadresse»
+   * (Alan, QA 2026-10-30, SDK 0.37.1). Only empty fields are filled, through
+   * the same path as typing; never throws.
+   */
+  async prefillFormFromCheckout(checkoutId, sponsorId) {
+    try {
+      if (!checkoutId || !this.checkoutState) return;
+      const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
+      const address = checkout?.shipping_address ?? checkout?.billing_address;
+      if (!address) return;
+      const text3 = (value) => typeof value === "string" ? value.trim() : "";
+      const code = text3(address.phone_code).replace(/^\+/, "");
+      const phone = text3(address.phone);
+      const found = {
+        firstName: text3(address.first_name),
+        lastName: text3(address.last_name),
+        email: text3(checkout?.email),
+        address: [text3(address.address1), text3(address.address2)].filter(Boolean).join(", "),
+        postalCode: text3(address.zip),
+        city: text3(address.city),
+        phone: phone ? code ? `+${code} ${phone}` : phone : ""
+      };
+      for (const [field, value] of Object.entries(found)) {
+        if (value && !text3(this.form[field])) this.onFieldChange(field, value);
+      }
+    } catch {
+    }
   }
   /** After choosing a method that needs our form, bring the form into view. */
   revealAddressForm() {
