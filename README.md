@@ -260,7 +260,11 @@ as its `vio-scope` / `vio-scope-name`, so a title the store resolves late still 
 - The Kustom return reads its order with the returning checkout's key, not the platform one
   (vio-web-sdk #123).
 
-The vendored SDK is **0.37.1**, built from `vio-web-sdk` `main` `eb3b717` (the 0.37.1 release
+**With the 0.37.2 bundle** (2026-10-30): after a cancelled Vipps payment the delivery form comes
+back filled from the checkout it left with, so «Betal … med Vipps» can be pressed again
+(vio-web-sdk #126).
+
+The vendored SDK is **0.37.2**, built from `vio-web-sdk` `main` `c1c21d2` (the 0.37.2 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
