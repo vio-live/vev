@@ -251,8 +251,17 @@ as its `vio-scope` / `vio-scope-name`, so a title the store resolves late still 
   sell on (SDK 0.33).
 - A key change no longer clears the carts: each connection keeps its own since 0.33.
 
-The vendored SDK is **0.37.0**, built from `vio-web-sdk` `main` `b49ebbb` (what npm `0.37.0`
-was published from). The blocks still check for the API they call — a block must never
+**With the 0.37.1 bundle** (2026-10-30):
+
+- Coming back from a cancelled Vipps payment no longer leaves «Henter betalingsmåter…» for good.
+  Vev mounts the checkout before its config block calls `Vio.init()`, so the return was read
+  before the connection's cart was there; the checkout now reopens on the cart once init lands
+  (vio-web-sdk #124).
+- The Kustom return reads its order with the returning checkout's key, not the platform one
+  (vio-web-sdk #123).
+
+The vendored SDK is **0.37.1**, built from `vio-web-sdk` `main` `eb3b717` (the 0.37.1 release
+commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
 ## Development
