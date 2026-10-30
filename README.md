@@ -264,7 +264,12 @@ as its `vio-scope` / `vio-scope-name`, so a title the store resolves late still 
 back filled from the checkout it left with, so «Betal … med Vipps» can be pressed again
 (vio-web-sdk #126).
 
-The vendored SDK is **0.37.2**, built from `vio-web-sdk` `main` `c1c21d2` (the 0.37.2 release
+**With the 0.37.3 bundle** (2026-10-30): the Kustom, Qliro, Walley and Adyen returns wait for
+`Vio.init()` (Vev calls it after mounting the checkout), reopen on the cart and then read the
+order — a paid Kustom order no longer comes back to «Vi kunne ikke bekrefte betalingen»
+(vio-web-sdk #128).
+
+The vendored SDK is **0.37.3**, built from `vio-web-sdk` `main` `e8d47fc` (the 0.37.3 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
