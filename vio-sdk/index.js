@@ -9337,7 +9337,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.2";
+var SDK_VERSION = "0.37.3";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -22147,6 +22147,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen\u2026";
+        if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, kustomReturn.checkoutId ?? "", "kustom");
         this.cleanReturnQueryParams([...KUSTOM_RETURN_QUERY_KEYS]);
         try {
           const order = await Vio.checkout.getKustomOrder(
@@ -22193,6 +22194,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.autoSelectAttempted = true;
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen\u2026";
+        if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, checkoutId, "qliro");
         try {
           const order = await Vio.checkout.getQliroOrder(
             checkoutId,
@@ -22247,6 +22249,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen\u2026";
+        if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, checkoutId, "walley");
         try {
           const order = await Vio.checkout.getWalleyOrder(
             checkoutId,
@@ -22303,6 +22306,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         }
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen\u2026";
+        if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, checkoutId, "adyen");
         let payment = null;
         let sawStatus = false;
         try {
