@@ -9337,7 +9337,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.3";
+var SDK_VERSION = "0.37.4";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -21113,6 +21113,10 @@ var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
 );
 var EMPTY_CART_MESSAGE2 = "Handlekurven er tom.";
+function isKeyRefused(err) {
+  const message = String(err?.message ?? err ?? "");
+  return /authenticat|unauthori[sz]ed|\b401\b/i.test(message);
+}
 var SHIPPING_NOT_SAVED_MESSAGE = "Kunne ikke lagre fraktmetoden. Pr\xF8v igjen.";
 var _VioCheckout = class _VioCheckout extends i4 {
   constructor() {
@@ -22150,10 +22154,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
         if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, kustomReturn.checkoutId ?? "", "kustom");
         this.cleanReturnQueryParams([...KUSTOM_RETURN_QUERY_KEYS]);
         try {
-          const order = await Vio.checkout.getKustomOrder(
-            kustomOrderId,
-            this.checkoutState?.sponsorId,
-            kustomReturn.checkoutId
+          const order = await this.readOnReturn(
+            () => Vio.checkout.getKustomOrder(
+              kustomOrderId,
+              this.checkoutState?.sponsorId,
+              kustomReturn.checkoutId
+            )
           );
           this.verifyingReturn = null;
           if (order?.status === "checkout_complete" && order.html_snippet) {
@@ -22196,9 +22202,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.verifyingReturn = "Bekrefter betalingen\u2026";
         if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, checkoutId, "qliro");
         try {
-          const order = await Vio.checkout.getQliroOrder(
-            checkoutId,
-            this.checkoutState?.sponsorId
+          const order = await this.readOnReturn(
+            () => Vio.checkout.getQliroOrder(checkoutId, this.checkoutState?.sponsorId)
           );
           this.verifyingReturn = null;
           if (order?.status === "Completed") {
@@ -22251,9 +22256,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.verifyingReturn = "Bekrefter betalingen\u2026";
         if (!this.checkoutState) await this.reopenOnceInitialized(sponsorId, checkoutId, "walley");
         try {
-          const order = await Vio.checkout.getWalleyOrder(
-            checkoutId,
-            this.checkoutState?.sponsorId
+          const order = await this.readOnReturn(
+            () => Vio.checkout.getWalleyOrder(checkoutId, this.checkoutState?.sponsorId)
           );
           this.verifyingReturn = null;
           if (order?.html_snippet) {
@@ -22310,10 +22314,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
         let payment = null;
         let sawStatus = false;
         try {
-          payment = await Vio.checkout.getAdyenPayment(
-            checkoutId,
-            { redirectResult: adyenReturn.redirectResult },
-            sponsorId || void 0
+          payment = await this.readOnReturn(
+            () => Vio.checkout.getAdyenPayment(
+              checkoutId,
+              { redirectResult: adyenReturn.redirectResult },
+              sponsorId || void 0
+            )
           );
           sawStatus = !!payment;
         } catch (err) {
@@ -23328,6 +23334,31 @@ var _VioCheckout = class _VioCheckout extends i4 {
      * the wrong one, and with the cart already completed by the order there is
      * none — every read after it then goes out with the wrong key.
      */
+    /** Waits between tries of a provider's read on the way back while its key is refused (see readOnReturn). */
+    this.RETURN_KEY_RETRY_DELAYS_MS = [1500, 3e3, 5e3, 8e3];
+  }
+  /**
+   * A provider's read on the way back, tried again while the commerce API
+   * refuses the key. A page that boots in steps (Vev: init, bootstrap, then
+   * init again with the page's campaign) cannot yet name the key of the
+   * returning checkout's channel for its first seconds, so the read goes out
+   * with the platform key and gets a 401. A paid Kustom order came back to
+   * «Vi kunne ikke bekrefte betalingen» (Alan, QA 2026-10-30, Vev 0.341); 45 s
+   * later the same page read with the right key. Any other error is thrown at
+   * once, as before.
+   */
+  async readOnReturn(read) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await read();
+      } catch (err) {
+        const delayMs = _VioCheckout.RETURN_KEY_RETRY_DELAYS_MS[attempt];
+        if (delayMs === void 0 || !isKeyRefused(err)) throw err;
+        await new Promise((r6) => setTimeout(r6, delayMs));
+      }
+    }
+  }
+  static {
     /** How long a return waits for `Vio.init()` to reopen the checkout on its cart. */
     this.RETURN_INIT_WAIT_MS = 1e4;
   }
