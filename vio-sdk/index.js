@@ -464,7 +464,7 @@ function createVioApi(options) {
   return new VioApi(options);
 }
 
-// node_modules/graphql-request/build/legacy/classes/ClientError.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/classes/ClientError.js
 var ClientError = class _ClientError extends Error {
   response;
   request;
@@ -486,7 +486,7 @@ var ClientError = class _ClientError extends Error {
   }
 };
 
-// node_modules/graphql-request/build/lib/prelude.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/lib/prelude.js
 var uppercase = (str) => str.toUpperCase();
 var callOrIdentity = (value) => {
   return typeof value === `function` ? value() : value;
@@ -542,7 +542,7 @@ var isPlainObject = (value) => {
   return typeof value === `object` && value !== null && !Array.isArray(value);
 };
 
-// node_modules/graphql-request/build/legacy/functions/batchRequests.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/functions/batchRequests.js
 var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   return documentsOrOptions.documents ? documentsOrOptions : {
     documents: documentsOrOptions,
@@ -551,7 +551,7 @@ var parseBatchRequestArgs = (documentsOrOptions, requestHeaders) => {
   };
 };
 
-// node_modules/graphql-request/build/legacy/functions/rawRequest.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/functions/rawRequest.js
 var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   return queryOrOptions.query ? queryOrOptions : {
     query: queryOrOptions,
@@ -561,7 +561,7 @@ var parseRawRequestArgs = (queryOrOptions, variables, requestHeaders) => {
   };
 };
 
-// node_modules/graphql/jsutils/devAssert.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/jsutils/devAssert.mjs
 function devAssert(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -569,12 +569,12 @@ function devAssert(condition, message) {
   }
 }
 
-// node_modules/graphql/jsutils/isObjectLike.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/jsutils/isObjectLike.mjs
 function isObjectLike(value) {
   return typeof value == "object" && value !== null;
 }
 
-// node_modules/graphql/jsutils/invariant.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/jsutils/invariant.mjs
 function invariant(condition, message) {
   const booleanCondition = Boolean(condition);
   if (!booleanCondition) {
@@ -584,7 +584,7 @@ function invariant(condition, message) {
   }
 }
 
-// node_modules/graphql/language/location.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/location.mjs
 var LineRegExp = /\r\n|[\n\r]/g;
 function getLocation(source, position) {
   let lastLineStart = 0;
@@ -603,7 +603,7 @@ function getLocation(source, position) {
   };
 }
 
-// node_modules/graphql/language/printLocation.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/printLocation.mjs
 function printLocation(location2) {
   return printSourceLocation(
     location2.source,
@@ -650,7 +650,7 @@ function printPrefixedLines(lines) {
   return existingLines.map(([prefix, line]) => prefix.padStart(padLen) + (line ? " " + line : "")).join("\n");
 }
 
-// node_modules/graphql/error/GraphQLError.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/error/GraphQLError.mjs
 function toNormalizedOptions(args) {
   const firstArg = args[0];
   if (firstArg == null || "kind" in firstArg || "length" in firstArg) {
@@ -908,7 +908,7 @@ function undefinedIfEmpty(array) {
   return array === void 0 || array.length === 0 ? void 0 : array;
 }
 
-// node_modules/graphql/error/syntaxError.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/error/syntaxError.mjs
 function syntaxError(source, position, description) {
   return new GraphQLError(`Syntax Error: ${description}`, {
     source,
@@ -916,7 +916,7 @@ function syntaxError(source, position, description) {
   });
 }
 
-// node_modules/graphql/language/ast.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/ast.mjs
 var Location = class {
   /** The character offset at which this Node begins. */
   /** The character offset at which this Node ends. */
@@ -1159,7 +1159,7 @@ var OperationTypeNode;
   OperationTypeNode2["SUBSCRIPTION"] = "subscription";
 })(OperationTypeNode || (OperationTypeNode = {}));
 
-// node_modules/graphql/language/directiveLocation.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/directiveLocation.mjs
 var DirectiveLocation;
 (function(DirectiveLocation2) {
   DirectiveLocation2["QUERY"] = "QUERY";
@@ -1184,7 +1184,7 @@ var DirectiveLocation;
   DirectiveLocation2["DIRECTIVE_DEFINITION"] = "DIRECTIVE_DEFINITION";
 })(DirectiveLocation || (DirectiveLocation = {}));
 
-// node_modules/graphql/language/kinds.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/kinds.mjs
 var Kind;
 (function(Kind2) {
   Kind2["NAME"] = "Name";
@@ -1238,7 +1238,7 @@ var Kind;
   Kind2["DIRECTIVE_ARGUMENT_COORDINATE"] = "DirectiveArgumentCoordinate";
 })(Kind || (Kind = {}));
 
-// node_modules/graphql/language/characterClasses.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/characterClasses.mjs
 function isWhiteSpace(code) {
   return code === 9 || code === 32;
 }
@@ -1256,7 +1256,7 @@ function isNameContinue(code) {
   return isLetter(code) || isDigit(code) || code === 95;
 }
 
-// node_modules/graphql/language/blockString.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/blockString.mjs
 function dedentBlockStringLines(lines) {
   var _firstNonEmptyLine2;
   let commonIndent = Number.MAX_SAFE_INTEGER;
@@ -1310,7 +1310,7 @@ function printBlockString(value, options) {
   return '"""' + result + '"""';
 }
 
-// node_modules/graphql/language/tokenKind.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/tokenKind.mjs
 var TokenKind;
 (function(TokenKind2) {
   TokenKind2["SOF"] = "<SOF>";
@@ -1338,7 +1338,7 @@ var TokenKind;
   TokenKind2["COMMENT"] = "Comment";
 })(TokenKind || (TokenKind = {}));
 
-// node_modules/graphql/language/lexer.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/lexer.mjs
 var Lexer = class {
   /** Source document used to derive error locations. */
   /** Most recent non-ignored token returned by the lexer. */
@@ -1904,7 +1904,7 @@ function readName(lexer, start) {
   );
 }
 
-// node_modules/graphql/jsutils/inspect.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/jsutils/inspect.mjs
 var MAX_ARRAY_LENGTH = 10;
 var MAX_RECURSIVE_DEPTH = 2;
 function inspect(value) {
@@ -1987,7 +1987,7 @@ function getObjectTag(object) {
   return tag;
 }
 
-// node_modules/graphql/jsutils/instanceOf.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/jsutils/instanceOf.mjs
 var isProduction = globalThis.process && // eslint-disable-next-line no-undef
 false;
 var instanceOf = (
@@ -2026,7 +2026,7 @@ spurious results.`);
   }
 );
 
-// node_modules/graphql/language/source.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/source.mjs
 var Source = class {
   /** The GraphQL source text. */
   /** Name used in diagnostics for this source, such as a file path or request name. */
@@ -2080,7 +2080,7 @@ function isSource(source) {
   return instanceOf(source, Source);
 }
 
-// node_modules/graphql/language/parser.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/parser.mjs
 function parse(source, options) {
   const parser = new Parser(source, options);
   const document2 = parser.parseDocument();
@@ -3579,7 +3579,7 @@ function getTokenKindDesc(kind) {
   return isPunctuatorTokenKind(kind) ? `"${kind}"` : kind;
 }
 
-// node_modules/graphql/language/printString.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/printString.mjs
 function printString(str) {
   return `"${str.replace(escapedRegExp, escapedReplacer)}"`;
 }
@@ -3755,7 +3755,7 @@ var escapeSequences = [
   "\\u009F"
 ];
 
-// node_modules/graphql/language/visitor.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/visitor.mjs
 var BREAK = Object.freeze({});
 function visit(root, visitor, visitorKeys = QueryDocumentKeys) {
   const enterLeaveMap = /* @__PURE__ */ new Map();
@@ -3884,7 +3884,7 @@ function getEnterLeaveForKind(visitor, kind) {
   };
 }
 
-// node_modules/graphql/language/printer.mjs
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql/language/printer.mjs
 function print(ast) {
   return visit(ast, printDocASTReducer);
 }
@@ -4158,13 +4158,13 @@ function hasMultilineItems(maybeArray) {
   return (_maybeArray$some = maybeArray === null || maybeArray === void 0 ? void 0 : maybeArray.some((str) => str.includes("\n"))) !== null && _maybeArray$some !== void 0 ? _maybeArray$some : false;
 }
 
-// node_modules/graphql-request/build/lib/http.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/lib/http.js
 var ACCEPT_HEADER = `Accept`;
 var CONTENT_TYPE_HEADER = `Content-Type`;
 var CONTENT_TYPE_JSON = `application/json`;
 var CONTENT_TYPE_GQL = `application/graphql-response+json`;
 
-// node_modules/graphql-request/build/legacy/lib/graphql.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/lib/graphql.js
 var cleanQuery = (str) => str.replace(/([\s,]|#[^\n\r]+)+/g, ` `).trim();
 var isGraphQLContentType = (contentType) => {
   const contentTypeLower = contentType.toLowerCase();
@@ -4227,7 +4227,7 @@ var isOperationDefinitionNode = (definition) => {
   return typeof definition === `object` && definition !== null && `kind` in definition && definition.kind === Kind.OPERATION_DEFINITION;
 };
 
-// node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/helpers/analyzeDocument.js
 var extractOperationName = (document2) => {
   let operationName = void 0;
   const defs = document2.definitions.filter(isOperationDefinitionNode);
@@ -4261,10 +4261,10 @@ var analyzeDocument = (document2, excludeOperationName) => {
   return { expression, operationName, isMutation };
 };
 
-// node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/helpers/defaultJsonSerializer.js
 var defaultJsonSerializer = JSON;
 
-// node_modules/graphql-request/build/legacy/helpers/runRequest.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/helpers/runRequest.js
 var runRequest = async (input) => {
   const config = {
     ...input,
@@ -4429,7 +4429,7 @@ var buildQueryParams = (params) => {
   }
 };
 
-// node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/classes/GraphQLClient.js
 var GraphQLClient = class {
   url;
   requestConfig;
@@ -4579,7 +4579,7 @@ var GraphQLClient = class {
   }
 };
 
-// node_modules/graphql-request/build/legacy/functions/request.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/graphql-request/build/legacy/functions/request.js
 var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
   return documentOrOptions.document ? documentOrOptions : {
     document: documentOrOptions,
@@ -9337,7 +9337,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.0";
+var SDK_VERSION = "0.37.1";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -10423,9 +10423,17 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       resumeKustom();
     }
   }
-  /** Re-read a Kustom order — used on the confirmation return trip. */
-  async getKustomOrder(orderId, sponsorId) {
-    const opts = await this.gqlOptions(sponsorId ?? this.state?.sponsorId);
+  /**
+   * Re-read a Kustom order — used on the confirmation return trip. The order
+   * id is Kustom's, so it says nothing of whose it is: `checkoutId` (Vio's,
+   * from the return URL) does. The sponsor and channel this tab remembered for
+   * that checkout win over the open checkout's, as for Qliro and Walley —
+   * without them a return with no cart left (the order already completed it)
+   * read with the platform key and was refused (QA, 2026-10-29).
+   */
+  async getKustomOrder(orderId, sponsorId, checkoutId) {
+    const checkout = checkoutId || void 0;
+    const opts = await this.gqlOptions(this.sponsorIdOfCheckout(checkout) ?? sponsorId ?? this.state?.sponsorId, checkout);
     return getKustomOrder(orderId, opts);
   }
   /** Render a Kustom html_snippet (e.g. the confirmation receipt) into a container. */
@@ -14488,7 +14496,7 @@ function vippsButtonAttributes(verb = "buy", opts = {}) {
 // src/react/index.ts
 import * as React from "react";
 
-// node_modules/@lit/react/create-component.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/react/create-component.js
 var e = /* @__PURE__ */ new Set(["children", "localName", "ref", "style", "className"]);
 var n = /* @__PURE__ */ new WeakMap();
 var t = (e7, t4, o7, l3, a3) => {
@@ -14519,7 +14527,7 @@ var o = ({ react: n6, tagName: o7, elementClass: l3, events: a3, displayName: s4
   return r6.displayName = s4 ?? l3.name, r6;
 };
 
-// node_modules/@lit/reactive-element/css-tag.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/css-tag.js
 var t2 = globalThis;
 var e2 = t2.ShadowRoot && (void 0 === t2.ShadyCSS || t2.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
 var s = Symbol();
@@ -14564,7 +14572,7 @@ var c = e2 ? (t4) => t4 : (t4) => t4 instanceof CSSStyleSheet ? ((t5) => {
   return r(e7);
 })(t4) : t4;
 
-// node_modules/@lit/reactive-element/reactive-element.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e3, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o3, getPrototypeOf: n3 } = Object;
 var a = globalThis;
 var c2 = a.trustedTypes;
@@ -14786,7 +14794,7 @@ var y = class extends HTMLElement {
 };
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = /* @__PURE__ */ new Map(), y[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
-// node_modules/lit-html/lit-html.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/lit-html/lit-html.js
 var t3 = globalThis;
 var i3 = (t4) => t4;
 var s2 = t3.trustedTypes;
@@ -15040,7 +15048,7 @@ var D = (t4, i5, s4) => {
   return h3._$AI(t4), h3;
 };
 
-// node_modules/lit-element/lit-element.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/lit-element/lit-element.js
 var s3 = globalThis;
 var i4 = class extends y {
   constructor() {
@@ -15069,7 +15077,7 @@ var o5 = s3.litElementPolyfillSupport;
 o5?.({ LitElement: i4 });
 (s3.litElementVersions ??= []).push("4.2.2");
 
-// node_modules/@lit/reactive-element/decorators/property.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/decorators/property.js
 var o6 = { attribute: true, type: String, converter: u, reflect: false, hasChanged: f };
 var r4 = (t4 = o6, e7, r6) => {
   const { kind: n6, metadata: i5 } = r6;
@@ -15099,15 +15107,15 @@ function n5(t4) {
   })(t4, e7, o7);
 }
 
-// node_modules/@lit/reactive-element/decorators/state.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/decorators/state.js
 function r5(r6) {
   return n5({ ...r6, state: true, attribute: false });
 }
 
-// node_modules/@lit/reactive-element/decorators/base.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/decorators/base.js
 var e5 = (e7, t4, c4) => (c4.configurable = true, c4.enumerable = true, Reflect.decorate && "object" != typeof t4 && Object.defineProperty(e7, t4, c4), c4);
 
-// node_modules/@lit/reactive-element/decorators/query.js
+// ../../../Documents/GitHub/vio-web-sdk/node_modules/@lit/reactive-element/decorators/query.js
 function e6(e7, r6) {
   return (n6, s4, i5) => {
     const o7 = (t4) => t4.renderRoot?.querySelector(e7) ?? null;
@@ -22125,7 +22133,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.returningFrom = "kustom";
         this.setOrderSponsor(sponsorId, kustomReturn.checkoutId);
         if (!this.checkoutState) {
-          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          const spIdToUse = this.returnSponsorOf(sponsorId, kustomReturn.checkoutId);
           if (spIdToUse) {
             try {
               Vio.checkout.open(spIdToUse);
@@ -22143,7 +22151,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
         try {
           const order = await Vio.checkout.getKustomOrder(
             kustomOrderId,
-            this.checkoutState?.sponsorId
+            this.checkoutState?.sponsorId,
+            kustomReturn.checkoutId
           );
           this.verifyingReturn = null;
           if (order?.status === "checkout_complete" && order.html_snippet) {
@@ -22169,7 +22178,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.returningFrom = "qliro";
         this.setOrderSponsor(sponsorId, checkoutId);
         if (!this.checkoutState) {
-          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          const spIdToUse = this.returnSponsorOf(sponsorId, checkoutId);
           if (spIdToUse) {
             try {
               Vio.checkout.open(spIdToUse);
@@ -22224,7 +22233,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.returningFrom = "walley";
         this.setOrderSponsor(sponsorId, checkoutId);
         if (!this.checkoutState) {
-          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          const spIdToUse = this.returnSponsorOf(sponsorId, checkoutId);
           if (spIdToUse) {
             try {
               Vio.checkout.open(spIdToUse);
@@ -22283,7 +22292,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.adyenSettled = true;
         this.autoSelectAttempted = true;
         if (!this.checkoutState) {
-          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          const spIdToUse = this.returnSponsorOf(sponsorId, checkoutId);
           if (spIdToUse) {
             try {
               Vio.checkout.open(spIdToUse);
@@ -22327,7 +22336,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       }
       if (vioMethod === "vipps" && checkoutId) {
         if (!this.checkoutState) {
-          const spIdToUse = sponsorId || [...Vio.cart.getAllCarts().keys()][0] || 0;
+          const spIdToUse = this.returnSponsorOf(sponsorId, checkoutId);
           if (spIdToUse) {
             try {
               Vio.checkout.open(spIdToUse);
@@ -22336,10 +22345,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
             }
           }
         }
+        const reopening = this.checkoutState ? null : this.reopenOnceInitialized(sponsorId, checkoutId, "vipps");
         this.setOrderSponsor(sponsorId, checkoutId);
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen med Vipps\u2026";
         const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
+        if (reopening) await reopening;
         this.verifyingReturn = null;
         this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
@@ -23259,14 +23270,55 @@ var _VioCheckout = class _VioCheckout extends i4 {
       </div>
     `;
   }
+  static {
+    /**
+     * Remember whose order this is and how it is named right now, before the
+     * cart that names it is cleared. Whose: the sponsor this tab remembered for
+     * the checkout when it was created (exact for that checkout id), else the
+     * one given (the return URL's `vio_sponsor`, the state it was paid in),
+     * else the open state's — a return without `vio_sponsor` (Qliro, Walley)
+     * re-opens the state with whichever cart comes first, which is a guess.
+     */
+    /**
+     * The sponsor to reopen the checkout with on a provider's return: the one
+     * the URL names, else the one this tab remembered for that checkout (a
+     * return URL need not name it — Kustom's never does), else the first cart.
+     * The first cart alone is a guess: with two brands' carts on the page it is
+     * the wrong one, and with the cart already completed by the order there is
+     * none — every read after it then goes out with the wrong key.
+     */
+    /** How long a return waits for `Vio.init()` to reopen the checkout on its cart. */
+    this.RETURN_INIT_WAIT_MS = 1e4;
+  }
   /**
-   * Remember whose order this is and how it is named right now, before the
-   * cart that names it is cleared. Whose: the sponsor this tab remembered for
-   * the checkout when it was created (exact for that checkout id), else the
-   * one given (the return URL's `vio_sponsor`, the state it was paid in),
-   * else the open state's — a return without `vio_sponsor` (Qliro, Walley)
-   * re-opens the state with whichever cart comes first, which is a guess.
+   * Reopen the checkout of a provider's return once `Vio.init()` is there.
+   * A page may mount the checkout before it calls `Vio.init()` — Vev does:
+   * the overlay renders with the page, the key comes from its config block a
+   * moment later — and then the checkout reads the return first. Each
+   * connection keeps its own carts (0.33), so before the init the cart is not
+   * there: `open()` throws, the checkout has no state, and nothing asks for
+   * the payment methods. A Vipps payment cancelled on Alan's Vev page
+   * (2026-10-29) came back to «Betalingen ble avbrutt…» over a
+   * «Henter betalingsmåter…» that never ended, with no cart to pay again.
+   * Never throws; does nothing when a state is already there.
    */
+  async reopenOnceInitialized(sponsorId, checkoutId, method) {
+    try {
+      if (!Configuration.isInitialized && !await Configuration.whenReady(_VioCheckout.RETURN_INIT_WAIT_MS)) return;
+      if (this.checkoutState) return;
+      const spId = this.returnSponsorOf(sponsorId, checkoutId);
+      if (!spId) return;
+      Vio.checkout.open(spId);
+      Vio.checkout.selectPaymentMethod(method);
+    } catch {
+    }
+  }
+  returnSponsorOf(sponsorId, checkoutId) {
+    if (sponsorId > 0) return sponsorId;
+    const remembered = rememberedCheckoutSponsor(checkoutId || void 0)?.sponsorId;
+    if (remembered) return remembered;
+    return [...Vio.cart.getAllCarts().keys()][0] || 0;
+  }
   setOrderSponsor(sponsorId, checkoutId) {
     try {
       const checkout = checkoutId || void 0;
@@ -24547,7 +24599,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             Vennligst velg en fraktmetode for å fullføre betalingen
                           </div>
                         ` : ""}
-                ` : !this.paymentMethodsResolved ? b2`
+                ` : !this.checkoutState ? (
+      // Nothing to ask the methods for (loadAvailablePaymentMethods
+      // needs a checkout): the spinner would never end.
+      b2`
+                    <h3 class="section-heading">Velg betalingsmåte</h3>
+                    <p class="payment-loading">${EMPTY_CART_MESSAGE2}</p>
+                  `
+    ) : !this.paymentMethodsResolved ? b2`
                     <h3 class="section-heading">Velg betalingsmåte</h3>
                     <div class="payment-loading">
                       <span class="payment-spinner" aria-hidden="true"></span>
