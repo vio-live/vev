@@ -4694,7 +4694,8 @@ function formatPrice(amount, currency) {
   const activeCurrency = currency || getGlobalCurrency();
   const activeLocale = safeLocale(getGlobalLocale());
   const activeSymbol = getGlobalSymbol(activeCurrency);
-  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).replace(/ /g, " ");
+  const decimals = Math.round(amount * 100) % 100 === 0 ? 0 : 2;
+  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(/ /g, " ");
   return `${formatted} ${activeSymbol}`;
 }
 function primaryImageUrl(product) {
@@ -9337,7 +9338,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.4";
+var SDK_VERSION = "0.37.5";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
