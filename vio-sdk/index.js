@@ -9341,7 +9341,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.6";
+var SDK_VERSION = "0.37.7";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -16470,6 +16470,7 @@ function cardDescription(description) {
 
 // src/ui/payment-redirect.ts
 var OVERLAY_CLASS = "vio-redirect-overlay";
+var CANCEL_AFTER_MS = 4e3;
 var STYLE_ID = "vio-redirect-overlay-style";
 var LABEL = { vipps: "Vipps", stripe: "Stripe", klarna: "Klarna" };
 function emit(name, detail, cancelable = false) {
@@ -16490,6 +16491,18 @@ function injectStyle() {
   opacity: 0; transition: opacity 0.18s ease; cursor: progress;
 }
 .${OVERLAY_CLASS}.is-shown { opacity: 1; }
+.${OVERLAY_CLASS} .vio-redirect-hint,
+.${OVERLAY_CLASS} .vio-redirect-cancel { display: none; }
+.${OVERLAY_CLASS}.is-cancellable .vio-redirect-hint { display: block; }
+.${OVERLAY_CLASS}.is-cancellable .vio-redirect-cancel { display: inline-block; }
+.${OVERLAY_CLASS} .vio-redirect-hint {
+  max-width: 280px; text-align: center; font-weight: 400; font-size: 14px; opacity: 0.75;
+}
+.${OVERLAY_CLASS} .vio-redirect-cancel {
+  padding: 10px 24px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.15); background: #fff;
+  color: var(--vio-redirect-color, var(--vio-color-text, #0a0a0a)); font: inherit; font-size: 15px;
+}
 .${OVERLAY_CLASS} .vio-redirect-spinner {
   width: 36px; height: 36px; border-radius: 50%;
   border: 3px solid rgba(0, 0, 0, 0.1); border-top-color: var(--vio-redirect-spinner, #ff5b24);
@@ -16504,6 +16517,7 @@ function injectStyle() {
 }
 var current = null;
 function removeOverlay() {
+  current?.cleanup?.();
   const el = current?.el;
   if (!el) return;
   el.classList.remove("is-shown");
@@ -16534,14 +16548,39 @@ function beginPaymentRedirect(detail) {
     const spinner = document.createElement("div");
     spinner.className = "vio-redirect-spinner";
     spinner.setAttribute("aria-hidden", "true");
+    const label = LABEL[detail.method] ?? detail.method;
     const text3 = document.createElement("div");
     text3.className = "vio-redirect-text";
-    text3.textContent = `\xC5pner ${LABEL[detail.method] ?? detail.method} \u2026`;
-    el.append(spinner, text3);
+    text3.textContent = `\xC5pner ${label} \u2026`;
+    const hint = document.createElement("div");
+    hint.className = "vio-redirect-hint";
+    hint.textContent = `Kom du tilbake fra ${label} uten \xE5 betale?`;
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "vio-redirect-cancel";
+    cancel.setAttribute("data-vio-cta", "redirect_cancel");
+    cancel.textContent = "Avbryt";
+    cancel.addEventListener("click", (e7) => {
+      e7.stopPropagation();
+      settle("vio:payment-redirect-cancel", "user");
+    });
+    el.append(spinner, text3, hint, cancel);
     el.addEventListener("click", (e7) => e7.stopPropagation());
     document.body.appendChild(el);
     requestAnimationFrame(() => el.classList.add("is-shown"));
     state.el = el;
+    const showCancel = () => el.classList.add("is-cancellable");
+    const timer = setTimeout(showCancel, CANCEL_AFTER_MS);
+    let wasHidden = false;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") wasHidden = true;
+      else if (wasHidden) showCancel();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    state.cleanup = () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }
   if (typeof window !== "undefined") window.addEventListener("pageshow", onPageShow);
   const settle = (event, reason) => {
@@ -16550,8 +16589,9 @@ function beginPaymentRedirect(detail) {
     if (current === state) {
       removeOverlay();
       current = null;
-    } else if (state.el) {
-      state.el.remove();
+    } else {
+      state.cleanup?.();
+      state.el?.remove();
     }
     emit(event, { ...detail, reason });
   };
@@ -21116,6 +21156,7 @@ function errorText(err) {
 var STRIPE_LOGO_SRC3 = "data:image/svg+xml;utf8," + encodeURIComponent(
   '<svg width="360" height="150" viewBox="0 0 360 150" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M360 77.4001C360 51.8001 347.6 31.6001 323.9 31.6001C300.1 31.6001 285.7 51.8001 285.7 77.2001C285.7 107.3 302.7 122.5 327.1 122.5C339 122.5 348 119.8 354.8 116V96.0001C348 99.4001 340.2 101.5 330.3 101.5C320.6 101.5 312 98.1001 310.9 86.3001H359.8C359.8 85.0001 360 79.8001 360 77.4001ZM310.6 67.9001C310.6 56.6001 317.5 51.9001 323.8 51.9001C329.9 51.9001 336.4 56.6001 336.4 67.9001H310.6Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M247.1 31.6001C237.3 31.6001 231 36.2001 227.5 39.4001L226.2 33.2001H204.2V149.8L229.2 144.5L229.3 116.2C232.9 118.8 238.2 122.5 247 122.5C264.9 122.5 281.2 108.1 281.2 76.4001C281.1 47.4001 264.6 31.6001 247.1 31.6001ZM241.1 100.5C235.2 100.5 231.7 98.4001 229.3 95.8001L229.2 58.7001C231.8 55.8001 235.4 53.8001 241.1 53.8001C250.2 53.8001 256.5 64.0001 256.5 77.1001C256.5 90.5001 250.3 100.5 241.1 100.5Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M169.8 25.7L194.9 20.3V0L169.8 5.3V25.7Z" fill="#533AFD"/><path d="M194.9 33.3H169.8V120.8H194.9V33.3Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M142.9 40.7L141.3 33.3H119.7V120.8H144.7V61.5C150.6 53.8 160.6 55.2 163.7 56.3V33.3C160.5 32.1 148.8 29.9 142.9 40.7Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M92.8999 11.6001L68.4999 16.8001L68.3999 96.9001C68.3999 111.7 79.4999 122.6 94.2999 122.6C102.5 122.6 108.5 121.1 111.8 119.3V99.0001C108.6 100.3 92.7999 104.9 92.7999 90.1001V54.6001H111.8V33.3001H92.7999L92.8999 11.6001Z" fill="#533AFD"/><path fill-rule="evenodd" clip-rule="evenodd" d="M25.3 58.7001C25.3 54.8001 28.5 53.3001 33.8 53.3001C41.4 53.3001 51 55.6001 58.6 59.7001V36.2001C50.3 32.9001 42.1 31.6001 33.8 31.6001C13.5 31.6001 0 42.2001 0 59.9001C0 87.5001 38 83.1001 38 95.0001C38 99.6001 34 101.1 28.4 101.1C20.1 101.1 9.5 97.7001 1.1 93.1001V116.9C10.4 120.9 19.8 122.6 28.4 122.6C49.2 122.6 63.5 112.3 63.5 94.4001C63.4 64.6001 25.3 69.9001 25.3 58.7001Z" fill="#533AFD"/></svg>'
 );
+var VIPPS_WAIT_CANCELLED_MESSAGE = "Betalingen ble ikke fullf\xF8rt. Handlekurven er uendret, s\xE5 du kan pr\xF8ve igjen. Godkjenner du betalingen i Vipps likevel, f\xE5r du ordrebekreftelse p\xE5 e-post.";
 var EMPTY_CART_MESSAGE2 = "Handlekurven er tom.";
 function isKeyRefused(err) {
   const message = String(err?.message ?? err ?? "");
@@ -21140,6 +21181,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.paymentError = null;
     this.paymentNotice = null;
     this.verifyingReturn = null;
+    this.vippsWaitCancellable = false;
+    this.vippsWaitCancelled = false;
+    this.wakeVippsPoll = null;
     /** The checkout whose confirmation is on screen — see fillOrderNumber. */
     this.confirmedCheckoutId = null;
     this.orderSponsor = null;
@@ -21347,6 +21391,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
     });
     /** Payment events still waiting for their buyer reference: settled early (without it) when the page hides or the element leaves. */
     this.pendingSuccessEmits = /* @__PURE__ */ new Set();
+    /** «Avbryt» on the Vipps wait: stop asking Vipps and show the checkout again. */
+    this.cancelVippsWait = () => {
+      this.vippsWaitCancelled = true;
+      this.wakeVippsPoll?.();
+    };
   }
   /** A payment is being started or confirmed right now: the overlay must not close under it. */
   get paymentInFlight() {
@@ -21653,6 +21702,18 @@ var _VioCheckout = class _VioCheckout extends i4 {
       margin: 0;
       font-size: 13px;
       color: var(--vio-color-text-secondary, #666);
+    }
+    .verifying-cancel {
+      margin-top: 6px;
+      padding: 10px 22px;
+      border-radius: 999px;
+      border: 1px solid var(--vio-color-border, #e5e5e5);
+      background: #fff;
+      color: var(--vio-color-text, #1a1a1a);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
     }
     @media (prefers-reduced-motion: reduce) {
       .verifying-spinner { animation: none; }
@@ -22055,10 +22116,19 @@ var _VioCheckout = class _VioCheckout extends i4 {
     let sawStatus = false;
     for (let attempt = 0; attempt < _VioCheckout.VIPPS_STATUS_MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
-        await new Promise((r6) => setTimeout(r6, _VioCheckout.VIPPS_STATUS_DELAY_MS));
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, _VioCheckout.VIPPS_STATUS_DELAY_MS);
+          this.wakeVippsPoll = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        this.wakeVippsPoll = null;
       }
+      if (this.vippsWaitCancelled) return { outcome: "cancelled", sawStatus };
       try {
         const vippsStatus = await Vio.checkout.getVippsStatus(checkoutId, sponsorId || void 0);
+        if (this.vippsWaitCancelled) return { outcome: "cancelled", sawStatus };
         const state = String(vippsStatus?.state ?? "").toUpperCase();
         sawStatus = true;
         if (vippsStatus?.duplicate_of) return { outcome: "duplicate", sawStatus };
@@ -22363,10 +22433,18 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.setOrderSponsor(sponsorId, checkoutId);
         this.open = true;
         this.verifyingReturn = "Bekrefter betalingen med Vipps\u2026";
+        this.vippsWaitCancelled = false;
+        this.vippsWaitCancellable = true;
         const { outcome, sawStatus } = await this.pollVippsStatus(checkoutId, sponsorId);
+        this.vippsWaitCancellable = false;
         if (reopening) await reopening;
         this.verifyingReturn = null;
-        this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
+        if (outcome === "cancelled") {
+          this.paymentNotice = VIPPS_WAIT_CANCELLED_MESSAGE;
+          this.open = true;
+        } else {
+          this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
+        }
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
         if (outcome !== "paid" && outcome !== "duplicate") {
           await this.prefillFormFromCheckout(checkoutId, sponsorId);
@@ -23515,6 +23593,17 @@ var _VioCheckout = class _VioCheckout extends i4 {
         <span class="verifying-spinner" aria-hidden="true"></span>
         <p class="verifying-text">${this.verifyingReturn}</p>
         <p class="verifying-hint">Dette kan ta litt tid. Ikke lukk siden.</p>
+        ${this.vippsWaitCancellable ? b2`
+              <p class="verifying-hint">Lukket du Vipps uten å betale? Gå tilbake til kassen.</p>
+              <button
+                type="button"
+                class="verifying-cancel"
+                data-vio-cta="vipps_cancel_wait"
+                @click=${this.cancelVippsWait}
+              >
+                Avbryt
+              </button>
+            ` : A}
       </section>
     `;
   }
@@ -24848,6 +24937,9 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "verifyingReturn", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "vippsWaitCancellable", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "orderSponsor", 2);
