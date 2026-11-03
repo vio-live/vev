@@ -4698,6 +4698,9 @@ function formatPrice(amount, currency) {
   const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(/ /g, " ");
   return `${formatted} ${activeSymbol}`;
 }
+function formatShippingPrice(amount, currency) {
+  return Number.isFinite(amount) && amount <= 0 ? "Gratis" : formatPrice(amount, currency);
+}
 function primaryImageUrl(product) {
   const p3 = product;
   if (!p3 || typeof p3 !== "object") return void 0;
@@ -9338,7 +9341,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.5";
+var SDK_VERSION = "0.37.6";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -23040,7 +23043,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
    */
   confirmOrder(method, sponsorId, result, returnCheckoutId) {
     const r6 = result ?? {};
-    const shippingPrice = this.shippingMajor();
+    const shippingPrice = this.shippingInEffect();
     const email = String(this.form.email ?? "").trim();
     const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
     const providerOrderId = r6.order?.orderId != null ? String(r6.order.orderId) : "";
@@ -23050,7 +23053,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       currency: this.checkoutState?.currency ?? "",
       total: typeof r6.chargedTotal === "number" ? r6.chargedTotal : this.checkoutState?.subtotal ?? 0,
       ...providerOrderId ? { providerRef: { label: `Ordre hos ${this.methodLabel(method)}`, value: providerOrderId } } : {},
-      ...shippingPrice > 0 ? { shipping: { name: this.summaryShippingName() || "Frakt", price: shippingPrice } } : {},
+      // A free rate is shown too («Gratis»): the shopper sees what was chosen.
+      ...shippingPrice !== null ? { shipping: { name: this.summaryShippingName() || "Frakt", price: shippingPrice } } : {},
       ...email ? { email } : {}
     };
     this.confirmedMethod = method;
@@ -23260,6 +23264,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * express always has one; the normal flow has one once the backend
    * shippings loaded (the choice IS persisted on the cart and charged). */
   shippingMajor() {
+    return this.shippingInEffect() ?? 0;
+  }
+  /** The shipping price in effect, or null when there is none yet. A free rate
+   * is 0, not «none»: the summary and the receipt say «Gratis» for it instead
+   * of «Beregnes ved kasse» or nothing (2026-11-03). */
+  shippingInEffect() {
     if (this.checkoutState?.paymentMethod === "qliro" && typeof this.qliroShipping?.price === "number") {
       return this.qliroShipping.price;
     }
@@ -23269,9 +23279,9 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (this.checkoutState?.paymentMethod === "kustom" && typeof this.kustomShipping?.price === "number") {
       return this.kustomShipping.price;
     }
-    if (!this.express && this.availableShippingsList.length === 0) return 0;
+    if (!this.express && this.availableShippingsList.length === 0) return null;
     const o7 = this.shippingOption;
-    if (!o7) return 0;
+    if (!o7) return null;
     return o7.priceMajor ?? o7.price / 100;
   }
   /** The rate the summary names — Qliro's own pick while Qliro is the method. */
@@ -23560,7 +23570,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                 ${o7.shipping ? b2`
                       <div class="order-row">
                         <span>Frakt – ${o7.shipping.name}</span>
-                        <span>${formatPrice(o7.shipping.price, o7.currency)}</span>
+                        <span>${formatShippingPrice(o7.shipping.price, o7.currency)}</span>
                       </div>
                     ` : ""}
                 <div class="order-row total">
@@ -23989,7 +23999,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               @click=${() => void this.onPickNexiShipping(o7.id)}
             >
               <span class="ship-meta"><b>${o7.name}</b></span>
-              <span class="ship-price">${formatPrice(o7.price, currency)}</span>
+              <span class="ship-price">${formatShippingPrice(o7.price, currency)}</span>
             </button>
           `
     )}
@@ -24376,7 +24386,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                         <b>${o7.method || o7.name}</b><span>${o7.description}</span>
                       </span>
                       <span class="ship-price">
-                        ${formatPrice(o7.priceMajor ?? o7.price / 100, o7.currency || currency)}
+                        ${formatShippingPrice(o7.priceMajor ?? o7.price / 100, o7.currency || currency)}
                       </span>
                     </button>
                   `
@@ -24450,7 +24460,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     )}
                 <div class="order-row">
                   <span>Frakt${this.shippingOption ? ` \u2013 ${this.shippingOption.method}` : ""}</span>
-                  <span>${formatPrice(this.shippingMajor(), currency)}</span>
+                  <span>${formatShippingPrice(this.shippingMajor(), currency)}</span>
                 </div>
                 <div class="order-row total">
                   <span>Totalt</span><span>${this.payTotalLabel()}</span>
@@ -24570,7 +24580,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                               ${o7.description ? b2`<span>${o7.description}</span>` : ""}
                             </span>
                             <span class="ship-price">
-                              ${formatPrice(
+                              ${formatShippingPrice(
         o7.priceMajor ?? o7.price / 100,
         o7.currency || this.checkoutState?.currency || "NOK"
       )}
@@ -24780,8 +24790,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                     <span>Sum</span><span>${this.orderTotal()}</span>
                   </div>
                   <div class="order-row">
-                    <span>Frakt${this.shippingMajor() > 0 && this.summaryShippingName() ? ` \u2013 ${this.summaryShippingName()}` : ""}</span>
-                    <span>${this.shippingMajor() > 0 ? formatPrice(this.shippingMajor(), this.checkoutState?.currency) : this.shippingLabel}</span>
+                    <span>Frakt${this.shippingInEffect() !== null && this.summaryShippingName() ? ` \u2013 ${this.summaryShippingName()}` : ""}</span>
+                    <span>${this.shippingInEffect() !== null ? formatShippingPrice(this.shippingMajor(), this.checkoutState?.currency) : this.shippingLabel}</span>
                   </div>
                   <div class="order-row total">
                     <span>Totalt</span><span>${this.payTotalLabel()}</span>

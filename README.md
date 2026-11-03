@@ -276,7 +276,10 @@ checkout's channel key is not known for the first seconds (vio-web-sdk #130).
 **With the 0.37.5 bundle** (2026-11-02): prices show no decimals or two, never one — 30 % off 499
 reads «349,30 Kr», not «349,3 Kr» (vio-web-sdk #132).
 
-The vendored SDK is **0.37.5**, built from `vio-web-sdk` `main` `4c194ee` (the 0.37.5 release
+**With the 0.37.6 bundle** (2026-11-03): free shipping reads «Gratis» in the checkout — picker, summary
+(«Frakt – <rate> · Gratis», no longer «Beregnes ved kasse») and receipt (vio-web-sdk #134).
+
+The vendored SDK is **0.37.6**, built from `vio-web-sdk` `main` `3f8f39f` (the 0.37.6 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
