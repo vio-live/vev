@@ -4338,11 +4338,11 @@ var executionResultClientResponseFields = ($params) => (executionResult) => {
     errors: $params.fetchOptions.errorPolicy === `all` ? executionResult.errors : void 0
   };
 };
-var parseResultFromText = (text3, contentType, jsonSerializer) => {
+var parseResultFromText = (text4, contentType, jsonSerializer) => {
   if (contentType && isGraphQLContentType(contentType)) {
-    return parseGraphQLExecutionResult(jsonSerializer.parse(text3));
+    return parseGraphQLExecutionResult(jsonSerializer.parse(text4));
   } else {
-    return parseGraphQLExecutionResult(text3);
+    return parseGraphQLExecutionResult(text4);
   }
 };
 var createFetcher = (method) => async (params) => {
@@ -4637,8 +4637,8 @@ function storageRemove(kind, key) {
 // src/core/types.ts
 function displayPrice(product) {
   const p3 = product.price;
-  const amount = p3.amount_incl_taxes ?? p3.amount;
-  return formatPrice(amount, p3.currency_code);
+  const amount2 = p3.amount_incl_taxes ?? p3.amount;
+  return formatPrice(amount2, p3.currency_code);
 }
 function getGlobalCountryCode() {
   const g2 = globalThis;
@@ -4690,16 +4690,16 @@ function safeLocale(locale) {
   validatedLocales.set(locale, resolved);
   return resolved;
 }
-function formatPrice(amount, currency) {
+function formatPrice(amount2, currency) {
   const activeCurrency = currency || getGlobalCurrency();
   const activeLocale = safeLocale(getGlobalLocale());
   const activeSymbol = getGlobalSymbol(activeCurrency);
-  const decimals = Math.round(amount * 100) % 100 === 0 ? 0 : 2;
-  const formatted = amount.toLocaleString(activeLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(/ /g, " ");
+  const decimals = Math.round(amount2 * 100) % 100 === 0 ? 0 : 2;
+  const formatted = amount2.toLocaleString(activeLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(/ /g, " ");
   return `${formatted} ${activeSymbol}`;
 }
-function formatShippingPrice(amount, currency) {
-  return Number.isFinite(amount) && amount <= 0 ? "Gratis" : formatPrice(amount, currency);
+function formatShippingPrice(amount2, currency) {
+  return Number.isFinite(amount2) && amount2 <= 0 ? "Gratis" : formatPrice(amount2, currency);
 }
 function primaryImageUrl(product) {
   const p3 = product;
@@ -4972,14 +4972,14 @@ var ChannelProduct = class {
 };
 var FILLER_SHIPPING_DESCRIPTIONS = Object.freeze(["by outshifter", "default shipping method"]);
 function shippingDescriptionOf(value, repeats = []) {
-  const text3 = typeof value === "string" ? value.trim() : "";
-  if (!text3) return "";
-  const key = text3.toLowerCase();
+  const text4 = typeof value === "string" ? value.trim() : "";
+  if (!text4) return "";
+  const key = text4.toLowerCase();
   if (FILLER_SHIPPING_DESCRIPTIONS.includes(key)) return "";
   for (const r6 of repeats) {
     if (typeof r6 === "string" && r6.trim() && r6.trim().toLowerCase() === key) return "";
   }
-  return text3;
+  return text4;
 }
 function shippingRatesFor(productShipping, country) {
   if (!Array.isArray(productShipping)) return [];
@@ -4989,14 +4989,14 @@ function shippingRatesFor(productShipping, country) {
     const countries = Array.isArray(s4?.shipping_country) ? s4.shipping_country : [];
     const row = countries.find((c4) => String(c4?.country ?? "").trim().toUpperCase() === want);
     const price = row?.price;
-    const amount = typeof price?.amount_incl_taxes === "number" ? price.amount_incl_taxes : price?.amount;
-    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) continue;
+    const amount2 = typeof price?.amount_incl_taxes === "number" ? price.amount_incl_taxes : price?.amount;
+    if (typeof amount2 !== "number" || !Number.isFinite(amount2) || amount2 < 0) continue;
     const name = String(s4.name ?? "");
     const description = shippingDescriptionOf(s4.description, [name]);
     out.push({
       id: String(s4.id ?? ""),
       name,
-      price: amount,
+      price: amount2,
       currency: String(price?.currency_code ?? ""),
       default: s4.default === true,
       description,
@@ -5153,9 +5153,9 @@ function currentOriginPage() {
 }
 function cut(value, max) {
   if (typeof value !== "string" && typeof value !== "number") return void 0;
-  const text3 = String(value).trim();
-  if (!text3) return void 0;
-  return text3.length > max ? text3.slice(0, max).trim() || void 0 : text3;
+  const text4 = String(value).trim();
+  if (!text4) return void 0;
+  return text4.length > max ? text4.slice(0, max).trim() || void 0 : text4;
 }
 async function currentPrivacyMode() {
   try {
@@ -5315,8 +5315,8 @@ function currentGlobalDescriptionLabel() {
 }
 function setGlobalDescriptionLabel(label) {
   const s4 = store();
-  const text3 = typeof label === "string" ? label.trim() : "";
-  s4.descriptionLabel = text3 && text3.length <= 40 ? text3 : null;
+  const text4 = typeof label === "string" ? label.trim() : "";
+  s4.descriptionLabel = text4 && text4.length <= 40 ? text4 : null;
   for (const listener of [...s4.listeners]) {
     try {
       listener();
@@ -7892,10 +7892,10 @@ function highlightsOf(value) {
   const out = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
-    const { icon, title, text: text3 } = item;
+    const { icon, title, text: text4 } = item;
     const t4 = typeof title === "string" ? title.trim() : "";
     if (!t4) continue;
-    const body = typeof text3 === "string" ? text3.trim() : "";
+    const body = typeof text4 === "string" ? text4.trim() : "";
     out.push({ icon: typeof icon === "string" ? icon.trim() : "", title: t4, ...body ? { text: body } : {} });
     if (out.length === 3) break;
   }
@@ -9341,7 +9341,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.7";
+var SDK_VERSION = "0.37.8";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -10117,7 +10117,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         const supplierId = firstGroup?.supplier?.id;
         const mapped = shippings.map((s4, idx) => {
           const priceObj = s4.price ?? {};
-          const amount = typeof priceObj.amount_incl_taxes === "number" ? priceObj.amount_incl_taxes : typeof priceObj.amount === "number" ? priceObj.amount : 0;
+          const amount2 = typeof priceObj.amount_incl_taxes === "number" ? priceObj.amount_incl_taxes : typeof priceObj.amount === "number" ? priceObj.amount : 0;
           return {
             id: String(s4.id),
             supplierId: supplierId != null ? String(supplierId) : void 0,
@@ -10125,8 +10125,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
             name: s4.name || "Default Shipping",
             description: s4.description || "",
             country_code: s4.country_code || "NO",
-            price: Math.round(amount * 100),
-            priceMajor: amount,
+            price: Math.round(amount2 * 100),
+            priceMajor: amount2,
             currency: priceObj.currency_code || getGlobalCurrency(),
             tax_amount: Math.round((priceObj.tax_amount ?? 0) * 100),
             tax_rate: Math.round((priceObj.tax_rate ?? 0) * 100),
@@ -11055,11 +11055,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       this.applePayAvailableCache = false;
       return false;
     }
-    const amount = toSmallestUnit(this.state.subtotal, this.state.currency);
+    const amount2 = toSmallestUnit(this.state.subtotal, this.state.currency);
     const available = await checkApplePayAvailability({
       publishableKey,
       connectedAccount: this.findStripeConnectAccount() ?? void 0,
-      amount,
+      amount: amount2,
       currency: this.state.currency,
       country,
       label: "Vio"
@@ -11078,14 +11078,14 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * sheet, then dispatches `payment-complete` (→ confirmation) or
    * `payment-error`. `available` is true only when Apple Pay will actually work.
    */
-  async prepareApplePayFor(amount, currency, country = "NO") {
+  async prepareApplePayFor(amount2, currency, country = "NO") {
     const publishableKey = await this.resolveStripePublishableKey(this.state?.sponsorId);
     if (!publishableKey) return { available: false, show: async () => {
     } };
     const prepared = await prepareApplePay({
       publishableKey,
       connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
-      amount: toSmallestUnit(amount, currency),
+      amount: toSmallestUnit(amount2, currency),
       currency,
       country,
       label: "Vio",
@@ -11112,7 +11112,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         try {
           const result = await prepared.show();
           this.selectPaymentMethod("apple-pay");
-          const state = this.state ?? { sponsorId: 0, subtotal: amount, currency };
+          const state = this.state ?? { sponsorId: 0, subtotal: amount2, currency };
           this.dispatchEvent(
             new CustomEvent("payment-complete", {
               detail: { method: "apple-pay", state, result }
@@ -11139,14 +11139,14 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * The caller (the cart drawer) renders its own confirmation. `show()` must be
    * called synchronously inside the tap (Apple's user-gesture rule).
    */
-  async prepareApplePayExpress(amount, currency, country = "NO", sponsorId) {
+  async prepareApplePayExpress(amount2, currency, country = "NO", sponsorId) {
     const publishableKey = await this.resolveStripePublishableKey(sponsorId ?? this.state?.sponsorId);
     if (!publishableKey) return { available: false, show: async () => null };
     const spId = sponsorId ?? this.state?.sponsorId ?? [...this.cartManager.getAllCarts().keys()][0];
     const prepared = await prepareApplePay({
       publishableKey,
       connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
-      amount: toSmallestUnit(amount, currency),
+      amount: toSmallestUnit(amount2, currency),
       currency,
       country,
       label: "Vio",
@@ -11275,12 +11275,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
         "[VioCheckout] No Stripe publishable key configured. Pass `stripePublishableKey` to Vio.init({ ... })."
       );
     }
-    const amount = toSmallestUnit(this.state.subtotal, this.state.currency);
+    const amount2 = toSmallestUnit(this.state.subtotal, this.state.currency);
     const onAuthorize = this.buildApplePayAuthorize(spId);
     const result = await showApplePaySheet({
       publishableKey,
       connectedAccount: this.applePayConnectedAccount ?? this.findStripeConnectAccount() ?? void 0,
-      amount,
+      amount: amount2,
       currency: this.state.currency,
       country: options.country ?? "NO",
       label: options.label ?? "Vio",
@@ -11822,10 +11822,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     );
   }
 };
-function toSmallestUnit(amount, currency) {
+function toSmallestUnit(amount2, currency) {
   const zeroDecimal = /* @__PURE__ */ new Set(["JPY", "KRW", "VND"]);
-  if (zeroDecimal.has(currency.toUpperCase())) return Math.round(amount);
-  return Math.round(amount * 100);
+  if (zeroDecimal.has(currency.toUpperCase())) return Math.round(amount2);
+  return Math.round(amount2 * 100);
 }
 
 // src/core/analytics/client-context.ts
@@ -13444,9 +13444,9 @@ function positiveInt(value) {
 }
 function cut3(value, max) {
   if (typeof value !== "string" && typeof value !== "number") return void 0;
-  const text3 = String(value).trim();
-  if (!text3) return void 0;
-  return text3.length > max ? text3.slice(0, max).trim() || void 0 : text3;
+  const text4 = String(value).trim();
+  if (!text4) return void 0;
+  return text4.length > max ? text4.slice(0, max).trim() || void 0 : text4;
 }
 
 // src/core/client.ts
@@ -16549,9 +16549,9 @@ function beginPaymentRedirect(detail) {
     spinner.className = "vio-redirect-spinner";
     spinner.setAttribute("aria-hidden", "true");
     const label = LABEL[detail.method] ?? detail.method;
-    const text3 = document.createElement("div");
-    text3.className = "vio-redirect-text";
-    text3.textContent = `\xC5pner ${label} \u2026`;
+    const text4 = document.createElement("div");
+    text4.className = "vio-redirect-text";
+    text4.textContent = `\xC5pner ${label} \u2026`;
     const hint = document.createElement("div");
     hint.className = "vio-redirect-hint";
     hint.textContent = `Kom du tilbake fra ${label} uten \xE5 betale?`;
@@ -16564,7 +16564,7 @@ function beginPaymentRedirect(detail) {
       e7.stopPropagation();
       settle("vio:payment-redirect-cancel", "user");
     });
-    el.append(spinner, text3, hint, cancel);
+    el.append(spinner, text4, hint, cancel);
     el.addEventListener("click", (e7) => e7.stopPropagation());
     document.body.appendChild(el);
     requestAnimationFrame(() => el.classList.add("is-shown"));
@@ -19229,15 +19229,15 @@ var VioProductDetail = class extends i4 {
   }
   /** Prepare the Apple Pay sheet for this product × quantity; the newest preparation wins. */
   prepareApplePaySheet() {
-    const amount = this.unitPrice * this.quantity;
-    this.applePayAskedFor = amount;
-    void Vio.checkout.prepareApplePayFor(amount, this.currency).then((handle) => {
-      if (this.applePayAskedFor !== amount) return;
+    const amount2 = this.unitPrice * this.quantity;
+    this.applePayAskedFor = amount2;
+    void Vio.checkout.prepareApplePayFor(amount2, this.currency).then((handle) => {
+      if (this.applePayAskedFor !== amount2) return;
       this.applePayHandle = handle;
-      this.applePayAmount = amount;
+      this.applePayAmount = amount2;
       this.applePayOk = handle.available;
     }).catch(() => {
-      if (this.applePayAskedFor !== amount) return;
+      if (this.applePayAskedFor !== amount2) return;
       this.applePayHandle = null;
       this.applePayAmount = null;
       this.applePayOk = false;
@@ -19368,12 +19368,12 @@ var VioProductDetail = class extends i4 {
     const own = this.descriptionLabel.trim();
     return (own && own.length <= 40 ? own : "") || currentGlobalDescriptionLabel() || "Beskrivelse";
   }
-  renderDescription(text3) {
+  renderDescription(text4) {
     const mode = this.resolvedDescriptionMode;
     if (mode === "open") {
       return b2`<div class="description-block description-preview open" part="description">
         <div class="desc-head">${this.descriptionHeading()}</div>
-        <div class="description">${text3}</div>
+        <div class="description">${text4}</div>
       </div>`;
     }
     const foldable = mode === "folded" || this.descriptionClipped;
@@ -19389,7 +19389,7 @@ var VioProductDetail = class extends i4 {
             data-vio-cta=${opens}
             data-vio-cta-label=${opens === A ? A : this.descriptionHeading()}
             @click=${() => !this.descriptionOpen && toggle()}
-          >${text3}</div>`}
+          >${text4}</div>`}
       ${mode === "preview" && this.descriptionClipped ? b2`<button class="desc-more" type="button" data-vio-cta=${opens} @click=${toggle}>${this.descriptionOpen ? "Vis mindre" : "Les mer"}</button>` : A}
     </div>`;
   }
@@ -20044,9 +20044,9 @@ function shippingRatesShown(rates, repeats = []) {
   return rates.map((r6) => ({ ...r6, description: shippingDescriptionOf(r6.description, [r6.name, ...repeats]) }));
 }
 function splitRateName(name) {
-  const text3 = String(name ?? "").trim();
-  const m2 = text3.match(/^(.+?)\s+[-–—]\s+(.+)$/);
-  if (!m2?.[1] || !m2[2]) return { carrier: "", method: text3 };
+  const text4 = String(name ?? "").trim();
+  const m2 = text4.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (!m2?.[1] || !m2[2]) return { carrier: "", method: text4 };
   const method = m2[2].trim();
   return { carrier: m2[1].trim(), method: method.charAt(0).toUpperCase() + method.slice(1) };
 }
@@ -20058,10 +20058,10 @@ var STRIPE_LOGO_SRC2 = "data:image/svg+xml;utf8," + encodeURIComponent(
 function ratePrice(rate, currency) {
   const price = rate?.price;
   if (!price) return null;
-  const amount = typeof price.amount_incl_taxes === "number" ? price.amount_incl_taxes : price.amount;
-  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return null;
+  const amount2 = typeof price.amount_incl_taxes === "number" ? price.amount_incl_taxes : price.amount;
+  if (typeof amount2 !== "number" || !Number.isFinite(amount2) || amount2 < 0) return null;
   if (price.currency_code && currency && price.currency_code.toUpperCase() !== currency.toUpperCase()) return null;
-  return amount;
+  return amount2;
 }
 function cartShipping(items, currency) {
   for (const item of items) {
@@ -21129,27 +21129,86 @@ var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen
 var SHIPS_APART = "kan ikke sendes sammen";
 function friendlyPaymentError(raw, method) {
   void method;
-  const text3 = String(raw ?? "");
-  const lower = text3.toLowerCase();
+  const text4 = String(raw ?? "");
+  const lower = text4.toLowerCase();
   if (lower.includes("got 0") || lower.includes("amount must be a positive")) {
     return EMPTY_CART_MESSAGE;
   }
-  if (lower.includes("replaced by a newer") || text3.includes("CHECKOUT_SUPERSEDED")) {
+  if (lower.includes("replaced by a newer") || text4.includes("CHECKOUT_SUPERSEDED")) {
     return CART_CHANGED_MESSAGE;
   }
-  if (lower.includes("already been paid") || text3.includes("CART_ALREADY_PAID")) {
+  if (lower.includes("already been paid") || text4.includes("CART_ALREADY_PAID")) {
     return CART_PAID_MESSAGE;
   }
-  if (text3.includes(SHIPS_APART)) return norwegianSentence(text3);
+  if (text4.includes(SHIPS_APART)) return norwegianSentence(text4);
   return PAYMENT_START_FAILED_MESSAGE;
 }
-function norwegianSentence(text3) {
-  const at = text3.indexOf(SHIPS_APART);
-  const prefixEnd = text3.lastIndexOf(": ", at);
-  return (prefixEnd === -1 ? text3 : text3.slice(prefixEnd + 2)).trim();
+function norwegianSentence(text4) {
+  const at = text4.indexOf(SHIPS_APART);
+  const prefixEnd = text4.lastIndexOf(": ", at);
+  return (prefixEnd === -1 ? text4 : text4.slice(prefixEnd + 2)).trim();
 }
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
+}
+
+// src/ui/checkout-receipt.ts
+function text3(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function amount(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n6 = Number(value);
+    return Number.isFinite(n6) ? n6 : null;
+  }
+  return null;
+}
+function imageOf(image) {
+  const first = Array.isArray(image) ? image[0] : image;
+  if (typeof first === "string") return first.trim();
+  return text3(first?.url);
+}
+function receiptFromCheckout(checkout, sponsorId) {
+  const c4 = checkout ?? {};
+  const cart = c4.cart ?? {};
+  const lines = Array.isArray(cart.line_items) ? cart.line_items : [];
+  if (lines.length === 0) return null;
+  const totals = c4.totals ?? {};
+  const currency = text3(totals.currency_code) || text3(cart.currency);
+  const items = lines.map((li, index) => {
+    const title = text3(li?.title);
+    const variant = text3(li?.variant_title);
+    const id = li?.id != null ? String(li.id) : `line-${index}`;
+    return {
+      id,
+      cartItemId: id,
+      productId: Number(li?.product_id) || 0,
+      sponsorId,
+      ...li?.variant_id != null && Number.isFinite(Number(li.variant_id)) ? { variantId: Number(li.variant_id) } : {},
+      brand: text3(li?.brand),
+      name: title && variant ? `${title} \u2014 ${variant}` : title || variant,
+      unitPrice: amount(li?.price?.amount_incl_taxes) ?? amount(li?.price?.amount) ?? 0,
+      currency: text3(li?.price?.currency_code) || currency,
+      imageUrl: imageOf(li?.image),
+      quantity: Number(li?.quantity) || 0
+    };
+  });
+  const itemsTotal = items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
+  const shipped = lines.map((li) => li?.shipping).filter((s4) => s4 && typeof s4 === "object");
+  const names = [...new Set(shipped.map((s4) => text3(s4.name)).filter(Boolean))];
+  const shippingPrice = amount(totals.shipping) ?? amount(cart.shipping) ?? (shipped.length > 0 ? amount(shipped[0].price?.amount_incl_taxes) ?? amount(shipped[0].price?.amount) : null);
+  const hasShipping = shipped.length > 0 || (shippingPrice ?? 0) > 0;
+  const shipping = hasShipping && shippingPrice !== null ? { name: names.join(", ") || "Frakt", price: shippingPrice } : void 0;
+  const charged = amount(totals.total);
+  const email = text3(c4.email);
+  return {
+    items,
+    currency,
+    total: charged !== null && charged > 0 ? charged : itemsTotal + (shipping?.price ?? 0),
+    ...shipping ? { shipping } : {},
+    ...email ? { email } : {}
+  };
 }
 
 // src/ui/components/vio-checkout.ts
@@ -22144,8 +22203,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return { outcome: "pending", sawStatus };
   }
   /** Shared outcome handler for both the generic (GetCheckout) and the
-   * Vipps-specific (GetVippsStatus) return-verification paths. */
-  applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId) {
+   * Vipps-specific (GetVippsStatus) return-verification paths. `paidCheckout`
+   * is the GetCheckout answer that said "paid", when there was one: the
+   * receipt is read from it instead of asking again. */
+  applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId, paidCheckout) {
     if (outcome === "paid") {
       this.setOrderSponsor(sponsorId, checkoutId);
       if (sponsorId > 0) Vio.cart.clearSponsorCart(sponsorId);
@@ -22158,6 +22219,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.orderConfirmed = true;
       this.open = true;
       void this.fillOrderNumber(checkoutId, sponsorId);
+      void this.fillReceiptFromCheckout(checkoutId, sponsorId, paidCheckout);
       void this.emitPaymentSuccess({ method: vioMethod, sponsorId, orderId: checkoutId }, checkoutId, sponsorId);
     } else if (outcome === "duplicate") {
       this.paymentError = CART_PAID_MESSAGE;
@@ -22452,6 +22514,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
       } else if (vioPayment === "success") {
         let outcome = "pending";
         let sawStatus = false;
+        let paidCheckout;
         if (checkoutId) {
           this.setOrderSponsor(sponsorId, checkoutId);
           this.open = true;
@@ -22476,6 +22539,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
               // status does, and it is the webhook that sets it.
               vioMethod !== "stripe" && Boolean(checkout?.origin_payment_id)) {
                 outcome = "paid";
+                paidCheckout = checkout;
                 break;
               }
             } catch (err) {
@@ -22486,7 +22550,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           }
           this.verifyingReturn = null;
         }
-        this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId);
+        this.applyReturnOutcome(outcome, sawStatus, vioMethod, sponsorId, checkoutId, paidCheckout);
         this.cleanReturnQueryParams(["vio_payment", "vio_method", "vio_sponsor", "checkout_id"]);
       } else if (vioPayment === "cancel" || vioPayment === "error") {
         this.paymentError = "Betalingen ble avbrutt eller feilet. Vennligst pr\xF8v igjen.";
@@ -22791,8 +22855,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       await this.loadAvailableShippings();
     }
     if (this.shippingBlocked) return;
-    const amount = this.checkoutState.subtotal;
-    if (this.klarnaHandle && this.klarnaMountedAmount === amount && this.klarnaMountedShipping === this.selectedShipping) {
+    const amount2 = this.checkoutState.subtotal;
+    if (this.klarnaHandle && this.klarnaMountedAmount === amount2 && this.klarnaMountedShipping === this.selectedShipping) {
       return;
     }
     const container = this.renderRoot?.querySelector(
@@ -22808,7 +22872,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         shippingId: this.selectedShipping
       });
       this.klarnaHandle = handle;
-      this.klarnaMountedAmount = amount;
+      this.klarnaMountedAmount = amount2;
       this.klarnaMountedShipping = this.selectedShipping;
       this.klarnaCategories = handle.categories;
       this.klarnaSelectedCat = handle.selected;
@@ -22917,20 +22981,20 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
       const address = checkout?.shipping_address ?? checkout?.billing_address;
       if (!address) return;
-      const text3 = (value) => typeof value === "string" ? value.trim() : "";
-      const code = text3(address.phone_code).replace(/^\+/, "");
-      const phone = text3(address.phone);
+      const text4 = (value) => typeof value === "string" ? value.trim() : "";
+      const code = text4(address.phone_code).replace(/^\+/, "");
+      const phone = text4(address.phone);
       const found = {
-        firstName: text3(address.first_name),
-        lastName: text3(address.last_name),
-        email: text3(checkout?.email),
-        address: [text3(address.address1), text3(address.address2)].filter(Boolean).join(", "),
-        postalCode: text3(address.zip),
-        city: text3(address.city),
+        firstName: text4(address.first_name),
+        lastName: text4(address.last_name),
+        email: text4(checkout?.email),
+        address: [text4(address.address1), text4(address.address2)].filter(Boolean).join(", "),
+        postalCode: text4(address.zip),
+        city: text4(address.city),
         phone: phone ? code ? `+${code} ${phone}` : phone : ""
       };
       for (const [field, value] of Object.entries(found)) {
-        if (value && !text3(this.form[field])) this.onFieldChange(field, value);
+        if (value && !text4(this.form[field])) this.onFieldChange(field, value);
       }
     } catch {
     }
@@ -23290,6 +23354,45 @@ var _VioCheckout = class _VioCheckout extends i4 {
       if (n6 && this.confirmedOrder) {
         this.confirmedOrder = { ...this.confirmedOrder, orderId: String(n6) };
         return;
+      }
+    }
+  }
+  /**
+   * The lines, the shipping row and the total of a receipt reached through a
+   * payment page (Vipps, a Stripe link, an Adyen redirect), from the checkout
+   * that was paid — see checkout-receipt.ts. Back from the provider the cart
+   * is not there to print (the page reloaded, or the Vipps app brought the
+   * shopper back in another tab; a paid cart is cleared anyway), and the
+   * «Takk!» after Vipps had no lines and no «Frakt» (Alan, QA, 2026-11-04).
+   * The checkout id of the return URL is the one thing every return has, so
+   * the receipt never shows another checkout's purchase, and nothing has to
+   * be kept in the browser. `known` is a GetCheckout answer already in hand.
+   *
+   * Fills only what the receipt does not know yet: a total the provider
+   * reported (Adyen) stays. Stops if the shopper closed the drawer or another
+   * confirmation took its place; a checkout that cannot be read leaves the
+   * receipt as it is.
+   */
+  async fillReceiptFromCheckout(checkoutId, sponsorId, known) {
+    if (!checkoutId) return;
+    const stillShowing = () => this.orderConfirmed && this.confirmedCheckoutId === checkoutId;
+    try {
+      const checkout = known !== void 0 ? known : await this.readOnReturn(() => Vio.checkout.getCheckout(checkoutId, sponsorId || void 0));
+      const o7 = this.confirmedOrder;
+      if (!stillShowing() || !o7 || o7.items.length > 0) return;
+      const read = receiptFromCheckout(checkout, sponsorId);
+      if (!read) return;
+      const providerSaidTotal = o7.total > 0;
+      this.confirmedOrder = {
+        ...o7,
+        items: read.items,
+        ...providerSaidTotal ? {} : { total: read.total, currency: read.currency || o7.currency },
+        ...!o7.shipping && read.shipping ? { shipping: read.shipping } : {},
+        ...!o7.email && read.email ? { email: read.email } : {}
+      };
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn("[VioCheckout] the receipt could not be read from the checkout:", err);
       }
     }
   }

@@ -279,12 +279,16 @@ reads «349,30 Kr», not «349,3 Kr» (vio-web-sdk #132).
 **With the 0.37.6 bundle** (2026-11-03): free shipping reads «Gratis» in the checkout — picker, summary
 («Frakt – <rate> · Gratis», no longer «Beregnes ved kasse») and receipt (vio-web-sdk #134).
 
+**With the 0.37.8 bundle** (2026-11-05): the receipt after Vipps lists the order — the «Takk!» after a Vipps
+payment showed no lines and no «Frakt» row, because the cart is gone on the way back; it now reads them from the
+checkout of the return URL: the lines, «Frakt – … · Gratis» (or the price) and the total (vio-web-sdk #139).
+
 **With the 0.37.7 bundle** (2026-11-03): «Avbryt» on the «Åpner Vipps …» overlay — on an iPhone the Vipps app
 can open without the page leaving, and closing the app left the shopper under the overlay with no way out; the
 button shows after 4 s or when the page is visible again (vio-web-sdk #137). Also «Avbryt» on the Vipps return
 wait (#136).
 
-The vendored SDK is **0.37.7**, built from `vio-web-sdk` `main` `4da2194` (the 0.37.7 release
+The vendored SDK is **0.37.8**, built from `vio-web-sdk` `main` `66cd826` (the 0.37.8 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
