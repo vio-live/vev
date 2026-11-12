@@ -300,7 +300,11 @@ tab whose checkout the other replaced stops («Handlekurven ble endret i en anne
 into the other tab's order, which sent the shopper back to the wrong page (vio-web-sdk #150; needs
 vio-shopcart-microservice #120).
 
-The vendored SDK is **0.39.1**, built from `vio-web-sdk` `main` `7a96b52` (the 0.39.1 release
+**With the 0.39.2 bundle** (2026-11-12): a product added while the Kustom widget is open reaches the order (the
+update waits for the cart change on its way to Commerce, vio-web-sdk #152), and the gift of a discount code shows its
+picture in the cart (Commerce sends a line's image as a list, #153).
+
+The vendored SDK is **0.39.2**, built from `vio-web-sdk` `main` `e4983c1` (the 0.39.2 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
