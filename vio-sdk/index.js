@@ -7098,6 +7098,14 @@ function normId(val) {
   }
   return String(val).trim();
 }
+function lineImageUrl(image) {
+  const first = Array.isArray(image) ? image.find((i5) => i5 != null) : image;
+  if (typeof first === "string") return first;
+  if (first && typeof first === "object" && typeof first.url === "string") {
+    return first.url;
+  }
+  return "";
+}
 var CartManager = class extends EventTarget {
   constructor(scope = "", hooks = {}) {
     super();
@@ -7578,7 +7586,7 @@ var CartManager = class extends EventTarget {
           removedBeforeSync.push(li.id);
           return [];
         }
-        const urlFromBackend = (typeof li.image === "string" ? li.image : li.image?.url) || li.imageUrl || li.image_url || "";
+        const urlFromBackend = lineImageUrl(li.image) || li.imageUrl || li.image_url || "";
         const matchedLocal = existingItems.find((existing) => {
           const p1 = normId(existing.productId);
           const p22 = normId(li.product_id);
@@ -10706,7 +10714,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.39.1";
+var SDK_VERSION = "0.39.2";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -11958,6 +11966,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await this.gqlOptions(spId);
     suspendKustom();
     try {
+      await this.cartManager.waitForCartMutations(spId);
       return await syncPaymentKustom(checkoutId, opts);
     } catch (err) {
       this.dropIfSuperseded(spId, err);
