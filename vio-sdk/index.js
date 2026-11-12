@@ -325,7 +325,8 @@ var COUPON_REASONS = [
   "COUPON_NOT_SUPPORTED",
   "COUPON_MIN_AMOUNT",
   "COUPON_OTHER_APPLIED",
-  "COUPON_UNAVAILABLE"
+  "COUPON_UNAVAILABLE",
+  "COUPON_CHANGED"
 ];
 var DISCOUNT_PAYMENT_REASONS = [
   "GIFT_MAX_ONE_UNIT",
@@ -10714,7 +10715,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.39.2";
+var SDK_VERSION = "0.39.3";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -18697,6 +18698,7 @@ var DISCOUNT_TEXT = {
   couponMinAmount: "Handlekurven er under minstebel\xF8pet for rabattkoden.",
   couponOtherApplied: "Du har allerede en rabattkode. Fjern den f\xF8rst.",
   couponUnavailable: "Vi kunne ikke sjekke rabattkoden akkurat n\xE5. Pr\xF8v igjen.",
+  couponChanged: "Rabatten er endret av butikken.",
   /** Any other refusal. */
   couponRefused: "Rabattkoden kunne ikke brukes."
 };
@@ -18718,6 +18720,8 @@ function couponReasonText(reason) {
       return DISCOUNT_TEXT.couponMinAmount;
     case "COUPON_OTHER_APPLIED":
       return DISCOUNT_TEXT.couponOtherApplied;
+    case "COUPON_CHANGED":
+      return DISCOUNT_TEXT.couponChanged;
     case "COUPON_UNAVAILABLE":
     case "DISCOUNT_UNAVAILABLE":
       return DISCOUNT_TEXT.couponUnavailable;

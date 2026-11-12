@@ -304,7 +304,11 @@ vio-shopcart-microservice #120).
 update waits for the cart change on its way to Commerce, vio-web-sdk #152), and the gift of a discount code shows its
 picture in the cart (Commerce sends a line's image as a list, #153).
 
-The vendored SDK is **0.39.2**, built from `vio-web-sdk` `main` `e4983c1` (the 0.39.2 release
+**With the 0.39.3 bundle** (2026-11-12): a coupon the brand changed in its shop after it was applied is said on the
+cart («Rabatten er endret av butikken. Handlekurven er oppdatert – prøv igjen.») instead of the cart opening the
+checkout in silence (vio-web-sdk #155).
+
+The vendored SDK is **0.39.3**, built from `vio-web-sdk` `main` `ad038a0` (the 0.39.3 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
