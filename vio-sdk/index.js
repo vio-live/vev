@@ -20,7 +20,7 @@ function componentKindOf(templateId, slot) {
   const hint = typeof templateId === "string" ? templateId.trim().toLowerCase() : "";
   if (hint) return hint.replace(/^(product|vev)-/, "").slice(0, SLOT_KIND_MAX_LENGTH) || void 0;
   const id = typeof slot === "string" ? slot.toLowerCase() : "";
-  const m2 = id.match(/(?:^|-)(card|carousel|grid|detail|banner|list|hero|stepper)(?:-|$)/);
+  const m2 = id.match(/(?:^|-)(card|carousel|grid|detail|banner|list|hero|stepper|reel)(?:-|$)/);
   return m2?.[1];
 }
 function normalizeSlotKind(value) {
@@ -264,6 +264,165 @@ function writeSlotDeclaration(storageKey, memory2) {
   }
 }
 
+// src/core/safe-storage.ts
+var memory = {
+  local: /* @__PURE__ */ new Map(),
+  session: /* @__PURE__ */ new Map()
+};
+function area(kind) {
+  try {
+    const s4 = globalThis[kind === "local" ? "localStorage" : "sessionStorage"];
+    return s4 && typeof s4.getItem === "function" ? s4 : null;
+  } catch {
+    return null;
+  }
+}
+function storageGet(kind, key) {
+  const kept = memory[kind];
+  if (kept.has(key)) return kept.get(key) ?? null;
+  const s4 = area(kind);
+  if (!s4) return null;
+  try {
+    return s4.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function storageSet(kind, key, value, opts = {}) {
+  try {
+    const s4 = area(kind);
+    if (s4) {
+      s4.setItem(key, value);
+      memory[kind].delete(key);
+      return true;
+    }
+  } catch {
+  }
+  if (opts.memory !== false) memory[kind].set(key, value);
+  return false;
+}
+function storageRemove(kind, key) {
+  memory[kind].delete(key);
+  try {
+    area(kind)?.removeItem(key);
+  } catch {
+  }
+}
+
+// src/core/cart/discount-code.ts
+var DISCOUNT_CODE_MAX_LENGTH = 64;
+function normalizeDiscountCode(value) {
+  if (typeof value !== "string" && typeof value !== "number") return void 0;
+  const code = String(value).trim();
+  if (!code || code.length > DISCOUNT_CODE_MAX_LENGTH) return void 0;
+  if (/[\s\u0000-\u001f\u007f]/.test(code)) return void 0;
+  return code;
+}
+var COUPON_REASONS = [
+  "COUPON_NOT_FOUND",
+  "COUPON_EXPIRED",
+  "COUPON_USAGE_LIMIT",
+  "COUPON_NOT_SUPPORTED",
+  "COUPON_MIN_AMOUNT",
+  "COUPON_OTHER_APPLIED",
+  "COUPON_UNAVAILABLE"
+];
+var DISCOUNT_PAYMENT_REASONS = [
+  "GIFT_MAX_ONE_UNIT",
+  "CHECKOUT_AMOUNT_ZERO",
+  "DISCOUNT_UNAVAILABLE",
+  "DISCOUNT_PAYMENT_METHOD_UNSUPPORTED"
+];
+var ALL_REASONS = [...COUPON_REASONS, ...DISCOUNT_PAYMENT_REASONS];
+function discountReasonOf(text5) {
+  if (typeof text5 !== "string" || !text5) return void 0;
+  let found;
+  for (const reason of ALL_REASONS) {
+    const at = text5.search(new RegExp(`(^|[^A-Z0-9_])${reason}($|[^A-Z0-9_])`));
+    if (at !== -1 && (!found || at < found.at)) found = { reason, at };
+  }
+  return found?.reason;
+}
+function discountReasonOfError(err) {
+  if (typeof err === "string") return discountReasonOf(err);
+  if (!err || typeof err !== "object") return void 0;
+  const { message, graphql } = err;
+  const errors = Array.isArray(graphql?.errors) ? graphql.errors : [];
+  for (const e7 of errors) {
+    const reason = discountReasonOf(e7?.extensions?.code);
+    if (reason) return reason;
+  }
+  for (const e7 of errors) {
+    const reason = discountReasonOf(e7?.message);
+    if (reason) return reason;
+  }
+  return discountReasonOf(message);
+}
+function isFinalCouponReason(reason) {
+  return reason === "COUPON_NOT_FOUND" || reason === "COUPON_EXPIRED" || reason === "COUPON_USAGE_LIMIT" || reason === "COUPON_NOT_SUPPORTED";
+}
+function positiveInt(value) {
+  const n6 = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof n6 === "number" && Number.isInteger(n6) && n6 > 0 ? n6 : void 0;
+}
+function discountGiftsOf(answer) {
+  const list = answer?.gifts;
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const entry of list) {
+    const productId = positiveInt(entry?.product_id);
+    if (!productId) continue;
+    const variantId = positiveInt(entry?.variant_id);
+    if (out.some((g2) => g2.productId === productId && g2.variantId === variantId)) continue;
+    out.push(variantId ? { productId, variantId } : { productId });
+  }
+  return out;
+}
+function isGiftOf(gift, line) {
+  if (!line || positiveInt(line.productId) !== gift.productId) return false;
+  return gift.variantId === void 0 || positiveInt(line.variantId) === gift.variantId;
+}
+function summarizeDiscountOutcomes(outcomes) {
+  if (outcomes.length === 0) return "pending";
+  if (outcomes.some((o7) => o7.status === "applied")) return "applied";
+  if (outcomes.every((o7) => o7.status === "failed")) return "failed";
+  return "refused";
+}
+function commonDiscountReason(outcomes) {
+  const reasons = new Set(outcomes.filter((o7) => o7.status === "refused").map((o7) => o7.reason));
+  if (reasons.size !== 1) return void 0;
+  return [...reasons][0];
+}
+var DISCOUNT_PARAM = "vio_discount";
+var DISCOUNT_SESSION_KEY = "vio.discount.v1";
+function discountParam(search) {
+  try {
+    const params = new URLSearchParams(typeof search === "string" ? search : "");
+    if (!params.has(DISCOUNT_PARAM)) return void 0;
+    const raw = params.get(DISCOUNT_PARAM) ?? "";
+    if (!raw.trim()) return null;
+    return normalizeDiscountCode(raw);
+  } catch {
+    return void 0;
+  }
+}
+function currentSearch() {
+  try {
+    return typeof location !== "undefined" && typeof location.search === "string" ? location.search : "";
+  } catch {
+    return "";
+  }
+}
+function rememberedDiscountCode() {
+  return normalizeDiscountCode(storageGet("session", DISCOUNT_SESSION_KEY));
+}
+function syncDiscountParam(search = currentSearch()) {
+  const param = discountParam(search);
+  if (param === null) storageRemove("session", DISCOUNT_SESSION_KEY);
+  else if (param) storageSet("session", DISCOUNT_SESSION_KEY, param);
+  return rememberedDiscountCode();
+}
+
 // src/core/configuration.ts
 var DEFAULT_URLS = {
   // The Vio Backend development environment was removed on 2026-09-16; its REST
@@ -303,6 +462,8 @@ var ConfigurationSingleton = class {
       contentId: input.contentId,
       contentTitle: input.contentTitle,
       campaignId: toCampaignId(input.campaignId),
+      ...normalizeDiscountCode(input.discountCode) ? { discountCode: normalizeDiscountCode(input.discountCode) } : {},
+      ...typeof input.discountField === "boolean" ? { discountField: input.discountField } : {},
       debug: input.debug === true,
       // Only the two words the backend knows; anything else is "not said".
       privacyMode: input.privacyMode === "minimal" || input.privacyMode === "standard" ? input.privacyMode : void 0,
@@ -411,6 +572,24 @@ var VioApi = class {
     const path = `/v2/mobile/campaigns/${encodeURIComponent(String(campaignId))}/components`;
     const res = await this.get(path);
     return Array.isArray(res) ? res : res?.components ?? [];
+  }
+  /**
+   * A managed shoppable-video experience (`GET /v2/experiences/:id`,
+   * ADR-0042): the published revision for the key of the surface. Sends
+   * `If-None-Match` with the ETag the page last saw and answers `304` when
+   * nothing changed, so a reel re-opened with its cached revision costs no
+   * body. A 404 (unknown, unpublished or another surface's) throws a
+   * `VioApiError` like every other error.
+   */
+  async experience(experienceId, opts = {}) {
+    const path = `/v2/experiences/${encodeURIComponent(String(experienceId))}`;
+    const headers = { "X-API-Key": this.apiKey, Accept: "application/json" };
+    if (opts.ifNoneMatch) headers["If-None-Match"] = opts.ifNoneMatch;
+    const res = await fetch(`${this.apiBase}${path}`, { method: "GET", headers });
+    const etag = res.headers?.get?.("ETag") ?? null;
+    if (res.status === 304) return { status: 304, etag };
+    if (!res.ok) throw new VioApiError(res.status, await safeText(res), `GET ${path}`);
+    return { status: 200, body: await res.json(), etag };
   }
   // MARK: - HTTP plumbing
   async get(path) {
@@ -4338,11 +4517,11 @@ var executionResultClientResponseFields = ($params) => (executionResult) => {
     errors: $params.fetchOptions.errorPolicy === `all` ? executionResult.errors : void 0
   };
 };
-var parseResultFromText = (text4, contentType, jsonSerializer) => {
+var parseResultFromText = (text5, contentType, jsonSerializer) => {
   if (contentType && isGraphQLContentType(contentType)) {
-    return parseGraphQLExecutionResult(jsonSerializer.parse(text4));
+    return parseGraphQLExecutionResult(jsonSerializer.parse(text5));
   } else {
-    return parseGraphQLExecutionResult(text4);
+    return parseGraphQLExecutionResult(text5);
   }
 };
 var createFetcher = (method) => async (params) => {
@@ -4588,51 +4767,6 @@ var parseRequestArgs = (documentOrOptions, variables, requestHeaders) => {
     signal: void 0
   };
 };
-
-// src/core/safe-storage.ts
-var memory = {
-  local: /* @__PURE__ */ new Map(),
-  session: /* @__PURE__ */ new Map()
-};
-function area(kind) {
-  try {
-    const s4 = globalThis[kind === "local" ? "localStorage" : "sessionStorage"];
-    return s4 && typeof s4.getItem === "function" ? s4 : null;
-  } catch {
-    return null;
-  }
-}
-function storageGet(kind, key) {
-  const kept = memory[kind];
-  if (kept.has(key)) return kept.get(key) ?? null;
-  const s4 = area(kind);
-  if (!s4) return null;
-  try {
-    return s4.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function storageSet(kind, key, value, opts = {}) {
-  try {
-    const s4 = area(kind);
-    if (s4) {
-      s4.setItem(key, value);
-      memory[kind].delete(key);
-      return true;
-    }
-  } catch {
-  }
-  if (opts.memory !== false) memory[kind].set(key, value);
-  return false;
-}
-function storageRemove(kind, key) {
-  memory[kind].delete(key);
-  try {
-    area(kind)?.removeItem(key);
-  } catch {
-  }
-}
 
 // src/core/types.ts
 function displayPrice(product) {
@@ -4972,14 +5106,14 @@ var ChannelProduct = class {
 };
 var FILLER_SHIPPING_DESCRIPTIONS = Object.freeze(["by outshifter", "default shipping method"]);
 function shippingDescriptionOf(value, repeats = []) {
-  const text4 = typeof value === "string" ? value.trim() : "";
-  if (!text4) return "";
-  const key = text4.toLowerCase();
+  const text5 = typeof value === "string" ? value.trim() : "";
+  if (!text5) return "";
+  const key = text5.toLowerCase();
   if (FILLER_SHIPPING_DESCRIPTIONS.includes(key)) return "";
   for (const r6 of repeats) {
     if (typeof r6 === "string" && r6.trim() && r6.trim().toLowerCase() === key) return "";
   }
-  return text4;
+  return text5;
 }
 function shippingRatesFor(productShipping, country) {
   if (!Array.isArray(productShipping)) return [];
@@ -5153,9 +5287,9 @@ function currentOriginPage() {
 }
 function cut(value, max) {
   if (typeof value !== "string" && typeof value !== "number") return void 0;
-  const text4 = String(value).trim();
-  if (!text4) return void 0;
-  return text4.length > max ? text4.slice(0, max).trim() || void 0 : text4;
+  const text5 = String(value).trim();
+  if (!text5) return void 0;
+  return text5.length > max ? text5.slice(0, max).trim() || void 0 : text5;
 }
 async function currentPrivacyMode() {
   try {
@@ -5315,8 +5449,8 @@ function currentGlobalDescriptionLabel() {
 }
 function setGlobalDescriptionLabel(label) {
   const s4 = store();
-  const text4 = typeof label === "string" ? label.trim() : "";
-  s4.descriptionLabel = text4 && text4.length <= 40 ? text4 : null;
+  const text5 = typeof label === "string" ? label.trim() : "";
+  s4.descriptionLabel = text5 && text5.length <= 40 ? text5 : null;
   for (const listener of [...s4.listeners]) {
     try {
       listener();
@@ -5344,7 +5478,15 @@ function normalizeBuyerRef(value) {
 var FEATURE_TOKENS = {
   buyer_ref: ["buyer_ref"],
   line_origin: ["origin", "CartLineOriginInput"],
-  checkout_attribution: ["attribution", "CheckoutAttributionInput", "CheckoutAttributionEntryInput"]
+  checkout_attribution: ["attribution", "CheckoutAttributionInput", "CheckoutAttributionEntryInput"],
+  // `discount_code` on the CART read model (GetCart); the checkout has had one of its own for long.
+  cart_discount_code: ["discount_code"],
+  // `discount_source` on the CART read model: `CAMPAIGN` for a campaign's code, whose text is not sent.
+  cart_discount_source: ["discount_source"],
+  // `gifts` on the answer of ApplyDiscount: the products a code gives away.
+  discount_gifts: ["gifts"],
+  // `campaign_id` on ApplyDiscount: the campaign's code, applied by campaign (Commerce looks the code up).
+  discount_campaign: ["campaign_id"]
 };
 var UNKNOWN_PATTERN = /cannot query field|unknown field|unknown argument|unknown type|is not defined by type|not defined by type|field "[^"]+" is not defined/i;
 var refused = /* @__PURE__ */ new Set();
@@ -5722,7 +5864,7 @@ mutation UpdateItem($cartId: String!, $cartItemId: String!, $shippingId: String,
 `;
 var UPDATE_ITEM_MUTATION = updateItemMutation(false);
 var UPDATE_ITEM_WITH_ORIGIN_MUTATION = updateItemMutation(true);
-var GET_CART_QUERY = `
+var getCartQuery = (withDiscountCode, withDiscountSource = false) => `
 query GetCart($cartId: String!) {
   Cart {
     GetCart(cart_id: $cartId) {
@@ -5789,11 +5931,14 @@ query GetCart($cartId: String!) {
       subtotal
       shipping
       currency
-      available_shipping_countries
+      available_shipping_countries${withDiscountCode ? "\n      discount_code" : ""}${withDiscountSource ? "\n      discount_source" : ""}
     }
   }
 }
 `;
+var GET_CART_QUERY = getCartQuery(false);
+var GET_CART_WITH_DISCOUNT_CODE_QUERY = getCartQuery(true);
+var GET_CART_WITH_DISCOUNT_SOURCE_QUERY = getCartQuery(true, true);
 var GET_LINE_ITEMS_BY_SUPPLIER_QUERY = `
 query GetLineItemsBySupplier($cartId: String!) {
   Cart {
@@ -6498,9 +6643,93 @@ async function updateItem(cartId, cartItemId, shippingId, qty, options, extra = 
   ) : await executeCartGraphQL(UPDATE_ITEM_MUTATION, variables, options);
   return json?.data?.Cart?.UpdateItem;
 }
-async function getCart(cartId, options) {
-  const json = await executeCartGraphQL(GET_CART_QUERY, { cartId }, options);
+async function getCart(cartId, options, extra = {}) {
+  const json = extra.discountCode ? await withGatewayFeature(
+    "cart_discount_source",
+    (withSource) => withSource ? executeCartGraphQL(GET_CART_WITH_DISCOUNT_SOURCE_QUERY, { cartId }, options) : withGatewayFeature(
+      "cart_discount_code",
+      (supported) => executeCartGraphQL(supported ? GET_CART_WITH_DISCOUNT_CODE_QUERY : GET_CART_QUERY, { cartId }, options)
+    )
+  ) : await executeCartGraphQL(GET_CART_QUERY, { cartId }, options);
   return json?.data?.Cart?.GetCart;
+}
+var applyDiscountMutation = (withGifts) => `
+mutation ApplyDiscount($cartId: String!, $code: String!) {
+  Discounts {
+    ApplyDiscount(cart_id: $cartId, code: $code) {
+      executed
+      message${withGifts ? `
+      gifts {
+        product_id
+        variant_id
+        quantity
+      }` : ""}
+    }
+  }
+}
+`;
+var APPLY_DISCOUNT_MUTATION = applyDiscountMutation(true);
+var APPLY_DISCOUNT_MUTATION_LEGACY = applyDiscountMutation(false);
+var DELETE_APPLIED_DISCOUNT_MUTATION = `
+mutation DeleteAppliedDiscount($cartId: String!, $code: String!) {
+  Discounts {
+    DeleteAppliedDiscount(cart_id: $cartId, code: $code) {
+      executed
+      message
+    }
+  }
+}
+`;
+var APPLY_CAMPAIGN_DISCOUNT_MUTATION = `
+mutation ApplyCampaignDiscount($cartId: String!, $campaignId: Int!) {
+  Discounts {
+    ApplyDiscount(cart_id: $cartId, campaign_id: $campaignId) {
+      executed
+      message
+      gifts {
+        product_id
+        variant_id
+        quantity
+      }
+    }
+  }
+}
+`;
+var DELETE_CART_DISCOUNT_MUTATION = `
+mutation DeleteCartDiscount($cartId: String!) {
+  Discounts {
+    DeleteAppliedDiscount(cart_id: $cartId) {
+      executed
+      message
+    }
+  }
+}
+`;
+function discountAnswerOf(answer) {
+  const a3 = answer && typeof answer === "object" ? answer : {};
+  return { ...a3, executed: a3.executed === true, message: typeof a3.message === "string" ? a3.message : "" };
+}
+async function applyDiscount(cartId, code, options) {
+  const json = await withGatewayFeature(
+    "discount_gifts",
+    (supported) => executeCartGraphQL(supported ? APPLY_DISCOUNT_MUTATION : APPLY_DISCOUNT_MUTATION_LEGACY, { cartId, code }, options)
+  );
+  return discountAnswerOf(json?.data?.Discounts?.ApplyDiscount);
+}
+async function deleteAppliedDiscount(cartId, code, options) {
+  const json = await executeCartGraphQL(DELETE_APPLIED_DISCOUNT_MUTATION, { cartId, code }, options);
+  return discountAnswerOf(json?.data?.Discounts?.DeleteAppliedDiscount);
+}
+async function applyCampaignDiscount(cartId, campaignId, options) {
+  const json = await withGatewayFeature(
+    "discount_campaign",
+    async (supported) => supported ? executeCartGraphQL(APPLY_CAMPAIGN_DISCOUNT_MUTATION, { cartId, campaignId }, options) : null
+  );
+  return json === null ? null : discountAnswerOf(json?.data?.Discounts?.ApplyDiscount);
+}
+async function deleteCartDiscount(cartId, options) {
+  const json = await executeCartGraphQL(DELETE_CART_DISCOUNT_MUTATION, { cartId }, options);
+  return discountAnswerOf(json?.data?.Discounts?.DeleteAppliedDiscount);
 }
 async function getLineItemsBySupplier(cartId, options) {
   const json = await executeCartGraphQL(GET_LINE_ITEMS_BY_SUPPLIER_QUERY, { cartId }, options);
@@ -6633,7 +6862,147 @@ async function confirmPaymentApplePay(variables, options) {
   return json?.data?.Payment?.ConfirmPaymentApplePay;
 }
 
+// src/core/campaign-discount.ts
+var REF_MAX_LENGTH = 128;
+function normalizeDiscountRef(value) {
+  if (typeof value !== "string") return void 0;
+  const ref = value.trim();
+  if (!ref || ref.length > REF_MAX_LENGTH) return void 0;
+  if (/[\s\u0000-\u001f\u007f]/.test(ref)) return void 0;
+  return ref;
+}
+function sponsorDiscountRef(sponsor) {
+  if (!sponsor || typeof sponsor !== "object") return void 0;
+  const discount = sponsor.discount;
+  if (!discount || typeof discount !== "object") return void 0;
+  return normalizeDiscountRef(discount.ref);
+}
+function sponsorBlockIn(campaign, sponsorId) {
+  if (toNumber(campaign.primarySponsor?.id) === sponsorId) return campaign.primarySponsor;
+  const secondaries = Array.isArray(campaign.secondarySponsors) ? campaign.secondarySponsors : [];
+  return secondaries.find((s4) => !!s4 && typeof s4 === "object" && toNumber(s4.id) === sponsorId);
+}
+function discountCampaignFor(boot, sponsorId, candidates) {
+  if (!boot) return null;
+  try {
+    const page = activeCampaignEntry(boot, candidates, sponsorId);
+    if (page) return page;
+    const fallback = defaultCampaignEntry(boot);
+    return fallback && campaignSponsorIds(fallback).includes(sponsorId) ? fallback : null;
+  } catch {
+    return null;
+  }
+}
+function campaignDiscountFor(boot, sponsorId, candidates) {
+  try {
+    const campaign = discountCampaignFor(boot, sponsorId, candidates);
+    const campaignId = toNumber(campaign?.id);
+    if (!campaign || campaignId === void 0) return void 0;
+    const ref = sponsorDiscountRef(sponsorBlockIn(campaign, sponsorId));
+    return ref ? { ref, campaignId } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function campaignDiscountNow(boot, campaignId, sponsorId) {
+  if (!boot) return null;
+  try {
+    const fallback = defaultCampaignEntry(boot);
+    const campaign = fallback && toNumber(fallback.id) === campaignId ? fallback : activeCampaignEntry(boot, campaignId);
+    if (!campaign) return null;
+    const block2 = sponsorBlockIn(campaign, sponsorId);
+    if (block2 && typeof block2 === "object" && !("discount" in block2)) return void 0;
+    return sponsorDiscountRef(block2) ?? null;
+  } catch {
+    return null;
+  }
+}
+function bootstrapDiscountRefs(boot) {
+  if (!boot || typeof boot !== "object") return "";
+  const out = /* @__PURE__ */ new Set();
+  const collect = (campaignId, sponsor) => {
+    const ref = sponsorDiscountRef(sponsor);
+    if (!ref) return;
+    out.add(`${toNumber(campaignId) ?? ""}:${toNumber(sponsor.id) ?? ""}=${ref}`);
+  };
+  try {
+    const campaigns = Array.isArray(boot.campaigns) ? boot.campaigns : [];
+    for (const c4 of campaigns) {
+      if (!c4 || typeof c4 !== "object") continue;
+      collect(c4.id, c4.primarySponsor);
+      for (const s4 of Array.isArray(c4.secondarySponsors) ? c4.secondarySponsors : []) collect(c4.id, s4);
+    }
+    collect(boot.campaign?.id, boot.primarySponsor);
+    for (const s4 of Array.isArray(boot.secondarySponsors) ? boot.secondarySponsors : []) collect(boot.campaign?.id, s4);
+  } catch {
+  }
+  return [...out].sort().join("|");
+}
+function methodLetters(method) {
+  return typeof method === "string" ? method.toLowerCase().replace(/[^a-z]/g, "") : "";
+}
+function sponsorTakesDiscounts(commerce) {
+  if (!commerce || typeof commerce !== "object") return false;
+  const { discountMethods, paymentMethods } = commerce;
+  if (Array.isArray(discountMethods)) return discountMethods.some((m2) => methodLetters(m2) !== "");
+  if (Array.isArray(paymentMethods)) return paymentMethods.some((m2) => methodLetters(m2) === "vipps");
+  return true;
+}
+
+// src/core/cart/discount.ts
+function cents(amount2) {
+  return Math.round(amount2 * 100) / 100;
+}
+var num = (value) => {
+  const n6 = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof n6 === "number" && Number.isFinite(n6) ? n6 : 0;
+};
+function lineListTotal(line) {
+  return num(line?.unitPrice) * num(line?.quantity);
+}
+function lineDiscount(line) {
+  const discount = num(line?.discount);
+  if (!(discount > 0)) return 0;
+  return Math.min(cents(discount), Math.max(0, cents(lineListTotal(line))));
+}
+function lineNetTotal(line) {
+  const discount = lineDiscount(line);
+  if (discount === 0) return lineListTotal(line);
+  return Math.max(0, cents(lineListTotal(line) - discount));
+}
+function netUnitPrice(line) {
+  const discount = lineDiscount(line);
+  const quantity = num(line?.quantity);
+  if (discount === 0 || !(quantity > 0)) return num(line?.unitPrice);
+  return Math.max(0, cents(lineNetTotal(line) / quantity));
+}
+function isGiftLine(line) {
+  const list = cents(lineListTotal(line));
+  return list > 0 && lineDiscount(line) >= list;
+}
+function cartListTotal(lines) {
+  return (lines ?? []).reduce((sum, line) => sum + lineListTotal(line), 0);
+}
+function cartDiscountTotal(lines) {
+  const total = (lines ?? []).reduce((sum, line) => sum + lineDiscount(line), 0);
+  return total > 0 ? cents(total) : 0;
+}
+function cartNetTotal(lines) {
+  return (lines ?? []).reduce((sum, line) => sum + lineNetTotal(line), 0);
+}
+function isGiftOnlyCart(lines) {
+  const list = lines ?? [];
+  return list.length > 0 && list.some(isGiftLine) && !(cartNetTotal(list) > 0);
+}
+function serverLineDiscount(raw, unitPrice, quantity, serverQuantity = quantity) {
+  let discount = num(raw);
+  if (!(discount > 0)) return 0;
+  if (serverQuantity > 0 && quantity !== serverQuantity) discount = discount * quantity / serverQuantity;
+  return lineDiscount({ unitPrice, quantity, discount });
+}
+
 // src/core/cart/cart-manager.ts
+var DISCOUNT_ASK_ATTEMPTS = 2;
 var CART_STORAGE_PREFIX = "vio.cart.v1";
 function cartStorageKey(scope) {
   return scope ? `${CART_STORAGE_PREFIX}:${scope}` : CART_STORAGE_PREFIX;
@@ -6673,6 +7042,42 @@ function queueStep(sync, target, origin) {
     else sync.steps.push({ delta: -left });
   }
 }
+var CAMPAIGN_KEY = "campaign ";
+function campaignKey(ref) {
+  return CAMPAIGN_KEY + (ref ?? "?");
+}
+function isCampaignKey(key) {
+  return !!key && key.startsWith(CAMPAIGN_KEY);
+}
+function shownCode(key) {
+  return isCampaignKey(key) ? "" : key;
+}
+function wantedKey(wanted) {
+  return wanted.ref !== void 0 ? campaignKey(wanted.ref) : wanted.code;
+}
+function cartDiscountKey(cart) {
+  if (!cart) return void 0;
+  if (cart.discountCode) return cart.discountCode;
+  if (cart.discountSource === "CAMPAIGN") return campaignKey(cart.discountRef);
+  return void 0;
+}
+function clearCartDiscount(cart) {
+  delete cart.discountCode;
+  delete cart.discountCampaignId;
+  delete cart.discountRef;
+  delete cart.discountSource;
+}
+function refusalOf(key, reason) {
+  return isCampaignKey(key) ? { code: "", ref: key.slice(CAMPAIGN_KEY.length), reason } : { code: key, reason };
+}
+function refusalKey(refusal) {
+  return typeof refusal.ref === "string" ? campaignKey(refusal.ref) : refusal.code;
+}
+function removalOf(cart) {
+  const key = cartDiscountKey(cart);
+  if (!key || !cart) return void 0;
+  return cart.discountCode ? { key, code: cart.discountCode } : { key };
+}
 function cartCampaignOf(cart) {
   const items = cart?.items ?? [];
   for (let i5 = items.length - 1; i5 >= 0; i5--) {
@@ -6694,7 +7099,7 @@ function normId(val) {
   return String(val).trim();
 }
 var CartManager = class extends EventTarget {
-  constructor(scope = "") {
+  constructor(scope = "", hooks = {}) {
     super();
     /** In-flight CreateCart per sponsor — two quick adds must share ONE backend
      * cart (two CreateCarts split the items and one silently disappears). */
@@ -6727,6 +7132,58 @@ var CartManager = class extends EventTarget {
     this.rebuildEpoch = /* @__PURE__ */ new Map();
     /** The lines to give the next backend cart of a sponsor, after its channel went away. */
     this.carryOver = /* @__PURE__ */ new Map();
+    /**
+     * The discount code asked for from code on this page load
+     * (`applyDiscountCode`): it also goes on the backend carts created from now
+     * on. `null` after `removeDiscountCode()` — no code at all for this page
+     * load; `undefined` when nothing was said.
+     */
+    this.askedDiscountCode = void 0;
+    /**
+     * What Commerce last said about a code (`key`, see `campaignKey`) on a
+     * sponsor's backend cart, the lines the cart had then, and how many times
+     * in a row it was asked that way: the page's own code is not asked for
+     * again on a cart that already answered for it (`shouldAskDiscount`).
+     */
+    this.discountAnswers = /* @__PURE__ */ new Map();
+    /**
+     * The discount call in flight per sponsor (an ApplyDiscount or a
+     * DeleteAppliedDiscount) and what it is about (`key`, see `campaignKey`):
+     * one at a time, and what `discountBusy` reads. `asked`: someone asked for
+     * it by name (`applyDiscountCode`, `removeDiscountCode`) and is told what
+     * comes of it — as opposed to what the SDK does by itself with the page's
+     * own code or the campaign's.
+     */
+    this.discountCalls = /* @__PURE__ */ new Map();
+    /**
+     * The `applyDiscountCode` in flight per sponsor — a code someone asked for,
+     * the shopper's own: a payment started meanwhile waits for its answer, and
+     * does not leave for its provider when the code was not taken
+     * (`settleDiscountCode`).
+     */
+    this.typedAsks = /* @__PURE__ */ new Map();
+    /**
+     * Sponsors whose gifts are not put in the cart for now: a payment is being
+     * started on the cart as it is (`settleDiscountCode` ran out of time).
+     */
+    this.giftHolds = /* @__PURE__ */ new Set();
+    /** The gifts of a sponsor's cart being settled (`reconcileGifts`): one at a time. */
+    this.giftWork = /* @__PURE__ */ new Map();
+    /**
+     * Codes (keys, see `campaignKey`) an `ApplyDiscount` took this page load
+     * WITHOUT a gift: so the overlay that says «Legger til gave …»
+     * (`discountGiftExpected`) stops promising one for a code that is a plain
+     * percentage.
+     */
+    this.giftlessCodes = /* @__PURE__ */ new Set();
+    /**
+     * `cartId:key` of the campaign codes that could not be taken off a cart
+     * this page load (`withdrawCampaignCode`): not tried again on every change
+     * of the cart — the next page load tries again.
+     */
+    this.withdrawFailed = /* @__PURE__ */ new Set();
+    /** A campaign's code being swapped on a sponsor's cart (`swapCampaignCode`): whatever else settles the cart waits for it. */
+    this.codeSwaps = /* @__PURE__ */ new Map();
     /**
      * Whether this is the page's connection now. A manager left behind by a
      * re-init (another key) still finishes its requests and keeps its own
@@ -6762,6 +7219,7 @@ var CartManager = class extends EventTarget {
       this.emit();
       for (const sponsorId of changed) this.emitCartUpdated(sponsorId, "storage");
     };
+    this.hooks = hooks ?? {};
     this.storageKey = cartStorageKey(scope);
     this.cartsBySponsor = this.loadFromStorage();
     if (scope && this.cartsBySponsor.size === 0) {
@@ -6858,6 +7316,12 @@ var CartManager = class extends EventTarget {
     if (!cart || !line || !server) return;
     const price = server.price?.amount_incl_taxes ?? server.price?.amount;
     let changed = false;
+    const discount = serverLineDiscount(server.price?.discount, price ?? line.unitPrice, server.quantity);
+    if (discount !== (line.discount ?? 0)) {
+      if (discount > 0) line.discount = discount;
+      else delete line.discount;
+      changed = true;
+    }
     if (server.quantity !== line.quantity) {
       line.quantity = server.quantity;
       if (!this.hasMutationsInFlight(sponsorId, settling)) {
@@ -6941,6 +7405,8 @@ var CartManager = class extends EventTarget {
     const carried = cart.items.filter((item) => item.quantity > 0).map((item) => ({ productId: item.productId, variantId: item.variantId, origins: lineOrigins(item) }));
     delete cart.cartId;
     delete cart.channelId;
+    clearCartDiscount(cart);
+    this.discountAnswers.delete(sponsorId);
     for (const item of cart.items) delete item.cartItemId;
     for (const key of [...this.qtySyncs.keys()]) {
       if (key.startsWith(`${sponsorId}:`)) this.qtySyncs.delete(key);
@@ -6979,6 +7445,7 @@ var CartManager = class extends EventTarget {
     }
     const res = last;
     if (res && Array.isArray(res.line_items)) this.applyBackendCart(sponsorId, res, seq);
+    this.checkDiscountCode(sponsorId);
   }
   /**
    * Ensure the sponsor cart exists server-side; returns its backend cart id.
@@ -7071,6 +7538,28 @@ var CartManager = class extends EventTarget {
     if (backendCart.available_shipping_countries) {
       cart.availableShippingCountries = backendCart.available_shipping_countries;
     }
+    if (backendCart.discount_code !== void 0 || backendCart.discount_source !== void 0) {
+      const serverCode = normalizeDiscountCode(backendCart.discount_code);
+      const byCampaign = !serverCode && backendCart.discount_source === "CAMPAIGN";
+      const known = cartDiscountKey(cart);
+      if (serverCode) {
+        if (cart.discountCode !== serverCode) {
+          if (known) delete cart.gifts;
+          clearCartDiscount(cart);
+        }
+        cart.discountCode = serverCode;
+      } else if (byCampaign) {
+        if (cart.discountSource !== "CAMPAIGN") {
+          if (known) delete cart.gifts;
+          clearCartDiscount(cart);
+          cart.discountSource = "CAMPAIGN";
+        }
+      } else if (known || cart.gifts) {
+        clearCartDiscount(cart);
+        if (cart.gifts?.some((g2) => g2.added)) void Promise.resolve().then(() => this.removeAddedGifts(sponsorId));
+        else delete cart.gifts;
+      }
+    }
     const removedBeforeSync = [];
     if (Array.isArray(backendCart.line_items)) {
       const existingItems = cart.items || [];
@@ -7104,6 +7593,8 @@ var CartManager = class extends EventTarget {
           return false;
         });
         const imageUrl = urlFromBackend || matchedLocal?.imageUrl || "";
+        const unitPrice = li.price?.amount_incl_taxes ?? li.price?.amount ?? matchedLocal?.unitPrice ?? 0;
+        const discount = serverLineDiscount(li.price?.discount, unitPrice, intended ?? li.quantity, li.quantity);
         const line = {
           id: li.id,
           cartItemId: li.id,
@@ -7112,7 +7603,8 @@ var CartManager = class extends EventTarget {
           variantId: li.variant_id != null ? Number(li.variant_id) : void 0,
           brand: li.brand || matchedLocal?.brand || "",
           name: li.title ? li.variant_title ? `${li.title} \u2014 ${li.variant_title}` : li.title : matchedLocal?.name || "",
-          unitPrice: li.price?.amount_incl_taxes ?? li.price?.amount ?? matchedLocal?.unitPrice ?? 0,
+          unitPrice,
+          ...discount > 0 ? { discount } : {},
           currency: li.price?.currency_code || backendCart.currency || matchedLocal?.currency || "NOK",
           imageUrl,
           quantity: intended ?? li.quantity,
@@ -7203,6 +7695,7 @@ var CartManager = class extends EventTarget {
       return false;
     });
     if (existing) {
+      if (isGiftLine(existing)) return existing;
       existing.quantity += qty;
       addOriginQuantity(existing, opts.origin, qty);
     } else {
@@ -7252,6 +7745,7 @@ var CartManager = class extends EventTarget {
           if (resCart && Array.isArray(resCart.line_items)) {
             this.applyBackendCart(opts.sponsorId, resCart, seq, settling);
           }
+          this.checkDiscountCode(opts.sponsorId);
         }
       } catch (err) {
         const c4 = this.cartsBySponsor.get(opts.sponsorId);
@@ -7296,6 +7790,7 @@ var CartManager = class extends EventTarget {
     if (!item) return;
     const target = quantity > 0 ? quantity : 0;
     if (target === item.quantity) return;
+    if (target > item.quantity && isGiftLine(item)) return;
     const targetItemId = item.cartItemId;
     const removedOrigin = latestOrigin(item);
     const increase = target > item.quantity;
@@ -7304,6 +7799,8 @@ var CartManager = class extends EventTarget {
     const addedOrigin = increase ? latestOrigin(item) : void 0;
     if (target <= 0) {
       cart.items = cart.items.filter((i5) => i5 !== item);
+      const gift = cart.gifts?.find((g2) => isGiftOf(g2, item));
+      if (gift) gift.declined = true;
       if (this.active && typeof document !== "undefined") {
         document.dispatchEvent(
           new CustomEvent("vio:removed-from-cart", {
@@ -7328,8 +7825,12 @@ var CartManager = class extends EventTarget {
         );
       }
     } else {
+      if (item.discount && item.quantity > 0) {
+        item.discount = Math.round(item.discount * target / item.quantity * 100) / 100;
+      }
       item.quantity = target;
     }
+    if (target <= 0) this.dropOrphanGifts(sponsorId);
     if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
     this.persist();
     this.emit();
@@ -7401,6 +7902,7 @@ var CartManager = class extends EventTarget {
               this.reconcileLineFromResponse(sponsorId, cartItemId, resCart, settling);
             }
           }
+          if (next === void 0) this.checkDiscountCode(sponsorId);
         } catch (err) {
           const retryRemoval = !removalRetried && sync.steps.length > 0 && finalTarget(sync) <= 0;
           sync.steps = [];
@@ -7429,12 +7931,14 @@ var CartManager = class extends EventTarget {
     this.updateQuantity(lineItemId, sponsorId, 0);
   }
   clearSponsorCart(sponsorId) {
+    this.discountAnswers.delete(sponsorId);
     if (this.cartsBySponsor.delete(sponsorId)) {
       this.persist();
       this.emit();
     }
   }
   clearAllCarts() {
+    this.discountAnswers.clear();
     if (this.cartsBySponsor.size === 0) return;
     this.cartsBySponsor.clear();
     this.persist();
@@ -7444,9 +7948,18 @@ var CartManager = class extends EventTarget {
   async fetchCartFromBackend(sponsorId) {
     const live = await this.liveCart(sponsorId);
     if (!live) return null;
-    const resCart = await getCart(live.cartId, live.opts);
+    const resCart = await this.readBackendCart(sponsorId, live);
     if (resCart) this.updateFromBackendCart(sponsorId, resCart);
     return resCart;
+  }
+  /**
+   * GetCart — as it always was for a cart without a discount code; with a
+   * code in play (the page wants one, or the cart carries one) the answer
+   * also says which code the server cart has.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readBackendCart(sponsorId, live) {
+    return this.discountInPlay(sponsorId) ? getCart(live.cartId, live.opts, { discountCode: true }) : getCart(live.cartId, live.opts);
   }
   /**
    * The cart as the server has it, for the moment a checkout is about to be
@@ -7470,7 +7983,7 @@ var CartManager = class extends EventTarget {
       try {
         const live = await this.liveCart(sponsorId);
         if (!live) return this.cartsBySponsor.get(sponsorId);
-        resCart = await getCart(live.cartId, live.opts);
+        resCart = await this.readBackendCart(sponsorId, live);
       } catch (err) {
         if (typeof console !== "undefined") {
           console.warn("[CartManager] GetCart before the checkout failed \u2014 the local cart stands", err);
@@ -7482,6 +7995,7 @@ var CartManager = class extends EventTarget {
       if (backendCart && Array.isArray(backendCart.line_items)) {
         this.updateFromBackendCart(sponsorId, backendCart, { authoritative: true });
         this.emitCartUpdated(sponsorId, "server");
+        this.checkDiscountCode(sponsorId);
       }
       return this.cartsBySponsor.get(sponsorId);
     }
@@ -7492,12 +8006,16 @@ var CartManager = class extends EventTarget {
     if (!this.active || typeof document === "undefined") return;
     const cart = this.cartsBySponsor.get(sponsorId);
     const items = (cart?.items ?? []).map((item) => ({ ...item }));
+    const discount = cartDiscountTotal(items);
     const detail = {
       sponsorId,
       cartId: cart?.cartId,
       items,
       itemCount: items.reduce((count, item) => count + item.quantity, 0),
       subtotal: items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
+      ...discount > 0 ? { discount } : {},
+      ...cart?.discountCode ? { discountCode: cart.discountCode } : {},
+      ...cart?.discountSource === "CAMPAIGN" ? { discountSource: "CAMPAIGN" } : {},
       currency: cart?.currency || getGlobalCurrency(),
       source
     };
@@ -7519,6 +8037,839 @@ var CartManager = class extends EventTarget {
     }
     return resCart;
   }
+  // MARK: - Discount code (one per backend cart)
+  /**
+   * Put a discount code on the carts: on every sponsor's backend cart (or only
+   * `sponsorId`'s) now, and — kept for this page load — on the backend carts
+   * to come. This is what a "discount code" field calls: the code is
+   * validated here, before anything is paid, and whoever asked is told what
+   * came of it — taken or not, and why (the page's own code, which nobody
+   * typed, is the one that is refused in silence). Commerce takes one
+   * code per cart: the same code again is fine, another one while a code is
+   * on the cart is refused (`removeDiscountCode()` first). It asks the
+   * brand's shop about the code, so the answer can take a few seconds:
+   * `discountBusy()` says so meanwhile (with `change`), nothing else in the
+   * cart waits for it, and a second call for the same cart and code shares
+   * the first. A cart that took the code is given the gifts the code brings
+   * and has its lines read again, so each says what the code takes off it.
+   *
+   * Never throws: the answer says what happened (`DiscountCodeResult`, with
+   * everything Commerce answered per cart), and a cart that did not take the
+   * code is as it was.
+   */
+  async applyDiscountCode(code, sponsorId) {
+    const normalized = normalizeDiscountCode(code);
+    if (!normalized) return { status: "refused", code: "", carts: [] };
+    const targets = this.discountTargets(sponsorId);
+    const asking = this.askForDiscountCode(normalized, targets);
+    for (const id of targets) this.typedAsks.set(id, asking);
+    try {
+      return await asking;
+    } finally {
+      for (const id of targets) {
+        if (this.typedAsks.get(id) === asking) this.typedAsks.delete(id);
+      }
+    }
+  }
+  /** What `applyDiscountCode` does, for a code that is one. Never rejects. */
+  async askForDiscountCode(normalized, targets) {
+    const before = this.askedDiscountCode;
+    this.askedDiscountCode = normalized;
+    const carts = [];
+    for (const id of targets) {
+      const outcome = await this.assertDiscount(id, { code: normalized }, true, true);
+      if (outcome) carts.push(outcome);
+    }
+    const status = summarizeDiscountOutcomes(carts);
+    if ((status === "refused" || status === "failed") && this.askedDiscountCode === normalized) {
+      this.askedDiscountCode = before;
+    }
+    const reason = commonDiscountReason(carts);
+    return { status, code: normalized, ...reason ? { reason } : {}, carts };
+  }
+  /**
+   * Take the discount code off the carts (every sponsor's, or only
+   * `sponsorId`'s) and give none to the carts to come for the rest of this
+   * page load — the page's configured code and the campaigns' included. A
+   * cart it came off loses the gifts the SDK put in it for the code, and has
+   * its lines read again. A campaign's code comes off too (its entry says
+   * `source: 'CAMPAIGN'` and no code). Never throws.
+   */
+  async removeDiscountCode(sponsorId) {
+    this.askedDiscountCode = null;
+    const carts = [];
+    for (const id of this.discountTargets(sponsorId)) {
+      const removal = removalOf(this.cartsBySponsor.get(id));
+      if (!removal) continue;
+      const code = removal.code ?? "";
+      const source = removal.code ? {} : { source: "CAMPAIGN" };
+      try {
+        const live = await this.liveCart(id);
+        if (!live || cartDiscountKey(this.cartsBySponsor.get(id)) !== removal.key) continue;
+        const answer = await this.discountCall(
+          id,
+          { kind: "removing", cartId: live.cartId, key: removal.key, asked: true },
+          () => this.removeRequest(live.cartId, removal, live.opts)
+        );
+        if (!answer.executed) {
+          carts.push({ sponsorId: id, code, ...source, status: "refused", ...answer.message ? { message: answer.message } : {}, answer });
+          continue;
+        }
+        this.forgetDiscount(id, live.cartId, removal.key);
+        carts.push({ sponsorId: id, code, ...source, status: "removed", answer });
+        await this.refreshFromServer(id);
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.warn(`[CartManager] the discount code could not be removed from the cart of sponsor ${id}`, err);
+        }
+        carts.push({ sponsorId: id, code, ...source, status: "failed", message: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return { removed: carts.some((c4) => c4.status === "removed"), carts };
+  }
+  /**
+   * The discount code a sponsor's backend cart carries, once Commerce took
+   * it — the code as it is shown. `undefined` for a campaign's code, whose
+   * text the page is never told (`hasDiscountCode` says it is there).
+   */
+  discountCodeForSponsor(sponsorId) {
+    return this.cartsBySponsor.get(sponsorId)?.discountCode;
+  }
+  /**
+   * The sponsor's backend cart carries a discount code — whatever its
+   * source: one the shopper typed, the page's own, or its campaign's (whose
+   * code is not shown). `sponsorId` omitted: any of the carts that has lines.
+   */
+  hasDiscountCode(sponsorId) {
+    if (sponsorId !== void 0) return !!cartDiscountKey(this.cartsBySponsor.get(sponsorId));
+    for (const cart of this.cartsBySponsor.values()) {
+      if (cart.items.length > 0 && cartDiscountKey(cart)) return true;
+    }
+    return false;
+  }
+  /**
+   * Whose the code on the sponsor's cart is: `CAMPAIGN` — its campaign's,
+   * not shown (the «Rabatt» row says no code); `CODE` — one that is shown
+   * (`discountCodeForSponsor`); `undefined` without a code.
+   */
+  discountSourceForSponsor(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (cart?.discountCode) return "CODE";
+    return cart?.discountSource === "CAMPAIGN" ? "CAMPAIGN" : void 0;
+  }
+  /**
+   * The SDK is about to add (or is adding) the page code's gift to a cart —
+   * for the overlay that says «Legger til gave …» while Vipps is prepared.
+   * True when a gift is pending on the cart, or when the code the cart is to
+   * get by itself (the page's own, or its campaign's for that sponsor) is one
+   * that brings a gift (a code the SDK has not learned is giftless) and the
+   * cart does not carry it yet (an empty-cart Express: the gift is about to
+   * be added). `sponsorId` omitted: any of the carts. False on a page with no
+   * code for that cart, so an ordinary purchase shows the plain overlay.
+   */
+  discountGiftExpected(sponsorId) {
+    for (const id of this.discountTargets(sponsorId)) {
+      const cart = this.cartsBySponsor.get(id);
+      if ((cart?.gifts ?? []).some((g2) => !g2.added && !g2.declined)) return true;
+      const next = this.nextDiscount(id);
+      const key = next ? wantedKey(next) : void 0;
+      if (key && !this.giftlessCodes.has(key) && cartDiscountKey(cart) !== key) return true;
+    }
+    return false;
+  }
+  /**
+   * A discount code is being put on a cart (`applying`) or taken off it
+   * (`removing`) right now — `sponsorId`'s cart, or any. `change` is said
+   * when it starts and when it ends. `asked`: someone asked for it by name —
+   * the field's «Bruk» or «Fjern», `applyDiscountCode()`,
+   * `removeDiscountCode()` — and is to be shown what comes of it; `false`
+   * for what the SDK does by itself (the page's own code or the campaign's
+   * going on a cart, a refused code coming off at a payment), which shows
+   * only once it is done. `code` is `''` for a campaign's code (never shown).
+   */
+  discountBusy(sponsorId) {
+    for (const [id, call] of this.discountCalls) {
+      if (sponsorId === void 0 || id === sponsorId) {
+        return { kind: call.kind, code: shownCode(call.key), sponsorId: id, asked: call.asked };
+      }
+    }
+    return void 0;
+  }
+  /**
+   * The page's discount code — and the gifts it brings — on a sponsor's
+   * backend cart before something is built on it (a checkout, a payment):
+   * whatever discount call is in flight answers first, a campaign's code the
+   * campaign changed or no longer gives is swapped (`campaignChange`), the
+   * code is asked for when the cart has lines, carries none yet and Commerce
+   * has not already answered for it (`shouldAskDiscount`), and its gifts are
+   * put in the cart. Resolves once the cart is as discounted as it is going
+   * to be.
+   *
+   * The page's OWN code (a campaign's gift) is waited for in full, past the
+   * `budgetMs`: its apply — one to three seconds, the brand's shop asked live
+   * — and the gift it adds are on the cart before the payment, so «Kjøp nå
+   * med Vipps» never leaves without the gift. The request timeout (15 s) is
+   * the hard cap; if the apply or the gift's AddItem fails, the purchase goes
+   * on without it. A code someone typed (`applyDiscountCode`: the field's
+   * «Bruk») is waited for the same way, and when Commerce does not take it
+   * this says so (`notTaken`) instead of going on — whoever typed it is
+   * reading why at this very moment, and a payment that leaves for its
+   * provider would take the answer away with the page.
+   *
+   * `budgetMs` is the cap only when there is no code of the page's own to
+   * settle — and then there is nothing to settle, so it never bites: a page
+   * without a code waits for nothing and asks nothing more than before.
+   *
+   * Never throws.
+   */
+  async settleDiscountCode(sponsorId, opts = {}) {
+    this.giftHolds.delete(sponsorId);
+    const asking = this.typedAsks.get(sponsorId);
+    if (asking) {
+      const result = await asking.then(
+        (r6) => r6,
+        () => void 0
+      );
+      const mine = result?.carts.find((c4) => c4.sponsorId === sponsorId);
+      if (result && mine && mine.status !== "applied") {
+        return { notTaken: { code: result.code, ...mine.reason ? { reason: mine.reason } : {} } };
+      }
+    }
+    const work = this.settleDiscount(sponsorId, false);
+    const budget = opts.budgetMs;
+    if (!(typeof budget === "number" && budget >= 0) || this.wantedDiscount(sponsorId) !== void 0 || this.cartsBySponsor.get(sponsorId)?.discountCampaignId !== void 0) {
+      await work;
+      return {};
+    }
+    let timer;
+    const outOfTime = new Promise((resolve) => {
+      timer = setTimeout(() => resolve("late"), budget);
+    });
+    const first = await Promise.race([work.then(() => "done"), outOfTime]);
+    clearTimeout(timer);
+    if (first === "late") {
+      this.giftHolds.add(sponsorId);
+      if (typeof console !== "undefined") {
+        console.warn(
+          `[CartManager] the discount code of sponsor ${sponsorId}'s cart was not settled within ${budget}ms \u2014 the purchase goes on as the cart is`
+        );
+      }
+    }
+    return {};
+  }
+  /**
+   * The payment `settleDiscountCode` let go ahead did not start after all:
+   * the gifts it held back may go in the cart now. No-op when nothing was held.
+   */
+  releaseGiftHold(sponsorId) {
+    if (!this.giftHolds.delete(sponsorId)) return;
+    this.checkDiscountCode(sponsorId);
+  }
+  /**
+   * Commerce would not start a payment because of the cart's discount (the
+   * code is checked again right before charging; `reason` is the word its
+   * error names — `discountReasonOf`). A code that is no good any more —
+   * over, unknown, used up, not for here, or asking for more than the cart
+   * holds — comes off the cart with the gifts the SDK put in for it, so the
+   * next attempt pays for the cart without it; and the cart is read again
+   * from the server whatever the reason. Never throws.
+   */
+  async discountRefusedAtPayment(sponsorId, reason) {
+    try {
+      const cart = this.cartsBySponsor.get(sponsorId);
+      const removal = removalOf(cart);
+      const dropsTheCode = isFinalCouponReason(reason) || reason === "COUPON_MIN_AMOUNT";
+      if (cart?.cartId && removal && dropsTheCode) {
+        const cartId = cart.cartId;
+        if (isFinalCouponReason(reason)) cart.discountRefusal = refusalOf(removal.key, reason);
+        try {
+          const live = await this.liveCart(sponsorId);
+          if (live && live.cartId === cartId) {
+            await this.discountCall(
+              sponsorId,
+              { kind: "removing", cartId, key: removal.key, asked: false },
+              () => this.removeRequest(cartId, removal, live.opts)
+            );
+          }
+          this.forgetDiscount(sponsorId, cartId, removal.key, { keepAnswer: true });
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.warn(`[CartManager] the refused discount code could not be taken off the cart of sponsor ${sponsorId}`, err);
+          }
+        }
+        this.discountAnswers.set(sponsorId, {
+          cartId,
+          key: removal.key,
+          outcome: { sponsorId, status: "refused", reason, message: reason },
+          lines: this.discountLines(sponsorId),
+          attempts: 1
+        });
+      }
+      await this.refreshFromServer(sponsorId);
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[CartManager] the cart of sponsor ${sponsorId} could not be put right after a refused discount`, err);
+      }
+    }
+  }
+  /**
+   * The page's code on the carts this page opened with — asked for, without
+   * waiting, on every backend cart with lines that carries none — and a
+   * campaign's code taken off (and replaced) where that campaign no longer
+   * gives it. `Vio.init` calls it when the page has a code of its own; the
+   * facade, when a bootstrap arrives (a code nobody typed waits for it: it
+   * says whether the brand's ways to pay take codes) and when one brings the
+   * campaigns' codes or changes them.
+   */
+  ensureDiscountCodes() {
+    for (const id of [...this.cartsBySponsor.keys()]) this.checkDiscountCode(id);
+  }
+  /**
+   * The code a sponsor's cart is to get by itself, in this order: the one
+   * asked for from code on this page load (`null`: none at all — not even a
+   * campaign's), else the page's own — `Vio.init({ discountCode })`, else the
+   * `?vio_discount=` the tab remembers — for every cart; else the code the
+   * page's campaign gives THIS sponsor (`hooks.campaignDiscount`), by its
+   * reference, with that campaign. A code nobody typed only on a brand one
+   * of whose ways to pay takes codes (`automaticAllowed`).
+   */
+  wantedDiscount(sponsorId) {
+    if (this.askedDiscountCode !== void 0) {
+      return this.askedDiscountCode ? { code: this.askedDiscountCode } : void 0;
+    }
+    try {
+      const configured = Configuration.isInitialized ? Configuration.get().discountCode : void 0;
+      const pageCode = configured ?? rememberedDiscountCode();
+      if (pageCode) return this.automaticAllowed(sponsorId) ? { code: pageCode } : void 0;
+      return this.campaignWanted(sponsorId, this.hooks.campaignDiscount?.(sponsorId));
+    } catch {
+      return void 0;
+    }
+  }
+  /**
+   * A campaign's discount as a cart gets it — its reference and its
+   * campaign — when the gateway takes a campaign's code (a gateway that
+   * refused one this page load does not get asked again) and the brand's
+   * ways to pay take codes.
+   */
+  campaignWanted(sponsorId, from) {
+    const ref = normalizeDiscountRef(from?.ref);
+    const campaignId = Number(from?.campaignId);
+    if (!ref || !Number.isInteger(campaignId) || campaignId <= 0) return void 0;
+    if (!gatewayHas("discount_campaign") || !this.automaticAllowed(sponsorId)) return void 0;
+    return { ref, campaignId };
+  }
+  /**
+   * Whether a code nobody typed may go on the sponsor's cart now
+   * (`hooks.discountAllowed`, for the cart's channel): yes only when the
+   * page says so; not yet when it cannot tell (no bootstrap). A manager
+   * without the hook: yes.
+   */
+  automaticAllowed(sponsorId) {
+    if (!this.hooks.discountAllowed) return true;
+    try {
+      return this.hooks.discountAllowed(sponsorId, this.cartsBySponsor.get(sponsorId)?.channelId) === true;
+    } catch {
+      return false;
+    }
+  }
+  /**
+   * The cart carries a code the SDK put on it from a campaign
+   * (`discountCampaignId`) and that campaign gives the sponsor another one
+   * now (`now`: its reference), or none — a newer bootstrap changed it in the
+   * dashboard, or the campaign is no longer running. `undefined` when
+   * nothing changed, when it cannot be told (no bootstrap yet), for a code
+   * the shopper typed, the page's own, and one that could not be taken off
+   * already this page load.
+   */
+  campaignChange(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const campaignId = cart?.discountCampaignId;
+    const key = cartDiscountKey(cart);
+    if (!cart || !key || campaignId === void 0 || !this.hooks.campaignDiscountNow) return void 0;
+    if (cart.cartId && this.withdrawFailed.has(`${cart.cartId}:${key}`)) return void 0;
+    try {
+      const said = this.hooks.campaignDiscountNow(sponsorId, campaignId);
+      if (said === void 0) return void 0;
+      const now = normalizeDiscountRef(said);
+      return now && now === cart.discountRef ? void 0 : { campaignId, ...now ? { now } : {} };
+    } catch {
+      return void 0;
+    }
+  }
+  /**
+   * What goes on in place of a campaign's code that campaign changed or
+   * withdrew: the campaign's new one — the cart keeps following its
+   * campaign — or, when it gives none now, the page's code as for any cart
+   * without one. Nothing after `removeDiscountCode()` this page load.
+   */
+  replacementFor(sponsorId, change) {
+    if (this.askedDiscountCode === null) return void 0;
+    return change.now ? this.campaignWanted(sponsorId, { ref: change.now, campaignId: change.campaignId }) : this.wantedDiscount(sponsorId);
+  }
+  /**
+   * The code the SDK is about to put on a sponsor's cart by itself: the
+   * wanted one on a cart without a code; on a cart whose campaign's code
+   * changed, its replacement; nothing on a cart whose code stays.
+   */
+  nextDiscount(sponsorId) {
+    if (!cartDiscountKey(this.cartsBySponsor.get(sponsorId))) return this.wantedDiscount(sponsorId);
+    const change = this.campaignChange(sponsorId);
+    return change ? this.replacementFor(sponsorId, change) : void 0;
+  }
+  /** A discount code is in play for this sponsor's cart: the page wants one for it, or the cart carries one. */
+  discountInPlay(sponsorId) {
+    return !!(this.wantedDiscount(sponsorId) || cartDiscountKey(this.cartsBySponsor.get(sponsorId)));
+  }
+  discountTargets(sponsorId) {
+    return sponsorId !== void 0 ? [sponsorId] : [...this.cartsBySponsor.keys()];
+  }
+  /**
+   * `settleDiscountCode` for whoever does not wait for it: after the cart's
+   * lines changed on the server (an add, a quantity, a removal — a code that
+   * asks for a minimum may be taken now, a gift may be due), after the cart
+   * was read from the server, when the page opens on a cart, and when a
+   * bootstrap arrives or changes the campaigns' codes. Nothing at all on a
+   * page without a code for this cart whose cart carries none of a
+   * campaign's.
+   */
+  checkDiscountCode(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart?.gifts?.length && cart?.discountCampaignId === void 0 && !this.wantedDiscount(sponsorId)) return;
+    void this.settleDiscount(sponsorId, true);
+  }
+  /**
+   * What `settleDiscountCode` and `checkDiscountCode` do. `refresh`: read the
+   * lines again when the code or a gift went on the cart, or a code came off
+   * (a caller that reads them itself right after says no).
+   */
+  async settleDiscount(sponsorId, refresh) {
+    try {
+      for (; ; ) {
+        const inFlight = this.discountCalls.get(sponsorId)?.promise ?? this.giftWork.get(sponsorId) ?? this.codeSwaps.get(sponsorId);
+        if (!inFlight) break;
+        await inFlight.then(
+          () => void 0,
+          () => void 0
+        );
+      }
+      const cart = this.cartsBySponsor.get(sponsorId);
+      if (!cart || cart.items.length === 0) return;
+      const removal = removalOf(cart);
+      if (removal) {
+        const change = this.campaignChange(sponsorId);
+        if (change) {
+          const swap = this.swapCampaignCode(sponsorId, removal, this.replacementFor(sponsorId, change), refresh);
+          this.codeSwaps.set(sponsorId, swap);
+          try {
+            await swap;
+          } finally {
+            if (this.codeSwaps.get(sponsorId) === swap) this.codeSwaps.delete(sponsorId);
+          }
+          return;
+        }
+        if (!cart.gifts?.length) return;
+        await this.waitForCartMutations(sponsorId);
+        const gifted = await this.reconcileGifts(sponsorId);
+        if (gifted && refresh) await this.refreshFromServer(sponsorId);
+        return;
+      }
+      const wanted = this.wantedDiscount(sponsorId);
+      if (wanted) await this.putDiscount(sponsorId, wanted, refresh);
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[CartManager] the page's discount code was not settled for sponsor ${sponsorId}`, err);
+      }
+    }
+  }
+  /**
+   * The code the SDK puts on a cart by itself — once the cart's own
+   * mutations are in, when it has lines, carries none and Commerce has not
+   * already answered for it (`shouldAskDiscount`). Resolves whether the cart
+   * took it (its lines were then read again, unless `refresh` is false).
+   */
+  async putDiscount(sponsorId, wanted, refresh) {
+    await this.waitForCartMutations(sponsorId);
+    const now = this.cartsBySponsor.get(sponsorId);
+    if (!now?.cartId || now.items.length === 0 || cartDiscountKey(now)) return false;
+    if (!this.shouldAskDiscount(sponsorId, now.cartId, wantedKey(wanted))) return false;
+    const outcome = await this.assertDiscount(sponsorId, wanted, refresh, false);
+    return outcome?.status === "applied";
+  }
+  /**
+   * A campaign's code its campaign changed or withdrew, swapped: it comes off
+   * the cart with the gifts the SDK put in for it (`withdrawCampaignCode`),
+   * then `next` goes on (`replacementFor`), and the lines are read again
+   * either way (unless `refresh` is false). When it cannot be taken off,
+   * nothing else happens. Never rejects.
+   */
+  async swapCampaignCode(sponsorId, removal, next, refresh) {
+    try {
+      if (!await this.withdrawCampaignCode(sponsorId, removal)) return;
+      const taken = next ? await this.putDiscount(sponsorId, next, refresh) : false;
+      if (refresh && !taken) await this.refreshFromServer(sponsorId);
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[CartManager] the campaign's discount code was not swapped for sponsor ${sponsorId}`, err);
+      }
+    }
+  }
+  /**
+   * A campaign's code off the sponsor's backend cart because that campaign no
+   * longer gives it (`campaignChange`) — as the field's «Fjern» does, but by
+   * the SDK itself: the gifts the SDK put in for it go out with it. Resolves
+   * true when the cart is without it now. When it cannot be taken off, it
+   * stays — said in the console — and is not tried again for this cart this
+   * page load. Never throws.
+   */
+  async withdrawCampaignCode(sponsorId, removal) {
+    let cartId;
+    try {
+      await this.waitForCartMutations(sponsorId);
+      const live = await this.liveCart(sponsorId);
+      if (!live) return false;
+      cartId = live.cartId;
+      const stillOn = () => cartDiscountKey(this.cartsBySponsor.get(sponsorId)) === removal.key;
+      const answer = await this.discountCall(
+        sponsorId,
+        { kind: "removing", cartId, key: removal.key, asked: false },
+        async () => (
+          // Another settle of this cart took it off (or put another on) while this one waited its turn.
+          stillOn() ? this.removeRequest(live.cartId, removal, live.opts) : null
+        )
+      );
+      if (answer === null) return !cartDiscountKey(this.cartsBySponsor.get(sponsorId));
+      if (!answer.executed) {
+        await this.refreshFromServer(sponsorId);
+        if (cartDiscountKey(this.cartsBySponsor.get(sponsorId))) throw new Error(answer.message || "not removed");
+        return true;
+      }
+      this.forgetDiscount(sponsorId, cartId, removal.key);
+      return true;
+    } catch (err) {
+      if (cartId) this.withdrawFailed.add(`${cartId}:${removal.key}`);
+      if (typeof console !== "undefined") {
+        console.warn(
+          `[CartManager] the campaign's discount code${removal.code ? ` "${removal.code}"` : ""} could not be taken off the cart of sponsor ${sponsorId} \u2014 it stays`,
+          err
+        );
+      }
+      return false;
+    }
+  }
+  /** The DeleteAppliedDiscount that takes `removal` off a backend cart: by its code; a campaign's, without one. */
+  removeRequest(cartId, removal, opts) {
+    return removal.code ? deleteAppliedDiscount(cartId, removal.code, opts) : deleteCartDiscount(cartId, opts);
+  }
+  /**
+   * Whether the page's code is asked for (again) on this backend cart: yes
+   * when Commerce never answered for this cart and code. After an answer:
+   * never when it took it (if the code is gone since, someone took it off);
+   * never after a refusal that does not depend on the cart (remembered with
+   * the cart: `discountRefusal`); when the cart's lines changed since a
+   * refusal for the amount (`COUPON_MIN_AMOUNT`); when it could not say (the
+   * call failed, the brand's shop could not be asked) —
+   * `DISCOUNT_ASK_ATTEMPTS` times with the same lines; never after any other
+   * refusal. `key`: the code, or a campaign's (see `campaignKey`).
+   */
+  shouldAskDiscount(sponsorId, cartId, key) {
+    const refusal = this.cartsBySponsor.get(sponsorId)?.discountRefusal;
+    if (refusal && refusalKey(refusal) === key) return false;
+    const known = this.discountAnswers.get(sponsorId);
+    if (!known || known.cartId !== cartId || known.key !== key) return true;
+    const { outcome } = known;
+    if (outcome.status === "applied") return false;
+    const sameLines = known.lines === this.discountLines(sponsorId);
+    const couldNotSay = outcome.status === "failed" || outcome.reason === "COUPON_UNAVAILABLE" || outcome.reason === "DISCOUNT_UNAVAILABLE";
+    if (couldNotSay) return !sameLines || known.attempts < DISCOUNT_ASK_ATTEMPTS;
+    if (outcome.reason === "COUPON_MIN_AMOUNT") return !sameLines;
+    return false;
+  }
+  /** The lines of a sponsor's cart as a code is asked about them: products, variants and quantities. */
+  discountLines(sponsorId) {
+    return (this.cartsBySponsor.get(sponsorId)?.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}`).sort().join("|");
+  }
+  /**
+   * A code (or a campaign's, by reference) on a sponsor's backend cart —
+   * asked once its own mutations have settled (a cart being created has its
+   * id by then) — with the gifts it brings, and its lines read again when the
+   * code or a gift is new to it (unless `refresh` is false). `undefined` when
+   * the sponsor has no backend cart. `asked`: someone asked for this code by
+   * name (`applyDiscountCode`) — see `discountBusy`. Never throws.
+   */
+  async assertDiscount(sponsorId, wanted, refresh = true, asked = false) {
+    try {
+      await this.waitForCartMutations(sponsorId);
+      const live = await this.liveCart(sponsorId);
+      if (!live) return void 0;
+      const key = wantedKey(wanted);
+      const before = cartDiscountKey(this.cartsBySponsor.get(sponsorId));
+      const same = this.discountCalls.get(sponsorId);
+      const joined = !!same && same.kind === "applying" && same.cartId === live.cartId && same.key === key;
+      const outcome = await this.askDiscount(sponsorId, live.cartId, wanted, live.opts, asked);
+      if (outcome.status === "applied") {
+        const gifted = await this.reconcileGifts(sponsorId);
+        const cart = this.cartsBySponsor.get(sponsorId);
+        if (refresh && !joined && (before !== key || gifted) && cart?.cartId === live.cartId && cart.items.length > 0) {
+          await this.refreshFromServer(sponsorId);
+        }
+      }
+      return outcome;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[CartManager] the discount code could not be put on the cart of sponsor ${sponsorId}`, err);
+      }
+      return { sponsorId, status: "failed", message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  /**
+   * ONE `ApplyDiscount` for a backend cart and a code — or a campaign's, by
+   * campaign. A call in flight for the same cart and code is shared — a
+   * double tap is one request — and any other discount call of that sponsor
+   * goes first. Resolves with the outcome, never rejects; a cart that took
+   * the code remembers it (`discountCode`), or — a campaign's — its campaign
+   * and reference (`discountSource`, `discountCampaignId`, `discountRef`),
+   * and the gifts it brings (`gifts`).
+   */
+  askDiscount(sponsorId, cartId, wanted, opts, asked = false) {
+    const key = wantedKey(wanted);
+    const same = this.discountCalls.get(sponsorId);
+    if (same && same.kind === "applying" && same.cartId === cartId && same.key === key) {
+      if (asked && !same.asked) {
+        same.asked = true;
+        this.emit();
+      }
+      return same.promise;
+    }
+    const call = { kind: "applying", cartId, key, asked };
+    return this.discountCall(sponsorId, call, async () => {
+      let outcome;
+      try {
+        const answer = wanted.ref !== void 0 ? await applyCampaignDiscount(cartId, wanted.campaignId, opts) : await applyDiscount(cartId, wanted.code, opts);
+        if (answer === null) {
+          outcome = { sponsorId, status: "failed", message: "the commerce gateway does not take a campaign's code" };
+        } else if (answer.executed) outcome = { sponsorId, status: "applied", answer };
+        else {
+          const reason = discountReasonOf(answer.message);
+          outcome = {
+            sponsorId,
+            status: "refused",
+            ...reason ? { reason } : {},
+            ...answer.message ? { message: answer.message } : {},
+            answer
+          };
+        }
+      } catch (err) {
+        outcome = { sponsorId, status: "failed", message: err instanceof Error ? err.message : String(err) };
+      }
+      const lines = this.discountLines(sponsorId);
+      const known = this.discountAnswers.get(sponsorId);
+      const again = !!known && known.cartId === cartId && known.key === key && known.lines === lines;
+      this.discountAnswers.set(sponsorId, { cartId, key, outcome, lines, attempts: (again ? known.attempts : 0) + 1 });
+      if (outcome.status === "applied") {
+        if (discountGiftsOf(outcome.answer).length > 0) this.giftlessCodes.delete(key);
+        else this.giftlessCodes.add(key);
+      }
+      const cart = this.cartsBySponsor.get(sponsorId);
+      if (cart && cart.cartId === cartId) {
+        if (outcome.status === "applied") {
+          const previous = cart.gifts ?? [];
+          const gifts = discountGiftsOf(outcome.answer).map((gift) => {
+            const was = previous.find((g2) => g2.productId === gift.productId && g2.variantId === gift.variantId);
+            return { ...gift, ...was?.added ? { added: true } : {}, ...was?.declined ? { declined: true } : {} };
+          });
+          clearCartDiscount(cart);
+          if (wanted.ref !== void 0) {
+            cart.discountSource = "CAMPAIGN";
+            cart.discountCampaignId = wanted.campaignId;
+            cart.discountRef = wanted.ref;
+          } else {
+            cart.discountCode = wanted.code;
+          }
+          if (gifts.length > 0) cart.gifts = gifts;
+          else delete cart.gifts;
+          delete cart.discountRefusal;
+          this.persist();
+        } else if (outcome.status === "refused" && isFinalCouponReason(outcome.reason)) {
+          cart.discountRefusal = refusalOf(key, outcome.reason);
+          this.persist();
+        }
+      }
+      if (outcome.status !== "applied" && typeof console !== "undefined") {
+        const what = wanted.ref !== void 0 ? "the campaign's discount code" : `discount code "${wanted.code}"`;
+        console.warn(
+          `[CartManager] ${what} not applied to the cart of sponsor ${sponsorId} (${outcome.status})`,
+          outcome.message ?? ""
+        );
+      }
+      return outcome;
+    });
+  }
+  /**
+   * Runs one discount call (apply or remove) for a sponsor's cart: one at a
+   * time per sponsor — whatever is in flight goes first — and `discountBusy`
+   * says it is going on, with `change` at its start and at its end. `what`
+   * IS the entry kept while it runs (a later ask for the same code marks it
+   * `asked`, and the call reads that when it is answered).
+   */
+  async discountCall(sponsorId, what, run) {
+    for (; ; ) {
+      const inFlight = this.discountCalls.get(sponsorId);
+      if (!inFlight) break;
+      await inFlight.promise.then(
+        () => void 0,
+        () => void 0
+      );
+    }
+    const promise = run();
+    const entry = Object.assign(what, { promise });
+    this.discountCalls.set(sponsorId, entry);
+    this.emit();
+    try {
+      return await promise;
+    } finally {
+      if (this.discountCalls.get(sponsorId) === entry) this.discountCalls.delete(sponsorId);
+      this.emit();
+    }
+  }
+  /**
+   * The code (`key`, see `campaignKey`) is off the backend cart: forgotten
+   * here too, with what Commerce said about it (unless `keepAnswer`: a
+   * refusal to remember) and the gifts the SDK put in the cart for it.
+   */
+  forgetDiscount(sponsorId, cartId, key, opts = {}) {
+    if (!opts.keepAnswer) this.discountAnswers.delete(sponsorId);
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart || cart.cartId !== cartId || cartDiscountKey(cart) !== key) return;
+    clearCartDiscount(cart);
+    this.removeAddedGifts(sponsorId);
+    this.persist();
+    this.emit();
+  }
+  // MARK: - Gifts of the discount code
+  /**
+   * The gifts the cart's code brings, in the cart: one unit of each is added
+   * when the cart has something to pay for, the gift is not in it and was
+   * never put in or taken out of this cart; and the gifts the SDK put in go
+   * out again when nothing else is left (a cart of gifts alone cannot be
+   * paid for). One reconcile at a time per sponsor. Resolves with whether the
+   * cart's lines changed; never rejects.
+   */
+  reconcileGifts(sponsorId) {
+    const inFlight = this.giftWork.get(sponsorId);
+    if (inFlight) return inFlight;
+    const work = this.reconcileGiftsNow(sponsorId);
+    this.giftWork.set(sponsorId, work);
+    void work.then(() => {
+      if (this.giftWork.get(sponsorId) === work) this.giftWork.delete(sponsorId);
+    });
+    return work;
+  }
+  async reconcileGiftsNow(sponsorId) {
+    let changed = false;
+    try {
+      const cart = this.cartsBySponsor.get(sponsorId);
+      if (!cart?.cartId || !cartDiscountKey(cart) || !cart.gifts?.length) return false;
+      if (this.giftHolds.has(sponsorId)) return false;
+      const cartId = cart.cartId;
+      for (const gift of [...cart.gifts]) {
+        const now = this.cartsBySponsor.get(sponsorId);
+        if (!now || now.cartId !== cartId || !cartDiscountKey(now)) break;
+        if (gift.added || gift.declined) continue;
+        const gifts = now.gifts ?? [];
+        if (now.items.some((item) => isGiftOf(gift, item))) continue;
+        if (!now.items.some((item) => !gifts.some((g2) => isGiftOf(g2, item)))) continue;
+        if (this.giftHolds.has(sponsorId)) break;
+        changed = await this.addGift(sponsorId, cartId, gift) || changed;
+      }
+      changed = this.dropOrphanGifts(sponsorId) || changed;
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(`[CartManager] the gifts of the discount code were not settled for sponsor ${sponsorId}`, err);
+      }
+    }
+    return changed;
+  }
+  /**
+   * One unit of a gift into the backend cart (AddItem), as a mutation of the
+   * cart like any other — whoever waits for the cart waits for it. When it
+   * cannot be added (the product is not sold on this channel, out of
+   * stock…) the purchase goes on without it: a line in the console, nothing
+   * on screen, and it is not tried again for this cart.
+   */
+  async addGift(sponsorId, cartId, gift) {
+    let added = false;
+    const seq = this.nextSeq(sponsorId);
+    let settling;
+    const mutation = (async () => {
+      try {
+        const live = await this.liveCart(sponsorId);
+        if (!live || live.cartId !== cartId) return;
+        const resCart = await addItem(
+          cartId,
+          [{ product_id: gift.productId, quantity: 1, variant_id: gift.variantId ?? null }],
+          live.opts
+        );
+        if (resCart && Array.isArray(resCart.line_items)) this.applyBackendCart(sponsorId, resCart, seq, settling);
+        added = true;
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.warn(
+            `[CartManager] the gift of the discount code (product ${gift.productId}) could not be added to the cart of sponsor ${sponsorId} \u2014 the purchase goes on without it`,
+            err
+          );
+        }
+      }
+      const now = this.cartsBySponsor.get(sponsorId);
+      const entry = now?.gifts?.find((g2) => g2.productId === gift.productId && g2.variantId === gift.variantId);
+      if (entry && now?.cartId === cartId) {
+        if (added) entry.added = true;
+        else entry.declined = true;
+        this.persist();
+      }
+    })();
+    settling = mutation;
+    this.trackMutation(sponsorId, mutation);
+    await mutation;
+    return added;
+  }
+  /**
+   * Only gifts the SDK put there are left in the cart: they go out too — a
+   * cart of gifts alone cannot be paid for — without `vio:removed-from-cart`
+   * (the shopper removed nothing). True when lines went.
+   */
+  dropOrphanGifts(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const gifts = cart?.gifts ?? [];
+    if (!cart || gifts.length === 0 || cart.items.length === 0) return false;
+    const putInBySdk = (item) => gifts.some((g2) => g2.added && isGiftOf(g2, item));
+    if (!cart.items.every(putInBySdk)) return false;
+    return this.removeLinesQuietly(sponsorId, [...cart.items]);
+  }
+  /** The gifts the SDK put in the cart go out (the code that brought them is gone); the cart forgets its gifts. */
+  removeAddedGifts(sponsorId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    const gifts = cart?.gifts ?? [];
+    if (!cart || gifts.length === 0) return false;
+    const lines = cart.items.filter((item) => gifts.some((g2) => g2.added && isGiftOf(g2, item)));
+    delete cart.gifts;
+    return this.removeLinesQuietly(sponsorId, lines);
+  }
+  /** Lines out of the cart, here and on the backend, with `change` but without `vio:removed-from-cart`. */
+  removeLinesQuietly(sponsorId, lines) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    if (!cart || lines.length === 0) return false;
+    cart.items = cart.items.filter((item) => !lines.includes(item));
+    if (cart.items.length === 0) this.cartsBySponsor.delete(sponsorId);
+    this.persist();
+    this.emit();
+    if (cart.cartId) {
+      for (const line of lines) {
+        if (line.cartItemId) this.syncQuantity(sponsorId, cart.cartId, line.cartItemId, 0, void 0, cart.channelId);
+      }
+    }
+    return true;
+  }
   // MARK: - Read accessors
   getAllCarts() {
     return new Map(this.cartsBySponsor);
@@ -7533,16 +8884,30 @@ var CartManager = class extends EventTarget {
     }
     return count;
   }
+  /** A sponsor's lines at their list prices — the «Sum» of its cart, before a discount code. */
   subtotalForSponsor(sponsorId) {
     const cart = this.cartsBySponsor.get(sponsorId);
     if (!cart) return 0;
     return cart.items.reduce((sum, i5) => sum + i5.unitPrice * i5.quantity, 0);
   }
+  /** What the discount code of a sponsor's cart takes off its lines. 0 without one. */
+  discountForSponsor(sponsorId) {
+    return cartDiscountTotal(this.cartsBySponsor.get(sponsorId)?.items);
+  }
+  /** What a sponsor's lines cost: their list prices less the discount (shipping apart). */
+  totalForSponsor(sponsorId) {
+    return cartNetTotal(this.cartsBySponsor.get(sponsorId)?.items);
+  }
+  /** What every cart's lines cost together: list prices less discounts (shipping apart). */
   get totalAcrossSponsors() {
     let sum = 0;
-    for (const cart of this.cartsBySponsor.values()) {
-      for (const item of cart.items) sum += item.unitPrice * item.quantity;
-    }
+    for (const cart of this.cartsBySponsor.values()) sum += cartNetTotal(cart.items);
+    return sum;
+  }
+  /** Every cart's lines at their list prices. */
+  get listTotalAcrossSponsors() {
+    let sum = 0;
+    for (const cart of this.cartsBySponsor.values()) sum += cartListTotal(cart.items);
     return sum;
   }
   get primaryCurrency() {
@@ -7892,10 +9257,10 @@ function highlightsOf(value) {
   const out = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
-    const { icon, title, text: text4 } = item;
+    const { icon, title, text: text5 } = item;
     const t4 = typeof title === "string" ? title.trim() : "";
     if (!t4) continue;
-    const body = typeof text4 === "string" ? text4.trim() : "";
+    const body = typeof text5 === "string" ? text5.trim() : "";
     out.push({ icon: typeof icon === "string" ? icon.trim() : "", title: t4, ...body ? { text: body } : {} });
     if (out.length === 3) break;
   }
@@ -9341,7 +10706,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.37.8";
+var SDK_VERSION = "0.39.1";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -9427,6 +10792,23 @@ function describeError(err) {
     }
   }
   return String(err);
+}
+function isCheckoutSuperseded(err) {
+  const text5 = describeError(err);
+  return text5.includes("CHECKOUT_SUPERSEDED") || text5.toLowerCase().includes("replaced by a newer");
+}
+var KUSTOM_TAB_CHECKOUT_KEY = "vio.kustom.checkout.v1";
+function readTabCheckouts() {
+  try {
+    const parsed = JSON.parse(storageGet("session", KUSTOM_TAB_CHECKOUT_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function writeTabCheckouts(entries) {
+  if (Object.keys(entries).length === 0) storageRemove("session", KUSTOM_TAB_CHECKOUT_KEY);
+  else storageSet("session", KUSTOM_TAB_CHECKOUT_KEY, JSON.stringify(entries));
 }
 var KLARNA_CONFIRMED_KEY = "vio.klarna.confirmed.v1";
 var KLARNA_PENDING_KEY = "vio.klarna.pending.v1";
@@ -9679,8 +11061,18 @@ function usesStripe(methods) {
     return typeof key === "string" && key.startsWith("pk_");
   });
 }
+var DISCOUNT_SETTLE_BUDGET_MS = 1200;
+function codeNotTakenError(notTaken) {
+  const reason = notTaken.reason ?? "COUPON_UNAVAILABLE";
+  return Object.assign(new Error(`[CheckoutManager] the discount code was not taken \u2014 no payment started [${reason}]`), {
+    discountCodeNotTaken: true
+  });
+}
+function isCodeNotTakenError(err) {
+  return !!err && typeof err === "object" && err.discountCodeNotTaken === true;
+}
 function cartTotal(items) {
-  return items.reduce((sum, i5) => sum + (Number(i5.unitPrice) || 0) * (Number(i5.quantity) || 0), 0);
+  return cartNetTotal(items);
 }
 var CheckoutManager = class _CheckoutManager extends EventTarget {
   constructor(cartManager, deps = {}) {
@@ -9792,7 +11184,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
   }
   /** The open checkout's lines as a signature, to tell a real change from an echo. */
   cartSignature(sponsorId) {
-    return (this.cartManager.getCart(sponsorId)?.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}:${i5.unitPrice}`).join("|");
+    return (this.cartManager.getCart(sponsorId)?.items ?? []).map((i5) => `${i5.productId}:${i5.variantId ?? ""}:${i5.quantity}:${i5.unitPrice}${i5.discount ? `:-${i5.discount}` : ""}`).join("|");
+  }
+  /** What the discount code of the sponsor's cart takes off its lines; 0 without one. */
+  cartDiscount(sponsorId) {
+    return cartDiscountTotal(this.cartManager.getCart(sponsorId)?.items);
   }
   /** The open checkout follows its cart: subtotal recomputed and `change` said when the lines differ. */
   onCartChange() {
@@ -9802,7 +11198,11 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const signature = this.cartSignature(state.sponsorId);
     if (subtotal === state.subtotal && signature === this.lastCartSignature) return;
     this.lastCartSignature = signature;
-    this.state = { ...state, subtotal };
+    const next = { ...state, subtotal };
+    const discount = this.cartDiscount(state.sponsorId);
+    if (discount > 0) next.discount = discount;
+    else delete next.discount;
+    this.state = next;
     this.emit();
   }
   open(sponsorId) {
@@ -9813,10 +11213,12 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     if (!(cartTotal(cart.items) > 0)) {
       throw new Error(`[VioCheckout] sponsor ${sponsorId} has a cart that totals 0`);
     }
+    const discount = cartDiscountTotal(cart.items);
     this.state = {
       sponsorId,
       session: ++this.sessionSeq,
       subtotal: this.cartManager.subtotalForSponsor(sponsorId),
+      ...discount > 0 ? { discount } : {},
       // Page-level currency wins over whatever the persisted cart carries —
       // the host may have switched currency since the cart was created.
       currency: getGlobalCurrency()
@@ -9851,9 +11253,16 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * born attributed when the facade knows the attribution. `paymentMethod` is
    * the method it is created to pay with, when the caller knows it (else the
    * state's): it goes on `vio:checkout-created`.
+   *
+   * `resume.href`: the checkout this tab already has for this cart on this
+   * page is taken up again instead, while it is still open (see
+   * `resumeTabCheckout`). Kustom asks for it: a new checkout means a new
+   * Kustom order, and closing and reopening the checkout left one behind
+   * every time (QA, 2026-11-11).
    */
-  async createCheckout(sponsorId, paymentMethod) {
+  async createCheckout(sponsorId, paymentMethod, resume) {
     await this.cartManager.waitForCartMutations(sponsorId);
+    await this.settleDiscount(sponsorId);
     await this.cartManager.refreshFromServer(sponsorId);
     const cart = this.cartManager.getCart(sponsorId);
     let cartId = cart?.cartId;
@@ -9864,6 +11273,10 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
     }
     const opts = await this.gqlOptions(sponsorId);
+    if (resume) {
+      const resumed = await this.resumeTabCheckout(sponsorId, cartId, resume.href, opts);
+      if (resumed) return resumed;
+    }
     const attribution = await this.attributionFor(sponsorId);
     const checkout = attribution ? await createCheckout(cartId, opts, { attribution }) : await createCheckout(cartId, opts);
     if (checkout?.id) {
@@ -9898,6 +11311,105 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       }
     }
     return checkout;
+  }
+  /**
+   * The checkout this tab kept for the sponsor's cart, taken up again: only
+   * the same cart, on the same page (the order returns there, and it is the
+   * page the checkout was attributed to), and only while Commerce still has
+   * it open — one another tab replaced, or one already paid, is never
+   * resumed. Null when there is nothing to resume; a failed read is nothing
+   * to resume either (a new checkout is created as before).
+   */
+  async resumeTabCheckout(sponsorId, cartId, href, opts) {
+    const kept = readTabCheckouts()[String(sponsorId)];
+    if (!kept || kept.cartId !== cartId || kept.href !== href) return null;
+    let checkout;
+    try {
+      checkout = await getCheckout(kept.checkoutId, opts);
+    } catch {
+      return null;
+    }
+    const open = checkout?.id === kept.checkoutId && String(checkout?.status ?? "").toUpperCase() === "ACTIVE" && checkout?.buyer_accepts_purchase_conditions !== false && checkout?.buyer_accepts_terms_conditions !== false;
+    if (!open) {
+      this.forgetTabCheckout(sponsorId);
+      return null;
+    }
+    this.state = {
+      ...this.state ?? { sponsorId, subtotal: 0, currency: getGlobalCurrency() },
+      sponsorId,
+      checkoutId: checkout.id,
+      checkout
+    };
+    this.emit();
+    return checkout;
+  }
+  /** The checkout this tab's Kustom order belongs to, kept to resume on the next opening. */
+  rememberTabCheckout(sponsorId, kept) {
+    const entries = readTabCheckouts();
+    entries[String(sponsorId)] = kept;
+    writeTabCheckouts(entries);
+  }
+  forgetTabCheckout(sponsorId) {
+    const entries = readTabCheckouts();
+    if (!(String(sponsorId) in entries)) return;
+    delete entries[String(sponsorId)];
+    writeTabCheckouts(entries);
+  }
+  /**
+   * Commerce answered that the open checkout was replaced by another tab's:
+   * it is dropped here, with what this tab kept of it, so the next attempt
+   * builds a checkout of its own instead of asking again with a dead one.
+   */
+  dropIfSuperseded(sponsorId, err) {
+    if (!isCheckoutSuperseded(err)) return;
+    this.forgetTabCheckout(sponsorId);
+    if (this.state?.sponsorId === sponsorId && this.state.checkoutId) {
+      this.state = { ...this.state, checkoutId: void 0, checkout: void 0 };
+    }
+  }
+  /**
+   * The page's discount code — and the gift it brings — on the sponsor's cart
+   * before a checkout or a payment is built on it
+   * (`CartManager.settleDiscountCode`): asked for when the cart does not
+   * carry it yet, and waited for `DISCOUNT_SETTLE_BUDGET_MS` at most (the
+   * shopper's own typed code: until it answers). Never costs a checkout —
+   * without the code the purchase goes on without it — and a cart manager
+   * without discounts (a test's stub) has nothing to settle. Resolves with
+   * what was found: `notTaken` when the code the shopper typed was refused
+   * while this waited (`prepareRedirectPayment` does not leave the page then).
+   */
+  async settleDiscount(sponsorId) {
+    try {
+      const settle = this.cartManager.settleDiscountCode;
+      if (typeof settle === "function") {
+        return await settle.call(this.cartManager, sponsorId, { budgetMs: DISCOUNT_SETTLE_BUDGET_MS }) ?? void 0;
+      }
+    } catch {
+    }
+    return void 0;
+  }
+  /**
+   * A payment that did not start. When Commerce refused it because of the
+   * cart's discount — the code is checked again right before charging, and a
+   * gift has its own rules — the cart is put right for the next attempt
+   * (`CartManager.discountRefusedAtPayment`: a code that is no good comes
+   * off, the cart is read again); and whatever gift was held back while the
+   * payment was being started may go in the cart now. Not waited for, and
+   * never throws: the caller shows the error meanwhile. (A payment this
+   * manager held back itself, for a typed code that was not taken, leaves the
+   * cart alone: that code never was on it.)
+   */
+  afterPaymentNotStarted(sponsorId, err) {
+    if (!sponsorId) return;
+    try {
+      const cart = this.cartManager;
+      const reason = err === void 0 || isCodeNotTakenError(err) ? void 0 : discountReasonOfError(err);
+      if (reason && typeof cart.discountRefusedAtPayment === "function") {
+        void cart.discountRefusedAtPayment.call(this.cartManager, sponsorId, reason);
+      }
+      if (typeof cart.releaseGiftHold === "function") cart.releaseGiftHold.call(this.cartManager, sponsorId);
+    } catch {
+    }
   }
   /**
    * `vio:checkout-created` on `window` — `{ sponsorId, checkoutId,
@@ -10178,6 +11690,8 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const spId = sponsorId ?? this.state?.sponsorId;
     if (!spId) throw new Error("[CheckoutManager] no sponsor for payment");
     await this.cartManager.waitForCartMutations(spId);
+    const settled = await this.settleDiscount(spId);
+    if (settled?.notTaken) throw codeNotTakenError(settled.notTaken);
     await this.cartManager.refreshFromServer(spId);
     this.assertPayableCart(spId);
     const isVipps = extraUpdateVars?.paymentMethod === "Vipps";
@@ -10312,6 +11826,17 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
    * Vipps charges for.
    */
   async startVippsPayment(sponsorId, formData, options = {}) {
+    const spId = sponsorId ?? this.state?.sponsorId;
+    try {
+      const res = await this.startVippsPaymentNow(sponsorId, formData, options);
+      if (!res?.payment_url) this.afterPaymentNotStarted(spId);
+      return res;
+    } catch (err) {
+      this.afterPaymentNotStarted(spId, err);
+      throw err;
+    }
+  }
+  async startVippsPaymentNow(sponsorId, formData, options = {}) {
     const waitFor = sponsorId ?? this.state?.sponsorId;
     if (waitFor) await this.cartManager.waitForCartMutations(waitFor);
     const { spId, checkoutId, emailVal, opts } = await this.prepareRedirectPayment(
@@ -10376,7 +11901,7 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     const opts = await this.gqlOptions(spId);
     let checkoutId = this.state?.checkoutId;
     if (!checkoutId) {
-      const checkoutRes = await this.createCheckout(spId, "kustom");
+      const checkoutRes = await this.createCheckout(spId, "kustom", { href: kustomCleanHref() });
       checkoutId = checkoutRes?.id;
       if (checkoutId && this.state) {
         this.state = { ...this.state, checkoutId };
@@ -10386,19 +11911,30 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
       throw new Error("[CheckoutManager] no backend checkout for the Kustom order");
     }
     const href = kustomCleanHref();
-    const order = await createPaymentKustom(
-      {
-        checkoutId,
-        countryCode: getGlobalCountryCode(),
-        href,
-        email: this.state?.address?.email || void 0,
-        client: `web-sdk ${SDK_VERSION}`
-      },
-      opts
-    );
+    let order;
+    try {
+      order = await createPaymentKustom(
+        {
+          checkoutId,
+          countryCode: getGlobalCountryCode(),
+          href,
+          email: this.state?.address?.email || void 0,
+          client: `web-sdk ${SDK_VERSION}`
+        },
+        opts
+      );
+    } catch (err) {
+      this.dropIfSuperseded(spId, err);
+      throw err;
+    }
     if (!order?.html_snippet) {
       throw new Error("Kustom order creation failed: missing html_snippet");
     }
+    this.rememberTabCheckout(spId, {
+      checkoutId,
+      cartId: this.cartManager.getCart(spId)?.cartId ?? cartId,
+      href
+    });
     this.destroyKustomListeners();
     renderKustomSnippet(container, order.html_snippet);
     this.kustomController = installKustomListeners(handlers);
@@ -10423,6 +11959,9 @@ var CheckoutManager = class _CheckoutManager extends EventTarget {
     suspendKustom();
     try {
       return await syncPaymentKustom(checkoutId, opts);
+    } catch (err) {
+      this.dropIfSuperseded(spId, err);
+      throw err;
     } finally {
       resumeKustom();
     }
@@ -12137,7 +13676,7 @@ function cartSlicesFrom(lines, resolveCampaign, fallbackCurrency) {
   for (const line of lines) {
     if (!line || typeof line !== "object") continue;
     const sponsorId = Number(line.sponsorId);
-    const unitPrice = Number(line.unitPrice) || 0;
+    const unitPrice = netUnitPrice(line) || 0;
     for (const origin of lineOrigins(line)) {
       let campaignId = origin.campaignId;
       if (campaignId === void 0) {
@@ -12220,7 +13759,8 @@ function lineItemsByLayout(lines) {
       name: line.name,
       brand: line.brand,
       variantId: line.variantId,
-      price: line.unitPrice,
+      // The unit's price once the cart's discount code is counted; the list price without one.
+      price: line.discount ? netUnitPrice(line) : line.unitPrice,
       quantity: line.quantity
     };
     const origins = lineOrigins(line);
@@ -12239,6 +13779,73 @@ function lineItemsByLayout(lines) {
     out.push(...parts.values());
   }
   return out;
+}
+
+// src/core/checkout/checkout-receipt.ts
+function text3(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function amount(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n6 = Number(value);
+    return Number.isFinite(n6) ? n6 : null;
+  }
+  return null;
+}
+function imageOf(image) {
+  const first = Array.isArray(image) ? image[0] : image;
+  if (typeof first === "string") return first.trim();
+  return text3(first?.url);
+}
+function receiptFromCheckout(checkout, sponsorId) {
+  const c4 = checkout ?? {};
+  const cart = c4.cart ?? {};
+  const lines = Array.isArray(cart.line_items) ? cart.line_items : [];
+  if (lines.length === 0) return null;
+  const totals = c4.totals ?? {};
+  const currency = text3(totals.currency_code) || text3(cart.currency);
+  const items = lines.map((li, index) => {
+    const title = text3(li?.title);
+    const variant = text3(li?.variant_title);
+    const id = li?.id != null ? String(li.id) : `line-${index}`;
+    const unitPrice = amount(li?.price?.amount_incl_taxes) ?? amount(li?.price?.amount) ?? 0;
+    const quantity = Number(li?.quantity) || 0;
+    const discount = serverLineDiscount(li?.price?.discount, unitPrice, quantity);
+    return {
+      id,
+      cartItemId: id,
+      productId: Number(li?.product_id) || 0,
+      sponsorId,
+      ...li?.variant_id != null && Number.isFinite(Number(li.variant_id)) ? { variantId: Number(li.variant_id) } : {},
+      brand: text3(li?.brand),
+      name: title && variant ? `${title} \u2014 ${variant}` : title || variant,
+      unitPrice,
+      ...discount > 0 ? { discount } : {},
+      currency: text3(li?.price?.currency_code) || currency,
+      imageUrl: imageOf(li?.image),
+      quantity
+    };
+  });
+  const itemsTotal = cartNetTotal(items);
+  const lineDiscounts = cartDiscountTotal(items);
+  const discounted = lineDiscounts > 0 ? lineDiscounts : Math.max(0, amount(totals.discounts) ?? 0);
+  const code = text3(c4.discount_code);
+  const shipped = lines.map((li) => li?.shipping).filter((s4) => s4 && typeof s4 === "object");
+  const names = [...new Set(shipped.map((s4) => text3(s4.name)).filter(Boolean))];
+  const shippingPrice = amount(totals.shipping) ?? amount(cart.shipping) ?? (shipped.length > 0 ? amount(shipped[0].price?.amount_incl_taxes) ?? amount(shipped[0].price?.amount) : null);
+  const hasShipping = shipped.length > 0 || (shippingPrice ?? 0) > 0;
+  const shipping = hasShipping && shippingPrice !== null ? { name: names.join(", ") || "Frakt", price: shippingPrice } : void 0;
+  const charged = amount(totals.total);
+  const email = text3(c4.email);
+  return {
+    items,
+    currency,
+    total: charged !== null && charged > 0 ? charged : itemsTotal + (shipping?.price ?? 0),
+    ...shipping ? { shipping } : {},
+    ...discounted > 0 ? { discount: { amount: discounted, ...code ? { code } : {} } } : {},
+    ...email ? { email } : {}
+  };
 }
 
 // src/core/analytics/analytics-manager.ts
@@ -12482,7 +14089,7 @@ var AnalyticsManager = class extends EventTarget {
               this.ensureSession();
               if (this.impressedComponents.has(key)) return;
               this.impressedComponents.add(key);
-              this.track(name, { context, commerce: impressionCommerce(opts.commerce) });
+              this.track(name, { context, commerce: impressionCommerce(opts.commerce), props: opts.props });
               opts.onImpression?.();
               observer.disconnect();
             }, IMPRESSION_DWELL_MS);
@@ -12601,7 +14208,8 @@ var AnalyticsManager = class extends EventTarget {
           brand: this.options.privateContent ? void 0 : i5.brand,
           variant_id: i5.variantId !== void 0 ? String(i5.variantId) : void 0,
           price: i5.price,
-          quantity: i5.quantity
+          quantity: i5.quantity,
+          sponsor_id: positiveInt2(i5.sponsorId)
         }),
         ...itemLayoutWire(i5)
       })),
@@ -12890,26 +14498,78 @@ var AnalyticsManager = class extends EventTarget {
       if (!this.claimPurchase(ids)) return;
       const sponsorId = d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0;
       const base = { sponsorId, campaignId: campaignOf(d3), slot: slotOf(d3), ...contentOf(d3) };
-      const { slices, explicit } = this.cartSlices(sponsorId);
-      const parts = slices.length > 1 ? (
-        // Several campaigns paid in one go: one purchase per campaign — its
-        // items and value, the SAME order_id — so each campaign's revenue is
-        // its own and the order still adds up. `props.slice/slices` lets the
-        // collector count the order once.
-        slices.map((slice) => ({
-          context: this.sliceContext(slice, base),
-          commerce: { ...sliceCommerce(slice), paymentMethod: d3.method },
-          props: { slice: slice.slice, slices: slice.slices }
-        }))
-      ) : [
-        {
-          context: this.singleSliceContext(slices[0], explicit, base),
-          // value / currency / items: the cart snapshot, on every path.
-          commerce: { ...this.cartCommerce(sponsorId) ?? {}, paymentMethod: d3.method }
-        }
-      ];
-      this.reportPurchase(parts, ids, buyerRefOf(d3), sponsorId);
+      const buyerId = buyerRefOf(d3);
+      const cart2 = this.cartLines(sponsorId);
+      if (!isPaymentReturn(d3) && cart2.length > 0) {
+        this.reportPurchase(this.purchaseParts(cart2, base, d3.method), ids, buyerId, sponsorId);
+        return;
+      }
+      this.reportReturnPurchase(cart2, base, d3.method, ids, buyerId, sponsorId);
     });
+  }
+  /**
+   * The `purchase` event(s) of the lines that were paid: one per campaign
+   * when the lines' origins name several — its items and value, the SAME
+   * order_id — so each campaign's revenue is its own and the order still adds
+   * up (`props.slice/slices` lets the collector count the order once); else
+   * one. Value / currency / items: the lines (sum of the items, no shipping),
+   * on every path. No lines, no event: a purchase never goes out empty.
+   */
+  purchaseParts(lines, base, method) {
+    const { slices, explicit } = this.slicesOf(lines);
+    if (slices.length > 1) {
+      return slices.map((slice) => ({
+        context: this.sliceContext(slice, base),
+        commerce: { ...sliceCommerce(slice), paymentMethod: method },
+        props: { slice: slice.slice, slices: slice.slices }
+      }));
+    }
+    const commerce = this.commerceOf(lines);
+    if (!commerce) return [];
+    return [{ context: this.singleSliceContext(slices[0], explicit, base), commerce: { ...commerce, paymentMethod: method } }];
+  }
+  /**
+   * The `purchase` of a payment this tab's cart cannot vouch for (a return
+   * from a payment page, or an empty cart): its lines are read from the
+   * checkout that was paid — at once and again after 1 / 2 s on a failed
+   * read, within the purchase's 10 s. When the cart in memory has exactly the
+   * checkout's products and quantities it is the paid cart, and its lines are
+   * used (they carry the slot and campaign each unit came from); otherwise the
+   * checkout's. Nothing goes out when there is no checkout to read, it cannot
+   * be read, it has no lines, or the page hides (or `stop()` comes) first.
+   */
+  reportReturnPurchase(cart, base, method, ids, buyerId, sponsorId) {
+    const read = this.checkoutReader(ids.checkoutId, sponsorId);
+    if (!read || this.isPageHidden()) return;
+    let done = false;
+    const drop = () => {
+      done = true;
+      this.pendingPurchases.delete(drop);
+    };
+    this.pendingPurchases.add(drop);
+    void readPaidLines(read, sponsorId ?? 0, () => done).then((paid) => {
+      if (done) return;
+      drop();
+      if (paid.length === 0) return;
+      const lines = sameProducts(cart, paid) ? cart : paid;
+      const parts = this.purchaseParts(lines, base, method);
+      if (parts.length > 0) this.reportPurchase(parts, ids, buyerId, sponsorId);
+    });
+  }
+  /**
+   * How a purchase reads the checkout it paid: through the SDK's checkout
+   * manager (`getCheckout`, the `GetCheckout` the receipt reads). `null` when
+   * there is nothing to read — no checkout id, or no checkout manager.
+   */
+  checkoutReader(checkoutId, sponsorId) {
+    if (!checkoutId) return null;
+    try {
+      const checkout = vioFacade()?.checkout;
+      if (!checkout || typeof checkout.getCheckout !== "function") return null;
+      return () => checkout.getCheckout(checkoutId, sponsorId || void 0);
+    } catch {
+      return null;
+    }
   }
   /**
    * Claims the purchase of a payment for this page load: false when its
@@ -12938,6 +14598,8 @@ var AnalyticsManager = class extends EventTarget {
    * buyer reference the payment did not bring) is filled in when it comes.
    */
   reportPurchase(parts, ids, buyerId, sponsorId) {
+    parts = parts.filter((part) => (part.commerce?.items?.length ?? 0) > 0);
+    if (parts.length === 0) return;
     const events = parts.map(
       (part) => this.buildEvent("purchase", {
         ...part,
@@ -13045,7 +14707,10 @@ var AnalyticsManager = class extends EventTarget {
    * its campaign itself (a cart without origins is reported as before).
    */
   cartSlices(sponsorId) {
-    const lines = this.cartLines(sponsorId);
+    return this.slicesOf(this.cartLines(sponsorId));
+  }
+  /** `lines` split per campaign (cart/slices.ts), plus whether any unit named its campaign itself. */
+  slicesOf(lines) {
     if (lines.length === 0) return { slices: [], explicit: false };
     const boot = vioBootstrapCache();
     const slices = cartSlicesFrom(
@@ -13088,23 +14753,19 @@ var AnalyticsManager = class extends EventTarget {
   }
   /** Current cart → commerce payload; falls back to the pre-clear snapshot. */
   cartCommerce(sponsorId) {
-    let items = [];
-    const cart = vioCart();
-    if (cart) {
-      cart.getAllCarts().forEach((state, id) => {
-        if (sponsorId === void 0 || id === sponsorId) items.push(...state.items);
-      });
-    }
-    if (items.length === 0 && this.lastCartSnapshot) {
-      items = this.lastCartSnapshot.items.filter(
-        (i5) => sponsorId === void 0 || i5.sponsorId === sponsorId
-      );
-    }
+    return this.commerceOf(this.cartLines(sponsorId));
+  }
+  /**
+   * Lines → commerce payload (items, value = sum of the items, currency);
+   * `null` without lines. What a discount code takes off a line is off its
+   * item's price and off the value: a gift is worth 0.
+   */
+  commerceOf(items) {
     if (items.length === 0) return null;
     return {
       // One item per line and detail layout (0.34), each saying its layout.
       items: withLineLayouts(lineItemsByLayout(items)),
-      value: items.reduce((sum, i5) => sum + i5.unitPrice * (i5.quantity ?? 1), 0),
+      value: items.reduce((sum, i5) => sum + lineNetTotal({ ...i5, quantity: i5.quantity ?? 1 }), 0),
       currency: items[0]?.currency ?? this.lastCartSnapshot?.currency
     };
   }
@@ -13177,6 +14838,10 @@ function withLineLayouts(items) {
     experimentId: i5.experimentId ?? "",
     experimentVariantId: i5.experimentVariantId ?? ""
   }));
+}
+function positiveInt2(v2) {
+  const n6 = typeof v2 === "string" ? Number(v2) : v2;
+  return typeof n6 === "number" && Number.isInteger(n6) && n6 > 0 ? n6 : void 0;
 }
 function compact(obj) {
   const out = {};
@@ -13305,6 +14970,51 @@ function purchaseFromPaymentSuccess(d3) {
 function isOrderNumber(value) {
   return /^[1-9][0-9]*$/.test(value);
 }
+function isPaymentReturn(d3) {
+  return d3.returned === true;
+}
+var PAID_LINES_RETRY_MS = [1e3, 2e3];
+async function readPaidLines(read, sponsorId, stopped) {
+  let deadline;
+  const timeUp = new Promise((resolve) => {
+    deadline = setTimeout(() => resolve(null), ORDER_NUMBER_MAX_WAIT_MS);
+  });
+  try {
+    for (let attempt = 0; attempt <= PAID_LINES_RETRY_MS.length; attempt++) {
+      if (attempt > 0) {
+        const wait = PAID_LINES_RETRY_MS[attempt - 1];
+        const slept = await Promise.race([new Promise((resolve) => setTimeout(() => resolve(true), wait)), timeUp]);
+        if (slept === null) break;
+      }
+      if (stopped()) break;
+      try {
+        const checkout = await Promise.race([read(), timeUp]);
+        if (checkout === null) break;
+        return (receiptFromCheckout(checkout, sponsorId)?.items ?? []).filter((line) => line.quantity > 0);
+      } catch {
+      }
+    }
+    return [];
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+function sameProducts(a3, b3) {
+  if (a3.length === 0 || b3.length === 0) return false;
+  const units = (lines) => {
+    const out = /* @__PURE__ */ new Map();
+    for (const line of lines) {
+      const key = String(line.productId);
+      out.set(key, (out.get(key) ?? 0) + (line.quantity ?? 1));
+    }
+    return out;
+  };
+  const x2 = units(a3);
+  const y3 = units(b3);
+  if (x2.size !== y3.size) return false;
+  for (const [key, qty] of x2) if (y3.get(key) !== qty) return false;
+  return true;
+}
 async function waitForOrderNumber(ask, stopped) {
   let deadline;
   const timeUp = new Promise((resolve) => {
@@ -13395,7 +15105,7 @@ function checkoutAttributionOf(input) {
   const out = {};
   const surfaceKey = cut3(input.surfaceKey, CHECKOUT_ATTRIBUTION_CAPS.surfaceKey);
   if (surfaceKey) out.surface_key = surfaceKey;
-  const campaignId = positiveInt(input.pageCampaignId) ?? dominantCampaignOf(input.slices);
+  const campaignId = positiveInt3(input.pageCampaignId) ?? dominantCampaignOf(input.slices);
   if (campaignId !== void 0) out.campaign_id = campaignId;
   if (input.privacyMode === "standard") {
     const url = originAndPath(input.content?.url, CHECKOUT_ATTRIBUTION_CAPS.contentUrl);
@@ -13426,7 +15136,7 @@ function dominantCampaignOf(slices) {
   if (!Array.isArray(slices)) return void 0;
   let best;
   for (const slice of slices) {
-    const campaignId = positiveInt(slice?.campaignId);
+    const campaignId = positiveInt3(slice?.campaignId);
     if (campaignId === void 0) continue;
     const items = Array.isArray(slice.items) ? slice.items : [];
     const units = items.reduce((sum, item) => sum + (Number(item?.quantity) > 0 ? Number(item.quantity) : 0), 0);
@@ -13437,16 +15147,16 @@ function dominantCampaignOf(slices) {
   }
   return best?.campaignId;
 }
-function positiveInt(value) {
+function positiveInt3(value) {
   if (value === void 0 || value === null || value === "") return void 0;
   const n6 = Number(value);
   return Number.isInteger(n6) && n6 > 0 && n6 <= GRAPHQL_INT_MAX ? n6 : void 0;
 }
 function cut3(value, max) {
   if (typeof value !== "string" && typeof value !== "number") return void 0;
-  const text4 = String(value).trim();
-  if (!text4) return void 0;
-  return text4.length > max ? text4.slice(0, max).trim() || void 0 : text4;
+  const text5 = String(value).trim();
+  if (!text5) return void 0;
+  return text5.length > max ? text5.slice(0, max).trim() || void 0 : text5;
 }
 
 // src/core/client.ts
@@ -13488,6 +15198,13 @@ var VioFacade = class {
     /** Last bootstrap failure — short backoff so cart mutations don't hammer a
      * dead endpoint on every call. */
     this.bootstrapFailedAt = 0;
+    /**
+     * The discounts the campaigns give in the bootstrap held now, as one
+     * string (`bootstrapDiscountRefs`; `''`: none) — so a refresh that changed
+     * them is told from one that did not. `undefined` until the first bootstrap
+     * of this configuration.
+     */
+    this.campaignCodes = void 0;
     /** Bumped by every init(). A bootstrap started under an older configuration
      * (another key or environment) is still in flight after a re-init; its answer
      * belongs to that configuration and must not land in this one. */
@@ -13542,12 +15259,18 @@ var VioFacade = class {
     this.bootstrapRefreshFailedAt = 0;
     this.seenChannels.clear();
     this.bootstrapFailedAt = 0;
+    this.campaignCodes = void 0;
     this.generation++;
     this.surfaceMode = null;
     this.surfaceRequest = null;
     this.preloadPrivacyMode();
     try {
       this.analytics.syncInternal(true);
+    } catch {
+    }
+    try {
+      const remembered = syncDiscountParam();
+      if (Configuration.get().discountCode ?? remembered) this.cart.ensureDiscountCodes();
     } catch {
     }
     this.checkoutManager?.clearPaymentMethodsCache();
@@ -13632,7 +15355,11 @@ var VioFacade = class {
     const scope = this.cartScope;
     let manager = this.cartManagers.get(scope);
     if (!manager) {
-      const created = new CartManager(scope);
+      const created = new CartManager(scope, {
+        campaignDiscount: (sponsorId) => this.campaignDiscountOf(created, sponsorId),
+        campaignDiscountNow: (sponsorId, campaignId) => this.campaignDiscountNowOf(created, sponsorId, campaignId),
+        discountAllowed: (sponsorId, channelId) => this.discountAllowedOf(created, sponsorId, channelId)
+      });
       for (const type of ["change", "error"]) {
         created.addEventListener(type, (e7) => {
           if (this.cartManagers.get(this.cartScope) !== created) return;
@@ -13641,8 +15368,82 @@ var VioFacade = class {
       }
       this.cartManagers.set(scope, created);
       manager = created;
+      if (this.cachedBootstrap) {
+        void Promise.resolve().then(() => {
+          if (this.cachedBootstrap) this.settleCampaignCodes();
+        });
+      }
     }
     return manager;
+  }
+  /**
+   * The discount the page's campaign gives a sponsor's cart — its reference —
+   * and that campaign (`campaignDiscountFor`: the first of the page's
+   * campaigns — its elements' `vio-campaign` / `data-vio-campaign`, then
+   * `Vio.init({ campaignId })` — that is active and has the sponsor, else the
+   * default campaign when it has the sponsor). Nothing for a manager of
+   * another connection, before the bootstrap, or when no campaign gives any
+   * (the page is not even read).
+   */
+  campaignDiscountOf(manager, sponsorId) {
+    try {
+      if (!this.campaignCodes || this.cartManagers.get(this.cartScope) !== manager) return void 0;
+      return campaignDiscountFor(this.cachedBootstrap, sponsorId, this.pageCampaignCandidates(documentCampaignHints()));
+    } catch {
+      return void 0;
+    }
+  }
+  /** What `campaignId` gives the sponsor now — its reference (`campaignDiscountNow`); `undefined` — cannot tell — before the bootstrap or for another connection's manager. */
+  campaignDiscountNowOf(manager, sponsorId, campaignId) {
+    try {
+      if (!this.cachedBootstrap || this.cartManagers.get(this.cartScope) !== manager) return void 0;
+      return campaignDiscountNow(this.cachedBootstrap, campaignId, sponsorId);
+    } catch {
+      return void 0;
+    }
+  }
+  /**
+   * Whether a sponsor's cart may get a code nobody typed (the campaign's, the
+   * page's own): its selling block — the cart's channel's, else the one of
+   * the page's campaign — lists a way to pay that takes discounts
+   * (`sponsorTakesDiscounts`). `undefined` — not yet — before the bootstrap,
+   * or for a manager of another connection.
+   */
+  discountAllowedOf(manager, sponsorId, channelId) {
+    try {
+      if (!this.cachedBootstrap || this.cartManagers.get(this.cartScope) !== manager) return void 0;
+      const block2 = this.sponsorCommerce(sponsorId, channelId ? { channelId, retired: true } : {});
+      return sponsorTakesDiscounts(block2?.commerce);
+    } catch {
+      return void 0;
+    }
+  }
+  /**
+   * The codes nobody typed on the carts of the page's connection: each cart
+   * is given the one its page campaign gives its sponsor (or the page's own),
+   * and loses one its campaign no longer gives
+   * (`CartManager.ensureDiscountCodes`) — when the bootstrap held now has
+   * campaigns' codes, the page has a code of its own (it waited for the
+   * bootstrap to know the brands' ways to pay), or a cart carries a
+   * campaign's. Nothing at all (not even a cart manager) otherwise.
+   */
+  settleCampaignCodes() {
+    try {
+      const pageCode = Configuration.isInitialized && !!(Configuration.get().discountCode ?? rememberedDiscountCode());
+      if (this.campaignCodes || pageCode) {
+        this.cart.ensureDiscountCodes();
+        return;
+      }
+      const manager = this.cartManagers.get(this.cartScope);
+      if (!manager) return;
+      for (const cart of manager.getAllCarts().values()) {
+        if (cart.discountCampaignId !== void 0) {
+          manager.ensureDiscountCodes();
+          return;
+        }
+      }
+    } catch {
+    }
   }
   /**
    * `Vio.cart`: every property and method is the current connection's
@@ -13684,6 +15485,27 @@ var VioFacade = class {
     const manager = this.currentCartManager();
     manager.setActive(true);
     manager.announce();
+  }
+  /**
+   * Put a discount code on the carts — every sponsor's, or only
+   * `sponsorId`'s. Commerce takes ONE code per backend cart; the code is kept
+   * for this page load and goes on the carts created from now on. This is the
+   * call a host's own "discount code" field makes. Resolves with what
+   * happened (`applied` / `pending` — no backend cart yet — / `refused` /
+   * `failed`) and never throws: a cart that did not take the code is as it
+   * was, and the purchase goes on without it. `Vio.cart.applyDiscountCode`
+   * is the same call.
+   */
+  applyDiscountCode(code, sponsorId) {
+    return this.cart.applyDiscountCode(code, sponsorId);
+  }
+  /**
+   * Take the discount code off the carts (every sponsor's, or only
+   * `sponsorId`'s) and give none to new carts for the rest of this page load.
+   * Never throws. `Vio.cart.removeDiscountCode` is the same call.
+   */
+  removeDiscountCode(sponsorId) {
+    return this.cart.removeDiscountCode(sponsorId);
   }
   /** Checkout flow manager. Subscribes to cart state via the CartManager; asks here for the order's attribution. */
   get checkout() {
@@ -13777,6 +15599,11 @@ var VioFacade = class {
         }
       }
     } catch {
+    }
+    const codes = bootstrapDiscountRefs(res);
+    if (codes !== this.campaignCodes) {
+      this.campaignCodes = codes;
+      this.settleCampaignCodes();
     }
     this.hookVisibility();
   }
@@ -14447,6 +16274,165 @@ function failedAt(now) {
 }
 var _vioGlobal = globalThis;
 var Vio = _vioGlobal.__VIO_FACADE__ ?? (_vioGlobal.__VIO_FACADE__ = new VioFacade());
+
+// src/core/experience.ts
+function safeStorageGet2(key) {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function safeStorageSet2(key, value) {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+  } catch {
+  }
+}
+function safeStorageRemove2(key) {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+  } catch {
+  }
+}
+var EXPERIENCE_SCHEMA_VERSION = 1;
+var isRecord = (v2) => !!v2 && typeof v2 === "object" && !Array.isArray(v2);
+var num2 = (v2) => typeof v2 === "number" && Number.isFinite(v2) ? v2 : null;
+var text4 = (v2) => typeof v2 === "string" && v2.trim() ? v2 : null;
+var positiveInt4 = (v2) => {
+  const n6 = num2(v2);
+  return n6 !== null && Number.isInteger(n6) && n6 > 0 ? n6 : null;
+};
+function parseExperience(raw) {
+  if (!isRecord(raw)) return null;
+  const schemaVersion = num2(raw.schemaVersion) ?? EXPERIENCE_SCHEMA_VERSION;
+  if (schemaVersion !== EXPERIENCE_SCHEMA_VERSION) return null;
+  const id = positiveInt4(raw.id);
+  const campaignId = positiveInt4(raw.campaignId);
+  const sponsorId = positiveInt4(raw.sponsorId);
+  if (id === null || campaignId === null || sponsorId === null) return null;
+  const theme = {};
+  if (isRecord(raw.theme)) {
+    for (const [k2, v2] of Object.entries(raw.theme)) if (typeof v2 === "string" && v2.trim()) theme[k2] = v2.trim();
+  }
+  const videos = [];
+  for (const v2 of Array.isArray(raw.videos) ? raw.videos : []) {
+    if (!isRecord(v2) || !isRecord(v2.media)) continue;
+    const videoId = text4(v2.id);
+    const playbackUrl = text4(v2.media.playbackUrl);
+    if (!videoId || !playbackUrl) continue;
+    const products = [];
+    for (const p3 of Array.isArray(v2.products) ? v2.products : []) {
+      if (!isRecord(p3)) continue;
+      const productId = positiveInt4(p3.productId);
+      if (productId === null) continue;
+      const focal = isRecord(p3.focal) && num2(p3.focal.x) !== null && num2(p3.focal.y) !== null ? { x: num2(p3.focal.x), y: num2(p3.focal.y) } : null;
+      products.push({ productId, imageOverrideUrl: text4(p3.imageOverrideUrl), focal });
+    }
+    const known = new Set(products.map((p3) => p3.productId));
+    const cues = [];
+    for (const c4 of Array.isArray(v2.cues) ? v2.cues : []) {
+      if (!isRecord(c4)) continue;
+      const productId = positiveInt4(c4.productId);
+      const at = num2(c4.at);
+      if (productId === null || at === null || at < 0 || !known.has(productId)) continue;
+      cues.push({ productId, at });
+    }
+    cues.sort((a3, b3) => a3.at - b3.at);
+    videos.push({
+      id: videoId,
+      title: text4(v2.title),
+      media: {
+        mediaId: positiveInt4(v2.media.mediaId) ?? 0,
+        provider: text4(v2.media.provider) ?? "url",
+        playbackUrl,
+        dashUrl: text4(v2.media.dashUrl),
+        posterUrl: text4(v2.media.posterUrl),
+        durationSeconds: num2(v2.media.durationSeconds),
+        width: num2(v2.media.width),
+        height: num2(v2.media.height)
+      },
+      products,
+      cues
+    });
+  }
+  return {
+    schemaVersion,
+    id,
+    revision: positiveInt4(raw.revision),
+    publishedAt: text4(raw.publishedAt),
+    campaignId,
+    sponsorId,
+    campaign: isRecord(raw.campaign) && positiveInt4(raw.campaign.id) !== null ? { id: positiveInt4(raw.campaign.id), name: text4(raw.campaign.name) ?? "" } : null,
+    title: text4(raw.title) ?? "",
+    binding: { slot: isRecord(raw.binding) ? text4(raw.binding.slot) : null },
+    theme,
+    videos,
+    ...raw.preview === true ? { preview: true } : {}
+  };
+}
+function experienceCompatible(experience, pageCampaigns) {
+  if (!pageCampaigns.length) return true;
+  return pageCampaigns.includes(experience.campaignId);
+}
+function cueProductAt(cues, seconds) {
+  let current2 = null;
+  for (const cue of cues) {
+    if (cue.at <= seconds) current2 = cue.productId;
+    else break;
+  }
+  return current2;
+}
+function safeThemeEntries(theme) {
+  const out = [];
+  if (!theme) return out;
+  for (const [k2, v2] of Object.entries(theme)) {
+    if (!/^--vio-[a-z0-9-]{1,48}$/.test(k2)) continue;
+    if (typeof v2 !== "string" || v2.length > 64 || /[;{}<>\\]|url\s*\(|expression\s*\(|@import|javascript:/i.test(v2)) continue;
+    out.push([k2, v2]);
+  }
+  return out;
+}
+var EXPERIENCE_CACHE_PREFIX = "vio.reel.";
+var EXPERIENCE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+function keyTag(apiKey) {
+  let h3 = 5381;
+  for (let i5 = 0; i5 < apiKey.length; i5++) h3 = (h3 << 5) + h3 + apiKey.charCodeAt(i5) >>> 0;
+  return h3.toString(36);
+}
+var experienceCacheKey = (apiKey, experienceId) => `${EXPERIENCE_CACHE_PREFIX}${keyTag(apiKey)}.${experienceId}`;
+function readCachedExperience(key, now = Date.now()) {
+  const raw = safeStorageGet2(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const savedAt = num2(parsed.savedAt);
+    const experience = parseExperience(parsed.experience);
+    if (!experience || savedAt === null || now - savedAt > EXPERIENCE_CACHE_TTL_MS) {
+      safeStorageRemove2(key);
+      return null;
+    }
+    return { etag: text4(parsed.etag), experience, savedAt };
+  } catch {
+    safeStorageRemove2(key);
+    return null;
+  }
+}
+function writeCachedExperience(key, value) {
+  safeStorageSet2(key, JSON.stringify(value));
+}
+function experienceProductRefs(experience) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const v2 of experience.videos) {
+    for (const p3 of v2.products) {
+      if (seen.has(p3.productId)) continue;
+      seen.add(p3.productId);
+      out.push({ sponsorId: experience.sponsorId, productId: p3.productId });
+    }
+  }
+  return out;
+}
 
 // src/core/checkout/payments/vipps-button.ts
 var VIPPS_BUTTON_SCRIPT = "https://cdn.vippsmobilepay.com/js/button/button.js";
@@ -15941,10 +17927,12 @@ var VioProductCarousel = class extends i4 {
   }
   /** Attribution every analytics event of this carousel carries (`Vio.attribution` + the content overrides). */
   attribution() {
+    const sponsorId = this.contextSponsorId();
     const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, {
-      sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+      sponsorId,
       campaignId: this.slotRegistration.campaignHint
     }) : { slot: this.effectiveSlot || void 0 };
+    if (sponsorId === void 0 && this.showsSeveralSponsors()) delete base.sponsorId;
     return {
       ...base,
       componentTemplateId: "product-carousel",
@@ -16179,6 +18167,28 @@ var VioProductCarousel = class extends i4 {
     const fromSlot = typeof Vio.campaignForSlot === "function" ? Number(Vio.campaignForSlot(this.effectiveSlot || null, { campaignId: this.slotRegistration.campaignHint })?.primarySponsor?.id) : NaN;
     return Number.isFinite(fromSlot) && fromSlot > 0 ? fromSlot : 0;
   }
+  /** The distinct sponsors of the products on show (multi-sponsor refs may mix brands). */
+  shownSponsorIds() {
+    return [...new Set((this.fetched ?? []).map((e7) => e7.sponsorId).filter((id) => id > 0))];
+  }
+  showsSeveralSponsors() {
+    return this.shownSponsorIds().length > 1;
+  }
+  /**
+   * The sponsor the carousel's analytics events carry in `context`: the host's
+   * `sponsor-id`, else the one sponsor of the products shown, else the primary
+   * sponsor of the campaign the slot shows (what the carousel buys with).
+   * `undefined` when the products shown belong to different sponsors — each
+   * `commerce.items[]` line says its own — or when none is known.
+   */
+  contextSponsorId() {
+    if (this.sponsorId > 0) return this.sponsorId;
+    const shown = this.shownSponsorIds();
+    if (shown.length > 1) return void 0;
+    if (shown.length === 1) return shown[0];
+    const fromSlot = this.effectiveSponsorId();
+    return fromSlot > 0 ? fromSlot : void 0;
+  }
   async autoFetch() {
     if (!Vio.isInitialized) {
       this.fetchError = "Vio not initialized \u2014 call Vio.init({ apiKey }) first";
@@ -16242,7 +18252,7 @@ var VioProductCarousel = class extends i4 {
       this.unobserveImpression = Vio.analytics.observeImpression(
         this,
         {
-          sponsorId: this.sponsorId > 0 ? this.sponsorId : void 0,
+          sponsorId: this.contextSponsorId(),
           // The slot is the real location id; the label only stands in for it.
           locationId: this.effectiveSlot || this.label || void 0,
           ...this.attribution()
@@ -16267,10 +18277,9 @@ var VioProductCarousel = class extends i4 {
     if (entries.length === 0) return;
     this.listTracked = true;
     try {
-      const sponsorId = this.effectiveSponsorId();
       Vio.analytics.track("view_item_list", {
         context: {
-          sponsorId: sponsorId > 0 ? sponsorId : void 0,
+          sponsorId: this.contextSponsorId(),
           locationId: this.effectiveSlot || this.label || void 0,
           ...this.attribution()
         },
@@ -16280,15 +18289,16 @@ var VioProductCarousel = class extends i4 {
     } catch {
     }
   }
-  /** The products on show as analytics lines (impression and view_item_list); null before they load. */
+  /** The products on show as analytics lines (impression and view_item_list), each with its sponsor; null before they load. */
   listCommerce() {
     const entries = this.fetched ?? [];
     if (entries.length === 0) return null;
     return {
-      items: entries.map(({ product }) => ({
+      items: entries.map(({ product, sponsorId }) => ({
         productId: product.id,
         name: product.title,
-        price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0
+        price: Number(product.price?.amount_incl_taxes ?? product.price?.amount) || void 0,
+        sponsorId: sponsorId > 0 ? sponsorId : void 0
       })),
       currency: entries[0]?.product.price?.currency_code
     };
@@ -16531,7 +18541,7 @@ function onPageShow(e7) {
   emit("vio:payment-redirect-cancel", { ...current.detail, reason: "back" });
   current = null;
 }
-function beginPaymentRedirect(detail) {
+function beginPaymentRedirect(detail, opts = {}) {
   if (current && !current.settled) {
     current.settled = true;
     removeOverlay();
@@ -16549,9 +18559,9 @@ function beginPaymentRedirect(detail) {
     spinner.className = "vio-redirect-spinner";
     spinner.setAttribute("aria-hidden", "true");
     const label = LABEL[detail.method] ?? detail.method;
-    const text4 = document.createElement("div");
-    text4.className = "vio-redirect-text";
-    text4.textContent = `\xC5pner ${label} \u2026`;
+    const text5 = document.createElement("div");
+    text5.className = "vio-redirect-text";
+    text5.textContent = opts.status || `\xC5pner ${label} \u2026`;
     const hint = document.createElement("div");
     hint.className = "vio-redirect-hint";
     hint.textContent = `Kom du tilbake fra ${label} uten \xE5 betale?`;
@@ -16564,7 +18574,7 @@ function beginPaymentRedirect(detail) {
       e7.stopPropagation();
       settle("vio:payment-redirect-cancel", "user");
     });
-    el.append(spinner, text4, hint, cancel);
+    el.append(spinner, text5, hint, cancel);
     el.addEventListener("click", (e7) => e7.stopPropagation());
     document.body.appendChild(el);
     requestAnimationFrame(() => el.classList.add("is-shown"));
@@ -16618,6 +18628,226 @@ function resolveVippsCartPayment(el, own) {
   const value = String(own || fromTheme || "").trim().replace(/^["']|["']$/g, "").toLowerCase();
   return value === "checkout" ? "checkout" : "express";
 }
+
+// src/ui/discount-texts.ts
+var DISCOUNT_TEXT = {
+  // ── Lines and totals ──────────────────────────────────────────────────────
+  /** The price of a line the code gives away. */
+  free: "Gratis",
+  /** Read out before the struck-through list price of a discounted line («Ordinær pris 52 Kr»). */
+  listPrice: "Ordin\xE6r pris",
+  /** The row of what the code takes off, in the cart, the checkout's summary and the receipt («Rabatt (KODE)» when the code is known). */
+  discountRow: "Rabatt",
+  /** The cart's total when the shipping is not known yet (worked out in the checkout). */
+  totalBeforeShipping: "Totalt uten frakt",
+  // ── A gift ────────────────────────────────────────────────────────────────
+  /** The redirect overlay while the campaign's gift is being put in the cart, right before Vipps opens. */
+  preparingGift: "Legger til gave \u2026",
+  /** A cart that holds only the gift: nothing to pay for. */
+  giftOnly: "Legg til et produkt for \xE5 f\xE5 med gaven.",
+  /** A gift line with more than one unit (also when Commerce refuses the payment for it). */
+  giftMaxOne: "Du kan bare f\xE5 \xE9n gave per bestilling. Reduser antallet og pr\xF8v igjen.",
+  /** On the «+» of a gift line, which does nothing. */
+  giftMaxOneShort: "Maks \xE9n gave per bestilling",
+  // ── With a code on the cart, only Vipps ───────────────────────────────────
+  /** Under the ways to pay that are off while a discount code is on the cart (they would charge list prices). */
+  vippsOnly: "Med rabattkode kan du bare betale med Vipps.",
+  /** In place of the ways to pay when none of those on offer takes the discount on the cart (with «Fjern» under it). */
+  noDiscountMethod: "Rabatten kan ikke brukes med betalingsm\xE5tene her. Fjern rabatten for \xE5 betale.",
+  /** What the «Fjern» under that note is, read out. */
+  discountRemoveLabel: "Fjern rabatten",
+  // ── A payment Commerce would not start because of the discount ────────────
+  /** The discount could not be worked out right now. */
+  discountUnavailable: "Rabatten kunne ikke beregnes akkurat n\xE5. Pr\xF8v igjen om litt.",
+  /** The way to pay that was chosen does not take discounts. */
+  methodTakesNoDiscount: "Rabatten kan ikke brukes med denne betalingsm\xE5ten. Velg en annen, eller fjern rabatten.",
+  /** After a code that is no good any more came off the cart at the payment. */
+  cartUpdated: "Handlekurven er oppdatert \u2013 pr\xF8v igjen.",
+  // ── The «Rabattkode» field (wherever codes are on; `discountField: false` hides it) ──
+  /** The field's name: its label and its placeholder. */
+  fieldLabel: "Rabattkode",
+  /** The button that sends the code. */
+  fieldApply: "Bruk",
+  /** The same button while Commerce asks the brand's shop (one to three seconds). */
+  fieldApplying: "Sjekker\u2026",
+  /** Beside the code that is on the cart: takes it off. */
+  fieldRemove: "Fjern",
+  /** The same button while the code is being taken off. */
+  fieldRemoving: "Fjerner\u2026",
+  /** What the «Fjern» button is, read out. */
+  fieldRemoveLabel: "Fjern rabattkoden",
+  /** The code could not be taken off. */
+  fieldRemoveFailed: "Rabattkoden kunne ikke fjernes. Pr\xF8v igjen.",
+  /** In the field, in place of the code, when the cart carries its campaign's — whose code is never shown. */
+  fieldCampaignApplied: "Rabatt lagt til",
+  // ── Why a code was refused (said for a code the shopper typed; never for the page's own) ──
+  couponNotFound: "Rabattkoden finnes ikke.",
+  couponExpired: "Rabattkoden er ikke lenger gyldig.",
+  couponUsageLimit: "Rabattkoden er brukt opp.",
+  couponNotSupported: "Rabattkoden kan ikke brukes her.",
+  couponMinAmount: "Handlekurven er under minstebel\xF8pet for rabattkoden.",
+  couponOtherApplied: "Du har allerede en rabattkode. Fjern den f\xF8rst.",
+  couponUnavailable: "Vi kunne ikke sjekke rabattkoden akkurat n\xE5. Pr\xF8v igjen.",
+  /** Any other refusal. */
+  couponRefused: "Rabattkoden kunne ikke brukes."
+};
+function discountRowLabel(code) {
+  const shown = typeof code === "string" ? code.trim() : "";
+  return shown ? `${DISCOUNT_TEXT.discountRow} (${shown})` : DISCOUNT_TEXT.discountRow;
+}
+function couponReasonText(reason) {
+  switch (reason) {
+    case "COUPON_NOT_FOUND":
+      return DISCOUNT_TEXT.couponNotFound;
+    case "COUPON_EXPIRED":
+      return DISCOUNT_TEXT.couponExpired;
+    case "COUPON_USAGE_LIMIT":
+      return DISCOUNT_TEXT.couponUsageLimit;
+    case "COUPON_NOT_SUPPORTED":
+      return DISCOUNT_TEXT.couponNotSupported;
+    case "COUPON_MIN_AMOUNT":
+      return DISCOUNT_TEXT.couponMinAmount;
+    case "COUPON_OTHER_APPLIED":
+      return DISCOUNT_TEXT.couponOtherApplied;
+    case "COUPON_UNAVAILABLE":
+    case "DISCOUNT_UNAVAILABLE":
+      return DISCOUNT_TEXT.couponUnavailable;
+    default:
+      return DISCOUNT_TEXT.couponRefused;
+  }
+}
+function discountPaymentText(reason) {
+  switch (reason) {
+    case "GIFT_MAX_ONE_UNIT":
+      return DISCOUNT_TEXT.giftMaxOne;
+    case "CHECKOUT_AMOUNT_ZERO":
+      return DISCOUNT_TEXT.giftOnly;
+    case "DISCOUNT_UNAVAILABLE":
+      return DISCOUNT_TEXT.discountUnavailable;
+    case "DISCOUNT_PAYMENT_METHOD_UNSUPPORTED":
+      return DISCOUNT_TEXT.methodTakesNoDiscount;
+    case "COUPON_UNAVAILABLE":
+      return DISCOUNT_TEXT.couponUnavailable;
+    case "COUPON_OTHER_APPLIED":
+      return DISCOUNT_TEXT.couponOtherApplied;
+    default:
+      return `${couponReasonText(reason)} ${DISCOUNT_TEXT.cartUpdated}`;
+  }
+}
+
+// src/ui/discount.ts
+function renderLinePrice(line, fallbackCurrency) {
+  const currency = line.currency || fallbackCurrency;
+  if (!(lineDiscount(line) > 0)) return formatPrice(line.unitPrice * line.quantity, currency);
+  const list = formatPrice(lineListTotal(line), currency);
+  const net = isGiftLine(line) ? DISCOUNT_TEXT.free : formatPrice(lineNetTotal(line), currency);
+  return b2`<span class="list-price" part="line-list-price"><span class="vh">${DISCOUNT_TEXT.listPrice} </span><s>${list}</s></span>
+    <span class="net-price" part="line-net-price">${net}</span>`;
+}
+function discountRow(amount2, currency, code) {
+  return { label: discountRowLabel(code), value: `\u2212${formatPrice(amount2, currency)}` };
+}
+function isVippsMethod(method) {
+  return methodLetters2(method) === "vipps";
+}
+function methodLetters2(method) {
+  return String(method ?? "").toLowerCase().replace(/[^a-z]/g, "");
+}
+function cartCarriesDiscount(cart) {
+  return !!cart && (!!cart.discountCode || cart.discountSource === "CAMPAIGN");
+}
+function methodTakesDiscounts(method, offered) {
+  const id = methodLetters2(method);
+  const found = Array.isArray(offered) ? offered.find((m2) => methodLetters2(m2?.name) === id) : void 0;
+  const configs = Array.isArray(found?.config) ? found.config : [];
+  const flag = configs.find((c4) => c4?.name === "discounts")?.value;
+  if (flag === true || flag === "true") return true;
+  if (flag === false || flag === "false") return false;
+  return isVippsMethod(method);
+}
+function renderVippsOnlyNote() {
+  return b2`<p class="vipps-only-note" part="vipps-only-note" role="note">${DISCOUNT_TEXT.vippsOnly}</p>`;
+}
+function renderDiscountDeadEnd(opts) {
+  return b2`<div class="discount-dead-end" part="discount-dead-end" role="note">
+    <p class="vipps-only-note">${DISCOUNT_TEXT.noDiscountMethod}</p>
+    <button
+      type="button"
+      class="discount-dead-end-remove"
+      part="discount-dead-end-remove"
+      data-vio-cta="discount_remove"
+      data-vio-cta-label=${DISCOUNT_TEXT.fieldRemove}
+      aria-label=${DISCOUNT_TEXT.discountRemoveLabel}
+      ?disabled=${opts.removing}
+      @click=${opts.onRemove}
+    >
+      ${opts.removing ? DISCOUNT_TEXT.fieldRemoving : DISCOUNT_TEXT.fieldRemove}
+    </button>
+    ${opts.failed ? b2`<p class="discount-error" role="alert">${DISCOUNT_TEXT.fieldRemoveFailed}</p>` : ""}
+  </div>`;
+}
+var vippsOnlyStyles = i`
+  [data-discount-off] {
+    opacity: 0.4 !important;
+    cursor: not-allowed !important;
+    filter: grayscale(1);
+  }
+  .vipps-only-note {
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--vio-color-text-secondary, #666);
+    text-align: center;
+  }
+  .discount-dead-end {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .discount-dead-end-remove {
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid var(--vio-color-text, #0a0a0a);
+    border-radius: var(--vio-radius-md, 4px);
+    background: transparent;
+    color: var(--vio-color-text, #0a0a0a);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .discount-dead-end-remove:disabled { opacity: 0.45; cursor: not-allowed; }
+  .discount-dead-end .discount-error {
+    margin: 0;
+    font-size: 12px;
+    color: var(--vio-color-accent, #c14a3b);
+  }
+`;
+var discountStyles = i`
+  .list-price {
+    margin-right: 6px;
+    font-weight: 400;
+    color: var(--vio-color-text-tertiary, #999);
+    white-space: nowrap;
+  }
+  .list-price s { text-decoration: line-through; }
+  .net-price { white-space: nowrap; }
+  /* Read out, not shown. */
+  .vh {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+`;
 
 // src/core/checkout/method-taxonomy.ts
 function normalizeMethodName(name) {
@@ -17256,6 +19486,7 @@ var VioProductDetail = class extends i4 {
     this.addedToastTimer = null;
     this.applePayOk = false;
     this.availableMethods = null;
+    this.offeredMethodInfo = null;
     this.methodsLoading = false;
     this.vippsExpress = false;
     /** Whose methods `availableMethods` are — another brand's are not shown while its own load. */
@@ -18337,6 +20568,9 @@ var VioProductDetail = class extends i4 {
     }
     .added-toast-text { font-size: 14px; font-weight: 600; }
     .added-toast-text::before { content: '✓ '; color: #2e7d32; }
+    /* A notice is no confirmation: no tick, and one button. */
+    .added-toast.is-notice .added-toast-text::before { content: none; }
+    .added-toast.is-notice .added-toast-actions { grid-template-columns: 1fr; }
     .added-toast-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .added-toast-actions button {
       min-height: 44px;
@@ -18365,7 +20599,8 @@ var VioProductDetail = class extends i4 {
       font-size: 14px;
     }
   `,
-      highlightsStyles("detail")
+      highlightsStyles("detail"),
+      vippsOnlyStyles
     ];
   }
   connectedCallback() {
@@ -18623,6 +20858,7 @@ var VioProductDetail = class extends i4 {
     if (!spId) return;
     if (spId !== this.methodsSponsorId) {
       this.availableMethods = null;
+      this.offeredMethodInfo = null;
       this.vippsExpress = false;
     }
     this.methodsSponsorId = spId;
@@ -18631,12 +20867,14 @@ var VioProductDetail = class extends i4 {
       const methods = await Vio.checkout.getAvailablePaymentMethods(spId);
       if (Array.isArray(methods)) {
         this.availableMethods = methods.map((m2) => m2.name);
+        this.offeredMethodInfo = methods;
         const vipps = methods.find(
           (m2) => String(m2?.name ?? "").toLowerCase() === "vipps"
         );
         this.vippsExpress = !!vipps && vipps.config?.find((c4) => c4?.name === "express")?.value !== "false";
       } else {
         this.availableMethods = null;
+        this.offeredMethodInfo = null;
         this.vippsExpress = false;
       }
     } catch (err) {
@@ -18644,6 +20882,7 @@ var VioProductDetail = class extends i4 {
         console.warn("[VioProductDetail] Failed to load payment methods:", err);
       }
       this.availableMethods = null;
+      this.offeredMethodInfo = null;
       this.vippsExpress = false;
     } finally {
       this.methodsLoading = false;
@@ -19039,18 +21278,46 @@ var VioProductDetail = class extends i4 {
     this.addedToastTimer = null;
     this.addedToast = null;
   }
+  /**
+   * The toast as a notice: the purchase could not go on, and why. Shown even
+   * with `no-added-toast` — it is not the «added» confirmation a host may
+   * draw itself, and nothing else on the page would say it.
+   */
+  showNoticeToast(notice) {
+    this.addedToast = {
+      sponsorId: this.sponsorId,
+      detail: { sponsorId: this.sponsorId, express: false, ...this.attribution(), ...sponsorDetail(this.sponsorId) },
+      notice
+    };
+    if (this.addedToastTimer) clearTimeout(this.addedToastTimer);
+    this.addedToastTimer = setTimeout(() => this.hideAddedToast(), ADDED_TOAST_MS);
+  }
   /** «Til kassen»: the checkout of the brand just added to — the host opens it on `vio:checkout-open`, as from the cart. */
   toastToCheckout() {
     const toast = this.addedToast;
     this.hideAddedToast();
     if (!toast) return;
     const cart = Vio.cart.getCart(toast.sponsorId);
-    const total = (cart?.items ?? []).reduce((sum, i5) => sum + i5.unitPrice * i5.quantity, 0);
+    const total = cartNetTotal(cart?.items);
+    if (cart && isGiftOnlyCart(cart.items)) {
+      this.showNoticeToast(DISCOUNT_TEXT.giftOnly);
+      return;
+    }
     if (!cart || cart.items.length === 0 || !(total > 0)) return;
     this.dispatchEvent(new CustomEvent("vio:checkout-open", { bubbles: true, composed: true, detail: toast.detail }));
   }
   renderAddedToast() {
     if (!this.addedToast) return A;
+    if (this.addedToast.notice) {
+      return b2`
+        <div class="added-toast is-notice" part="added-toast" role="alert">
+          <div class="added-toast-text">${this.addedToast.notice}</div>
+          <div class="added-toast-actions">
+            <button class="added-toast-continue" part="added-toast-continue" @click=${this.hideAddedToast}>Fortsett å handle</button>
+          </div>
+        </div>
+      `;
+    }
     return b2`
       <div class="added-toast" part="added-toast" role="status" aria-live="polite">
         <div class="added-toast-text">Lagt i handlekurven</div>
@@ -19068,7 +21335,7 @@ var VioProductDetail = class extends i4 {
    * loads immediately. Reuses the working Klarna Payments flow (no express SDK).
    */
   async buyWithKlarna() {
-    if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.product || this.availableQuantity <= 0 || this.adding || this.discountOff("klarna")) return;
     if (!this.requireSelection()) return;
     this.adding = true;
     try {
@@ -19133,7 +21400,10 @@ var VioProductDetail = class extends i4 {
       this.openCheckoutWithVipps();
       return;
     }
-    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId: this.sponsorId, source: "detail" });
+    const redirect = beginPaymentRedirect(
+      { method: "vipps", sponsorId: this.sponsorId, source: "detail" },
+      { status: Vio.cart.discountGiftExpected(this.sponsorId) ? DISCOUNT_TEXT.preparingGift : void 0 }
+    );
     this.addCurrentToCart();
     this.close();
     void this.startVippsExpressOrCheckout(redirect);
@@ -19145,6 +21415,19 @@ var VioProductDetail = class extends i4 {
    */
   vippsGoesStraightToApp() {
     return this.vippsExpress && !this.cartHasLines();
+  }
+  /**
+   * This brand's cart carries a discount code — whatever its source, the
+   * campaign's included: only the ways to pay that take discounts can pay
+   * (the others would charge list prices — see `renderVippsOnlyNote`). Their
+   * buttons are off until the code comes off.
+   */
+  discountOnCart() {
+    return cartCarriesDiscount(Vio.cart.getCart(this.sponsorId));
+  }
+  /** A way to pay the cart's discount code turns off: one that does not take discounts (its `discounts` config), while a code is on. */
+  discountOff(method) {
+    return this.discountOnCart() && !methodTakesDiscounts(method, this.offeredMethodInfo);
   }
   /** This brand's cart already has lines. */
   cartHasLines() {
@@ -19166,7 +21449,7 @@ var VioProductDetail = class extends i4 {
     const items = cart?.items ?? [];
     if (items.length === 0) return null;
     const units = items.reduce((n6, i5) => n6 + (Number(i5.quantity) || 0), 0) + this.quantity;
-    const total = items.reduce((sum, i5) => sum + (Number(i5.unitPrice) || 0) * (Number(i5.quantity) || 0), 0) + this.unitPrice * this.quantity;
+    const total = cartNetTotal(items) + this.unitPrice * this.quantity;
     return { units, total, currency: cart?.currency || this.currency };
   }
   /** The line under the Vipps button: what is paid (a cart with lines) or what happens in the app (Express, empty cart). */
@@ -19195,6 +21478,11 @@ var VioProductDetail = class extends i4 {
         console.warn("[VioProductDetail] Vipps Express not started:", err);
       }
       redirect.fail(err instanceof Error ? err.message : String(err));
+      const reason = discountReasonOfError(err) ?? (isGiftOnlyCart(Vio.cart.getCart(this.sponsorId)?.items) ? "CHECKOUT_AMOUNT_ZERO" : void 0);
+      if (reason) {
+        this.showNoticeToast(discountPaymentText(reason));
+        return;
+      }
     }
     if (!fallback) return;
     this.openCheckoutWithVipps();
@@ -19215,7 +21503,7 @@ var VioProductDetail = class extends i4 {
   }
   /** Buy with Stripe — opens the checkout with Stripe preselected. */
   buyWithStripe() {
-    if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.product || this.availableQuantity <= 0 || this.adding || this.discountOff("stripe")) return;
     if (!this.requireSelection()) return;
     this.addCurrentToCart();
     this.close();
@@ -19260,7 +21548,7 @@ var VioProductDetail = class extends i4 {
    * that total.
    */
   buyWithApplePay() {
-    if (!this.product || this.availableQuantity <= 0 || !this.applePayHandle) return;
+    if (!this.product || this.availableQuantity <= 0 || !this.applePayHandle || this.discountOff("apple-pay")) return;
     if (!this.requireSelection()) return;
     if (!(this.unitPrice > 0)) return;
     const cartHasLines = (Vio.cart.getCart(this.sponsorId)?.items.length ?? 0) > 0;
@@ -19368,12 +21656,12 @@ var VioProductDetail = class extends i4 {
     const own = this.descriptionLabel.trim();
     return (own && own.length <= 40 ? own : "") || currentGlobalDescriptionLabel() || "Beskrivelse";
   }
-  renderDescription(text4) {
+  renderDescription(text5) {
     const mode = this.resolvedDescriptionMode;
     if (mode === "open") {
       return b2`<div class="description-block description-preview open" part="description">
         <div class="desc-head">${this.descriptionHeading()}</div>
-        <div class="description">${text4}</div>
+        <div class="description">${text5}</div>
       </div>`;
     }
     const foldable = mode === "folded" || this.descriptionClipped;
@@ -19389,7 +21677,7 @@ var VioProductDetail = class extends i4 {
             data-vio-cta=${opens}
             data-vio-cta-label=${opens === A ? A : this.descriptionHeading()}
             @click=${() => !this.descriptionOpen && toggle()}
-          >${text4}</div>`}
+          >${text5}</div>`}
       ${mode === "preview" && this.descriptionClipped ? b2`<button class="desc-more" type="button" data-vio-cta=${opens} @click=${toggle}>${this.descriptionOpen ? "Vis mindre" : "Les mer"}</button>` : A}
     </div>`;
   }
@@ -19797,7 +22085,8 @@ var VioProductDetail = class extends i4 {
                   class="buy-applepay"
                   data-vio-cta="apple_pay"
                   @click=${this.buyWithApplePay}
-                  ?disabled=${this.adding}
+                  ?disabled=${this.adding || this.discountOff("apple-pay")}
+                  ?data-discount-off=${this.discountOff("apple-pay")}
                   aria-label="Kjøp nå med Apple Pay"
                 >
                   <span>Kjøp nå med</span>
@@ -19810,7 +22099,8 @@ var VioProductDetail = class extends i4 {
                   class="buy-stripe"
                   data-vio-cta="stripe"
                   @click=${this.buyWithStripe}
-                  ?disabled=${this.adding}
+                  ?disabled=${this.adding || this.discountOff("stripe")}
+                  ?data-discount-off=${this.discountOff("stripe")}
                   aria-label="Kjøp nå med Stripe"
                   style="width: 100%; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; background: #635bff; color: #fff; border: none; padding: 14px 24px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;"
                 >
@@ -19828,7 +22118,8 @@ var VioProductDetail = class extends i4 {
                   data-vio-cta="klarna"
                   data-vio-cta-label="Kjøp nå med Klarna"
                   @click=${this.buyWithKlarna}
-                  ?disabled=${this.adding}
+                  ?disabled=${this.adding || this.discountOff("klarna")}
+                  ?data-discount-off=${this.discountOff("klarna")}
                 >
                   <span>Kjøp nå med</span>
                   <img
@@ -19838,6 +22129,7 @@ var VioProductDetail = class extends i4 {
                   />
                 </button>
               ` : ""}
+          ${this.availableQuantity > 0 && (this.hasPrice && this.applePayOk && this.methodEnabled("apple-pay", "applepay") && this.discountOff("apple-pay") || this.methodEnabled("stripe") && this.discountOff("stripe") || this.methodEnabled("klarna") && this.discountOff("klarna")) ? renderVippsOnlyNote() : ""}
 
           ${this.renderSellerNote()}
           </div>
@@ -20024,6 +22316,9 @@ __decorateClass([
 ], VioProductDetail.prototype, "availableMethods", 2);
 __decorateClass([
   r5()
+], VioProductDetail.prototype, "offeredMethodInfo", 2);
+__decorateClass([
+  r5()
 ], VioProductDetail.prototype, "methodsLoading", 2);
 __decorateClass([
   r5()
@@ -20044,12 +22339,254 @@ function shippingRatesShown(rates, repeats = []) {
   return rates.map((r6) => ({ ...r6, description: shippingDescriptionOf(r6.description, [r6.name, ...repeats]) }));
 }
 function splitRateName(name) {
-  const text4 = String(name ?? "").trim();
-  const m2 = text4.match(/^(.+?)\s+[-–—]\s+(.+)$/);
-  if (!m2?.[1] || !m2[2]) return { carrier: "", method: text4 };
+  const text5 = String(name ?? "").trim();
+  const m2 = text5.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (!m2?.[1] || !m2[2]) return { carrier: "", method: text5 };
   const method = m2[2].trim();
   return { carrier: m2[1].trim(), method: method.charAt(0).toUpperCase() + method.slice(1) };
 }
+
+// src/ui/discount-field.ts
+function discountFieldEnabled() {
+  try {
+    if (!Configuration.isInitialized) return false;
+    const config = Configuration.get();
+    if (typeof config.discountField === "boolean") return config.discountField;
+    return !!(config.discountCode ?? rememberedDiscountCode());
+  } catch {
+    return false;
+  }
+}
+var DiscountField = class {
+  constructor(opts) {
+    this.opts = opts;
+    /** What the shopper has typed. */
+    this.value = "";
+    /**
+     * Why the code typed here was not taken (`apply`, with that code), or that
+     * the code on the cart could not be taken off (`remove`) — until the next
+     * keystroke or attempt, and for as long as it is true (`render`).
+     */
+    this.error = null;
+    /** This field's own call is in flight (before the cart says so). */
+    this.working = null;
+    this.onCartChange = () => {
+      if (discountFieldEnabled()) this.opts.host.requestUpdate();
+    };
+    this.onInput = (e7) => {
+      this.value = e7.target.value;
+      if (this.error) this.error = null;
+      this.redraw();
+    };
+    this.onSubmit = async (e7) => {
+      e7.preventDefault();
+      const sponsorIds = this.opts.sponsorIds();
+      const code = this.value.trim();
+      if (!code || sponsorIds.length === 0 || this.busy(sponsorIds)) return;
+      this.working = "applying";
+      this.error = null;
+      this.redraw();
+      try {
+        let applied = false;
+        let refusal = null;
+        for (const id of sponsorIds) {
+          const result = await Vio.cart.applyDiscountCode(code, id);
+          if (result.status === "applied") applied = true;
+          else if (result.status === "refused") refusal ??= couponReasonText(result.reason);
+          else refusal ??= DISCOUNT_TEXT.couponUnavailable;
+        }
+        if (applied) this.value = "";
+        else this.error = { about: "apply", code, text: refusal ?? DISCOUNT_TEXT.couponRefused };
+      } catch {
+        this.error = { about: "apply", code, text: DISCOUNT_TEXT.couponUnavailable };
+      } finally {
+        this.working = null;
+        this.redraw();
+      }
+    };
+    this.onRemove = async () => {
+      const sponsorIds = this.opts.sponsorIds();
+      if (sponsorIds.length === 0 || this.busy(sponsorIds)) return;
+      this.working = "removing";
+      this.error = null;
+      this.redraw();
+      try {
+        let failed = false;
+        for (const id of sponsorIds) {
+          if (this.appliedCode([id]) === void 0) continue;
+          const result = await Vio.cart.removeDiscountCode(id);
+          if (!result.removed && result.carts.length > 0) failed = true;
+        }
+        if (failed) this.error = { about: "remove", text: DISCOUNT_TEXT.fieldRemoveFailed };
+      } catch {
+        this.error = { about: "remove", text: DISCOUNT_TEXT.fieldRemoveFailed };
+      } finally {
+        this.working = null;
+        this.redraw();
+      }
+    };
+  }
+  /** Follow the cart: a code going on or coming off (here, in the other field, or by the page itself) redraws the field. */
+  connect() {
+    if (this.opts.followsCart) return;
+    Vio.cart.addEventListener("change", this.onCartChange);
+  }
+  disconnect() {
+    Vio.cart.removeEventListener("change", this.onCartChange);
+  }
+  /**
+   * The code the carts this field is about carry (the first one that does):
+   * its text; `''` for a campaign's, whose code is not shown; `undefined`
+   * when none carries one.
+   */
+  appliedCode(sponsorIds) {
+    for (const id of sponsorIds) {
+      const code = Vio.cart.discountCodeForSponsor(id);
+      if (code) return code;
+      if (Vio.cart.discountSourceForSponsor(id) === "CAMPAIGN") return "";
+    }
+    return void 0;
+  }
+  /**
+   * A code is being put on one of these carts, or taken off it, right now —
+   * by this field or by whoever else asked for it by name. The page's own
+   * code going on by itself is not one of them: it shows once it is taken,
+   * and never when it is not.
+   */
+  busy(sponsorIds) {
+    for (const id of sponsorIds) {
+      const call = Vio.cart.discountBusy(id);
+      if (call && (call.asked || call.kind === "removing")) return call;
+    }
+    return this.working ? { kind: this.working } : void 0;
+  }
+  redraw() {
+    this.opts.host.requestUpdate();
+  }
+  /** The field, or nothing where discount codes are not on (or there is no cart to put a code on). */
+  render() {
+    if (!discountFieldEnabled()) return A;
+    const sponsorIds = this.opts.sponsorIds();
+    if (sponsorIds.length === 0) return A;
+    const busy = this.busy(sponsorIds);
+    const applied = this.appliedCode(sponsorIds);
+    const showsCode = applied !== void 0 && busy?.kind !== "applying";
+    const stale = this.error?.about === "remove" ? !showsCode : this.error?.about === "apply" && showsCode && this.error.code === applied;
+    const said = this.error && !stale ? this.error.text : null;
+    const error = said ? b2`<p class="discount-error" part="discount-error" role="alert">${said}</p>` : A;
+    if (showsCode) {
+      const removing = busy?.kind === "removing";
+      return b2`
+        <div class="discount-field is-applied" part="discount-field">
+          <span class="discount-applied">
+            <span class="discount-label">${DISCOUNT_TEXT.fieldLabel}</span>
+            ${applied ? b2`<span class="discount-code" part="discount-code">${applied}</span>` : b2`<span class="discount-code is-campaign" part="discount-code">${DISCOUNT_TEXT.fieldCampaignApplied}</span>`}
+          </span>
+          <button
+            type="button"
+            class="discount-remove"
+            part="discount-remove"
+            data-vio-cta="discount_remove"
+            data-vio-cta-label=${DISCOUNT_TEXT.fieldRemove}
+            aria-label=${DISCOUNT_TEXT.fieldRemoveLabel}
+            ?disabled=${removing}
+            @click=${this.onRemove}
+          >
+            ${removing ? DISCOUNT_TEXT.fieldRemoving : DISCOUNT_TEXT.fieldRemove}
+          </button>
+        </div>
+        ${error}
+      `;
+    }
+    const applying = busy?.kind === "applying";
+    const shown = applying && !this.value ? busy?.code ?? "" : this.value;
+    return b2`
+      <form class="discount-field" part="discount-field" novalidate @submit=${this.onSubmit}>
+        <label class="vh" for="vio-discount-code">${DISCOUNT_TEXT.fieldLabel}</label>
+        <input
+          id="vio-discount-code"
+          class="discount-input"
+          part="discount-input"
+          type="text"
+          name="vio-discount-code"
+          placeholder=${DISCOUNT_TEXT.fieldLabel}
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          maxlength=${DISCOUNT_CODE_MAX_LENGTH}
+          .value=${shown}
+          ?disabled=${applying}
+          aria-invalid=${said ? "true" : "false"}
+          @input=${this.onInput}
+        />
+        <button
+          type="submit"
+          class="discount-apply"
+          part="discount-apply"
+          data-vio-cta="discount_apply"
+          ?disabled=${applying || !this.value.trim()}
+          aria-busy=${applying ? "true" : "false"}
+        >
+          ${applying ? DISCOUNT_TEXT.fieldApplying : DISCOUNT_TEXT.fieldApply}
+        </button>
+      </form>
+      ${error}
+    `;
+  }
+};
+var discountFieldStyles = i`
+  .discount-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 var(--vio-space-md, 16px);
+  }
+  .discount-input {
+    flex: 1;
+    min-width: 0;
+    height: 40px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--vio-color-border, #e5e5e5);
+    border-radius: var(--vio-radius-md, 4px);
+    background: var(--vio-color-surface, #fff);
+    color: inherit;
+    font-family: inherit;
+    /* 16px: a phone does not zoom into the field. */
+    font-size: 16px;
+    outline: none;
+  }
+  .discount-input:focus { border-color: var(--vio-color-text, #0a0a0a); }
+  .discount-input[aria-invalid='true'] { border-color: var(--vio-color-accent, #c14a3b); }
+  .discount-input:disabled { opacity: 0.6; }
+  .discount-apply,
+  .discount-remove {
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid var(--vio-color-text, #0a0a0a);
+    border-radius: var(--vio-radius-md, 4px);
+    background: transparent;
+    color: var(--vio-color-text, #0a0a0a);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .discount-apply:disabled,
+  .discount-remove:disabled { opacity: 0.45; cursor: not-allowed; }
+  .discount-field.is-applied { justify-content: space-between; }
+  .discount-applied { display: flex; flex-direction: column; min-width: 0; font-size: 14px; }
+  .discount-label { font-size: 12px; color: var(--vio-color-text-secondary, #666); }
+  .discount-code { font-weight: 600; overflow-wrap: anywhere; }
+  .discount-error {
+    margin: calc(var(--vio-space-md, 16px) * -0.5) 0 var(--vio-space-md, 16px);
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--vio-color-accent, #c14a3b);
+  }
+`;
 
 // src/ui/components/vio-cart.ts
 var STRIPE_LOGO_SRC2 = "data:image/svg+xml;utf8," + encodeURIComponent(
@@ -20092,10 +22629,13 @@ var VioCart = class extends i4 {
     this.itemCount = 0;
     this.applePayAvailable = false;
     this.availableMethods = null;
+    this.offeredMethodInfo = null;
+    this.discountRemoval = null;
     this.methodsLoading = false;
     this.vippsOfficial = false;
     /** A Vipps payment is being started from here: one at a time. */
     this.vippsStarting = false;
+    this.paymentNotice = null;
     /** Whether the method lookup has been attempted — see boundOnCartChange. */
     this.paymentMethodsAttempted = false;
     this.confirmedOrder = null;
@@ -20119,6 +22659,18 @@ var VioCart = class extends i4 {
       dragZones: ".handle, .header",
       scroller: () => this.renderRoot.querySelector(".body"),
       close: () => this.close()
+    });
+    /**
+     * The «Rabattkode» field (wherever discount codes are on for the page —
+     * `discountFieldEnabled`): one for the drawer, about every cart in it, over
+     * the totals and the buttons that pay, because a code is validated before
+     * paying. The drawer is drawn again on every cart change, and the field
+     * with it.
+     */
+    this.discountField = new DiscountField({
+      host: this,
+      sponsorIds: () => [...this.carts.values()].filter((c4) => c4.items.length > 0).map((c4) => c4.sponsorId),
+      followsCart: true
     });
     this.boundOnCartChange = (e7) => {
       const detail = e7.detail;
@@ -20157,6 +22709,17 @@ var VioCart = class extends i4 {
       }
       const sponsorId = _cta === "vipps" ? this.vippsSponsorId() : [...this.carts.keys()][0];
       return { sponsorId };
+    };
+    /** «Fjern» of the discount none of the ways to pay takes: it comes off the carts, and every way to pay is back. */
+    this.onRemoveDeadEndDiscount = async () => {
+      if (this.discountRemoval === "removing") return;
+      this.discountRemoval = "removing";
+      try {
+        const result = await Vio.cart.removeDiscountCode();
+        this.discountRemoval = result.removed || !Vio.cart.hasDiscountCode() ? null : "failed";
+      } catch {
+        this.discountRemoval = "failed";
+      }
     };
   }
   static {
@@ -20387,6 +22950,26 @@ var VioCart = class extends i4 {
       color: var(--vio-color-text-secondary, #666);
     }
     .subtotal-value { font-weight: 700; font-size: 16px; }
+    /* What the discount code takes off, between «Sum» and «Frakt». */
+    .discount-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin: calc(var(--vio-space-md, 16px) * -0.5) 0 var(--vio-space-md, 16px);
+      font-size: 14px;
+    }
+    .discount-row .subtotal-label { overflow-wrap: anywhere; }
+    /* Under a gift line with more than its one unit, and over the buttons when the cart cannot be paid for. */
+    .item-note,
+    .cart-notice {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--vio-color-text-secondary, #666);
+    }
+    .cart-notice { margin: 0 0 var(--vio-space-md, 16px); font-size: 13px; color: var(--vio-color-text, #0a0a0a); }
+    .qty-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .qty-btn:disabled:hover { border-color: var(--vio-color-border, #e5e5e5); }
 
     /* Apple Pay express — pay the whole cart directly. */
     .applepay-btn {
@@ -20544,7 +23127,10 @@ var VioCart = class extends i4 {
     }
     .confirm-close:hover { background: #222; }
   `,
-      highlightsStyles("cart")
+      highlightsStyles("cart"),
+      discountStyles,
+      discountFieldStyles,
+      vippsOnlyStyles
     ];
   }
   connectedCallback() {
@@ -20592,14 +23178,17 @@ var VioCart = class extends i4 {
       const methods = await Vio.checkout.getAvailablePaymentMethods(firstSponsorId);
       if (Array.isArray(methods)) {
         this.availableMethods = methods.map((m2) => m2.name);
+        this.offeredMethodInfo = methods;
       } else {
         this.availableMethods = null;
+        this.offeredMethodInfo = null;
       }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCart] Failed to load payment methods:", err);
       }
       this.availableMethods = null;
+      this.offeredMethodInfo = null;
     } finally {
       this.loadingPaymentMethods = false;
       this.methodsLoading = false;
@@ -20625,6 +23214,7 @@ var VioCart = class extends i4 {
     }
     if (changed.has("open") && this.open) {
       this.confirmedOrder = null;
+      this.paymentNotice = null;
       this.preparedTotal = -1;
       for (const cart of this.carts.values()) {
         if (cart.cartId) void Vio.cart.refreshFromServer(cart.sponsorId);
@@ -20659,6 +23249,7 @@ var VioCart = class extends i4 {
   onApplePay() {
     const handle = this.applePayHandle;
     if (!handle || !handle.available || !this.payable) return;
+    if (this.discountOff("apple-pay")) return;
     const snapshot = this.buildConfirmation();
     const sponsorIds = [...this.carts.keys()];
     const sponsor = sponsorIds.length === 1 ? sponsorDetail(sponsorIds[0]) : {};
@@ -20702,7 +23293,7 @@ var VioCart = class extends i4 {
    * (betalingsmetode). The host's checkout-open handler closes this cart and
    * opens <vio-checkout> in express mode with Klarna preselected. */
   onKlarnaExpress() {
-    if (!this.payable) return;
+    if (!this.payable || this.discountOff("klarna")) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -20723,6 +23314,7 @@ var VioCart = class extends i4 {
    */
   onCheckout() {
     if (!this.payable) return;
+    this.paymentNotice = null;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -20747,6 +23339,7 @@ var VioCart = class extends i4 {
    */
   onVipps() {
     if (!this.payable) return;
+    this.paymentNotice = null;
     if (resolveVippsCartPayment(this, this.vippsCartPayment) === "checkout") {
       const firstSponsorId = [...this.carts.keys()][0];
       if (firstSponsorId === void 0) return;
@@ -20757,7 +23350,10 @@ var VioCart = class extends i4 {
     const sponsorId = this.vippsSponsorId();
     if (sponsorId === void 0) return;
     this.vippsStarting = true;
-    const redirect = beginPaymentRedirect({ method: "vipps", sponsorId, source: "cart" });
+    const redirect = beginPaymentRedirect(
+      { method: "vipps", sponsorId, source: "cart" },
+      { status: Vio.cart.discountGiftExpected(sponsorId) ? DISCOUNT_TEXT.preparingGift : void 0 }
+    );
     void this.startVippsExpressOrCheckout(sponsorId, redirect).finally(() => {
       this.vippsStarting = false;
     });
@@ -20769,8 +23365,7 @@ var VioCart = class extends i4 {
    */
   vippsSponsorId() {
     for (const cart of this.carts.values()) {
-      const total = cart.items.reduce((sum, i5) => sum + i5.unitPrice * i5.quantity, 0);
-      if (cart.items.length > 0 && total > 0) return cart.sponsorId;
+      if (cart.items.length > 0 && cartNetTotal(cart.items) > 0) return cart.sponsorId;
     }
     return void 0;
   }
@@ -20790,6 +23385,11 @@ var VioCart = class extends i4 {
         console.warn("[VioCart] Vipps Express not started:", err);
       }
       redirect.fail(err instanceof Error ? err.message : String(err));
+      const reason = discountReasonOfError(err);
+      if (reason) {
+        this.paymentNotice = discountPaymentText(reason);
+        return;
+      }
     }
     if (!fallback) return;
     this.openCheckoutWithVipps(sponsorId);
@@ -20810,7 +23410,7 @@ var VioCart = class extends i4 {
   }
   /** Stripe — opens the checkout with Stripe preselected. */
   onStripe() {
-    if (!this.payable) return;
+    if (!this.payable || this.discountOff("stripe")) return;
     const firstSponsorId = [...this.carts.keys()][0];
     if (firstSponsorId === void 0) return;
     this.dispatchEvent(
@@ -20827,13 +23427,66 @@ var VioCart = class extends i4 {
   }
   /** Something to pay for: lines, and a total above 0. No button opens a checkout or a payment otherwise. */
   get payable() {
-    return this.itemCount > 0 && this.totalAcrossSponsors > 0;
+    return this.itemCount > 0 && this.payableTotal > 0;
   }
+  /** The lines at their list prices: the «Sum» (and what Apple Pay is prepared for — discount codes are for Vipps). */
   get totalAcrossSponsors() {
     let sum = 0;
     for (const cart of this.carts.values()) {
       for (const item of cart.items) sum += item.unitPrice * item.quantity;
     }
+    return sum;
+  }
+  /**
+   * A cart in the drawer carries a discount code — whatever its source, the
+   * campaign's included: only the ways to pay that take discounts can pay
+   * (the others would charge list prices — `renderVippsOnlyNote`).
+   */
+  get discountOnCart() {
+    for (const cart of this.carts.values()) {
+      if (cart.items.length > 0 && cartCarriesDiscount(cart)) return true;
+    }
+    return false;
+  }
+  /** A way to pay the carts' discount code turns off: one that does not take discounts (its `discounts` config), while a code is on. */
+  discountOff(method) {
+    return this.discountOnCart && !methodTakesDiscounts(method, this.offeredMethodInfo);
+  }
+  /** The express ways to pay the drawer shows now. */
+  shownMethods() {
+    return [
+      ...this.methodEnabled("apple-pay") && this.applePayAvailable ? ["apple-pay"] : [],
+      ...this.methodEnabled("stripe") ? ["stripe"] : [],
+      ...this.methodEnabled("klarna") ? ["klarna"] : [],
+      ...this.methodEnabled("vipps") ? ["vipps"] : []
+    ];
+  }
+  /**
+   * Under the ways to pay, with a code on a cart: none of them takes it —
+   * «Fjern» in place of a dead end; some do not — the note saying which.
+   */
+  renderDiscountMethodNote() {
+    if (!this.discountOnCart) return "";
+    const shown = this.shownMethods();
+    if (shown.length > 0 && shown.every((m2) => this.discountOff(m2))) {
+      return renderDiscountDeadEnd({
+        removing: this.discountRemoval === "removing",
+        failed: this.discountRemoval === "failed",
+        onRemove: this.onRemoveDeadEndDiscount
+      });
+    }
+    return shown.some((m2) => this.discountOff(m2)) ? renderVippsOnlyNote() : "";
+  }
+  /** What the carts' discount codes take off their lines; 0 without one. */
+  get discountAcrossSponsors() {
+    let sum = 0;
+    for (const cart of this.carts.values()) sum += cartDiscountTotal(cart.items);
+    return sum;
+  }
+  /** What the lines cost: list prices less discounts — what «Totalt» and the Vipps payment start from. */
+  get payableTotal() {
+    let sum = 0;
+    for (const cart of this.carts.values()) sum += cartNetTotal(cart.items);
     return sum;
   }
   /**
@@ -20915,6 +23568,8 @@ var VioCart = class extends i4 {
                                     data-vio-cta-line=${item.id}
                                     @click=${() => this.onIncrement(item)}
                                     aria-label="Øk"
+                                    ?disabled=${isGiftLine(item)}
+                                    title=${isGiftLine(item) ? DISCOUNT_TEXT.giftMaxOneShort : ""}
                                   >
                                     +
                                   </button>
@@ -20929,13 +23584,9 @@ var VioCart = class extends i4 {
                                     ×
                                   </button>
                                 </span>
-                                <span class="item-price">
-                                  ${formatPrice(
-          item.unitPrice * item.quantity,
-          item.currency
-        )}
-                                </span>
+                                <span class="item-price">${renderLinePrice(item)}</span>
                               </div>
+                              ${isGiftLine(item) && item.quantity > 1 ? b2`<p class="item-note" part="cart-gift-note" role="status">${DISCOUNT_TEXT.giftMaxOne}</p>` : ""}
                             </div>
                           </div>
                         `
@@ -20945,13 +23596,16 @@ var VioCart = class extends i4 {
     )}
               </div>
               <div class="footer">
+                ${this.discountField.render()}
                 <div class="subtotal-row">
                   <span class="subtotal-label">${this.subtotalLabel}</span>
                   <span class="subtotal-value">
                     ${formatPrice(this.totalAcrossSponsors, this.primaryCurrency)}
                   </span>
                 </div>
+                ${this.renderDiscountRow()}
                 ${this.renderShippingRows()}
+                ${this.renderCartNotice()}
                 <button
                   class="checkout-btn"
                   data-vio-cta="checkout"
@@ -20967,6 +23621,8 @@ var VioCart = class extends i4 {
                         class="applepay-btn"
                         data-vio-cta="apple_pay"
                         @click=${this.onApplePay}
+                        ?disabled=${this.discountOff("apple-pay")}
+                        ?data-discount-off=${this.discountOff("apple-pay")}
                         aria-label="Betal med Apple Pay"
                       >
                         <svg class="ap-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
@@ -20978,6 +23634,8 @@ var VioCart = class extends i4 {
                         class="stripe-btn"
                         data-vio-cta="stripe"
                         @click=${this.onStripe}
+                        ?disabled=${this.discountOff("stripe")}
+                        ?data-discount-off=${this.discountOff("stripe")}
                         aria-label="Betal med Stripe"
                       >
                         <img class="stripe-logo" src=${STRIPE_LOGO_SRC2} alt="Stripe" />
@@ -20988,6 +23646,8 @@ var VioCart = class extends i4 {
                         class="klarna-btn"
                         data-vio-cta="klarna"
                         @click=${this.onKlarnaExpress}
+                        ?disabled=${this.discountOff("klarna")}
+                        ?data-discount-off=${this.discountOff("klarna")}
                         aria-label="Betal med Klarna"
                       >
                         Kjøp med
@@ -20998,6 +23658,7 @@ var VioCart = class extends i4 {
                         />
                       </button>
                     ` : ""}
+                ${this.renderDiscountMethodNote()}
                 ${this.methodEnabled("vipps") ? this.vippsOfficial ? b2`
                         <vipps-mobilepay-button
                           class="vipps-btn-official"
@@ -21052,10 +23713,40 @@ var VioCart = class extends i4 {
       </div>
       ${shipping !== null ? b2`<div class="total-row" part="cart-total">
             <span>Totalt</span>
-            <span>${fra}${formatPrice(this.totalAcrossSponsors + shipping, this.primaryCurrency)}</span>
-          </div>` : ""}
+            <span>${fra}${formatPrice(this.payableTotal + shipping, this.primaryCurrency)}</span>
+          </div>` : this.discountAcrossSponsors > 0 ? (
+      // «Sum» is the list prices: with a discount, what the lines cost is said too.
+      b2`<div class="total-row" part="cart-total">
+              <span>${DISCOUNT_TEXT.totalBeforeShipping}</span>
+              <span>${formatPrice(this.payableTotal, this.primaryCurrency)}</span>
+            </div>`
+    ) : ""}
       <p class="shipping-hint" part="cart-shipping-hint">Frakt velger du i Vipps eller i neste steg.</p>
     `;
+  }
+  /** «Rabatt (KODE)  −52 Kr» — what the discount code takes off the lines; nothing without one. */
+  renderDiscountRow() {
+    const amount2 = this.discountAcrossSponsors;
+    if (!(amount2 > 0)) return "";
+    const codes = new Set(
+      [...this.carts.values()].filter((c4) => cartDiscountTotal(c4.items) > 0).map((c4) => c4.discountCode ?? "")
+    );
+    const row = discountRow(amount2, this.primaryCurrency, codes.size === 1 ? [...codes][0] : "");
+    return b2`<div class="discount-row" part="cart-discount">
+      <span class="subtotal-label">${row.label}</span>
+      <span>${row.value}</span>
+    </div>`;
+  }
+  /**
+   * Why the cart cannot be paid for as it is, over the buttons: Vipps refused
+   * the payment because of the discount code, or the cart holds only the
+   * code's gift (nothing to pay for — the buttons are off).
+   */
+  renderCartNotice() {
+    const items = [...this.carts.values()].flatMap((c4) => c4.items);
+    const text5 = this.paymentNotice ?? (!this.payable && isGiftOnlyCart(items) ? DISCOUNT_TEXT.giftOnly : null);
+    if (!text5) return "";
+    return b2`<p class="cart-notice" part="cart-notice" role="alert">${text5}</p>`;
   }
   renderConfirmation() {
     const o7 = this.confirmedOrder;
@@ -21113,10 +23804,19 @@ __decorateClass([
 ], VioCart.prototype, "availableMethods", 2);
 __decorateClass([
   r5()
+], VioCart.prototype, "offeredMethodInfo", 2);
+__decorateClass([
+  r5()
+], VioCart.prototype, "discountRemoval", 2);
+__decorateClass([
+  r5()
 ], VioCart.prototype, "methodsLoading", 2);
 __decorateClass([
   r5()
 ], VioCart.prototype, "vippsOfficial", 2);
+__decorateClass([
+  r5()
+], VioCart.prototype, "paymentNotice", 2);
 __decorateClass([
   r5()
 ], VioCart.prototype, "confirmedOrder", 2);
@@ -21129,86 +23829,34 @@ var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen
 var SHIPS_APART = "kan ikke sendes sammen";
 function friendlyPaymentError(raw, method) {
   void method;
-  const text4 = String(raw ?? "");
-  const lower = text4.toLowerCase();
+  const text5 = String(raw ?? "");
+  const discount = discountReasonOf(text5);
+  if (discount) return discountPaymentText(discount);
+  const lower = text5.toLowerCase();
   if (lower.includes("got 0") || lower.includes("amount must be a positive")) {
     return EMPTY_CART_MESSAGE;
   }
-  if (lower.includes("replaced by a newer") || text4.includes("CHECKOUT_SUPERSEDED")) {
+  if (lower.includes("replaced by a newer") || text5.includes("CHECKOUT_SUPERSEDED")) {
     return CART_CHANGED_MESSAGE;
   }
-  if (lower.includes("already been paid") || text4.includes("CART_ALREADY_PAID")) {
+  if (lower.includes("already been paid") || text5.includes("CART_ALREADY_PAID")) {
     return CART_PAID_MESSAGE;
   }
-  if (text4.includes(SHIPS_APART)) return norwegianSentence(text4);
+  if (text5.includes(SHIPS_APART)) return norwegianSentence(text5);
   return PAYMENT_START_FAILED_MESSAGE;
 }
-function norwegianSentence(text4) {
-  const at = text4.indexOf(SHIPS_APART);
-  const prefixEnd = text4.lastIndexOf(": ", at);
-  return (prefixEnd === -1 ? text4 : text4.slice(prefixEnd + 2)).trim();
+function norwegianSentence(text5) {
+  const at = text5.indexOf(SHIPS_APART);
+  const prefixEnd = text5.lastIndexOf(": ", at);
+  return (prefixEnd === -1 ? text5 : text5.slice(prefixEnd + 2)).trim();
+}
+function paymentErrorText(err, method) {
+  const discount = discountReasonOfError(err);
+  if (discount) return discountPaymentText(discount);
+  return friendlyPaymentError(errorText(err), method);
 }
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
-}
-
-// src/ui/checkout-receipt.ts
-function text3(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-function amount(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string" && value.trim() !== "") {
-    const n6 = Number(value);
-    return Number.isFinite(n6) ? n6 : null;
-  }
-  return null;
-}
-function imageOf(image) {
-  const first = Array.isArray(image) ? image[0] : image;
-  if (typeof first === "string") return first.trim();
-  return text3(first?.url);
-}
-function receiptFromCheckout(checkout, sponsorId) {
-  const c4 = checkout ?? {};
-  const cart = c4.cart ?? {};
-  const lines = Array.isArray(cart.line_items) ? cart.line_items : [];
-  if (lines.length === 0) return null;
-  const totals = c4.totals ?? {};
-  const currency = text3(totals.currency_code) || text3(cart.currency);
-  const items = lines.map((li, index) => {
-    const title = text3(li?.title);
-    const variant = text3(li?.variant_title);
-    const id = li?.id != null ? String(li.id) : `line-${index}`;
-    return {
-      id,
-      cartItemId: id,
-      productId: Number(li?.product_id) || 0,
-      sponsorId,
-      ...li?.variant_id != null && Number.isFinite(Number(li.variant_id)) ? { variantId: Number(li.variant_id) } : {},
-      brand: text3(li?.brand),
-      name: title && variant ? `${title} \u2014 ${variant}` : title || variant,
-      unitPrice: amount(li?.price?.amount_incl_taxes) ?? amount(li?.price?.amount) ?? 0,
-      currency: text3(li?.price?.currency_code) || currency,
-      imageUrl: imageOf(li?.image),
-      quantity: Number(li?.quantity) || 0
-    };
-  });
-  const itemsTotal = items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
-  const shipped = lines.map((li) => li?.shipping).filter((s4) => s4 && typeof s4 === "object");
-  const names = [...new Set(shipped.map((s4) => text3(s4.name)).filter(Boolean))];
-  const shippingPrice = amount(totals.shipping) ?? amount(cart.shipping) ?? (shipped.length > 0 ? amount(shipped[0].price?.amount_incl_taxes) ?? amount(shipped[0].price?.amount) : null);
-  const hasShipping = shipped.length > 0 || (shippingPrice ?? 0) > 0;
-  const shipping = hasShipping && shippingPrice !== null ? { name: names.join(", ") || "Frakt", price: shippingPrice } : void 0;
-  const charged = amount(totals.total);
-  const email = text3(c4.email);
-  return {
-    items,
-    currency,
-    total: charged !== null && charged > 0 ? charged : itemsTotal + (shipping?.price ?? 0),
-    ...shipping ? { shipping } : {},
-    ...email ? { email } : {}
-  };
 }
 
 // src/ui/components/vio-checkout.ts
@@ -21260,6 +23908,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.selectedShipping = "";
     this.availableShippingsList = [];
     this.availableMethods = null;
+    this.offeredMethodInfo = null;
+    this.discountRemoval = null;
     this.vippsOfficial = false;
     this.kustomMounting = false;
     this.kustomSyncing = false;
@@ -21338,6 +23988,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
     /** In-flight guard for loadAvailablePaymentMethods. */
     this.loadingPaymentMethods = false;
     /**
+     * The «Rabattkode» field of the summary (wherever discount codes are on for
+     * the page — `discountFieldEnabled`), about the cart this checkout pays. It
+     * follows the cart: a code that goes on or comes off — here, in the cart's
+     * own field, or by the page — draws the summary again.
+     */
+    this.discountField = new DiscountField({
+      host: this,
+      sponsorIds: () => this.checkoutState?.sponsorId ? [this.checkoutState.sponsorId] : []
+    });
+    /**
      * Keyboard and focus while open: Escape closes — not while a payment is
      * in flight — Tab stays inside, focus returns to the opener.
      */
@@ -21412,6 +24072,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         this.sponsorBootstrapAsked = false;
         this.express = false;
         this.availableMethods = null;
+        this.offeredMethodInfo = null;
         this.paymentMethodsResolved = false;
         this.autoSelectAttempted = false;
         this.returningFrom = null;
@@ -21448,6 +24109,18 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.ctaContext = () => ({
       sponsorId: this.checkoutState?.sponsorId ?? this.orderSponsor?.sponsorId
     });
+    /** «Fjern» of that dead end: the code comes off the cart, and every way to pay is back. */
+    this.onRemoveDeadEndDiscount = async () => {
+      const id = this.checkoutState?.sponsorId;
+      if (!id || this.discountRemoval === "removing") return;
+      this.discountRemoval = "removing";
+      try {
+        const result = await Vio.cart.removeDiscountCode(id);
+        this.discountRemoval = result.removed || !this.discountOnCart ? null : "failed";
+      } catch {
+        this.discountRemoval = "failed";
+      }
+    };
     /** Payment events still waiting for their buyer reference: settled early (without it) when the page hides or the element leaves. */
     this.pendingSuccessEmits = /* @__PURE__ */ new Set();
     /** «Avbryt» on the Vipps wait: stop asking Vipps and show the checkout again. */
@@ -21461,7 +24134,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     return this.stripePaying || this.stripeLoading || this.vippsLoading || this.klarnaAuthorizing || this.applePayInProgress;
   }
   static {
-    this.styles = i`
+    this.styles = [
+      i`
     :host { display: contents; }
     .backdrop {
       position: fixed;
@@ -22077,10 +24751,25 @@ var _VioCheckout = class _VioCheckout extends i4 {
       .payment-grid { grid-template-columns: 1fr; }
       .body { padding: 32px var(--vio-space-lg, 24px) 64px; }
     }
-  `;
+    /* Under the summary's total: why a cart of a gift alone cannot be paid for. */
+    .summary-note {
+      margin: var(--vio-space-sm, 8px) 0 0;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    /* The «Rabattkode» field sits between the lines and the rows. */
+    .order-summary .discount-field { margin-top: var(--vio-space-md, 16px); }
+    .order-summary .discount-field + .order-row,
+    .order-summary .discount-error + .order-row { margin-top: 0 !important; }
+  `,
+      discountStyles,
+      discountFieldStyles,
+      vippsOnlyStyles
+    ];
   }
   connectedCallback() {
     super.connectedCallback();
+    this.discountField.connect();
     void this.loadVippsButton();
     this.checkoutState = Vio.checkout.currentState;
     this.items = Vio.checkout.items;
@@ -22220,7 +24909,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.open = true;
       void this.fillOrderNumber(checkoutId, sponsorId);
       void this.fillReceiptFromCheckout(checkoutId, sponsorId, paidCheckout);
-      void this.emitPaymentSuccess({ method: vioMethod, sponsorId, orderId: checkoutId }, checkoutId, sponsorId);
+      void this.emitPaymentSuccess(
+        { method: vioMethod, sponsorId, orderId: checkoutId, returned: true },
+        checkoutId,
+        sponsorId
+      );
     } else if (outcome === "duplicate") {
       this.paymentError = CART_PAID_MESSAGE;
       this.open = true;
@@ -22586,6 +25279,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
   disconnectedCallback() {
     this.stopCtaClicks?.();
     this.stopCtaClicks = null;
+    this.discountField.disconnect();
     Vio.checkout.removeEventListener("change", this.boundOnCheckoutChange);
     Vio.checkout.removeEventListener("payment-complete", this.boundOnPaymentComplete);
     Vio.checkout.removeEventListener("payment-error", this.boundOnPaymentError);
@@ -22602,6 +25296,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
       this.dialogFocus.update(this.open);
       this.bottomSheet.update(this.open);
     }
+    const chosen = this.checkoutState?.paymentMethod;
+    if (chosen && this.discountOff(chosen)) this.unchooseMethod();
     if (changed.has("open") && this.open && this.items.length > 0 && this.availableShippingsList.length === 0) {
       void this.loadAvailableShippings();
     }
@@ -22758,15 +25454,18 @@ var _VioCheckout = class _VioCheckout extends i4 {
       );
       if (Array.isArray(methods)) {
         this.availableMethods = methods.map((m2) => m2.name);
+        this.offeredMethodInfo = methods;
         this.stripeMode = await Vio.checkout.getStripeMode(spId);
       } else {
         this.availableMethods = null;
+        this.offeredMethodInfo = null;
       }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn("[VioCheckout] Failed to load payment methods:", err);
       }
       this.availableMethods = null;
+      this.offeredMethodInfo = null;
     } finally {
       this.loadingPaymentMethods = false;
       this.paymentMethodsResolved = true;
@@ -22810,12 +25509,46 @@ var _VioCheckout = class _VioCheckout extends i4 {
       applepay: this.applePayAvailable ? "apple-pay" : void 0
     };
     const only = usable[id];
-    if (!only) return;
+    if (!only || this.discountOff(only)) return;
     Vio.checkout.selectPaymentMethod(only);
   }
   /** Backend names arrive as e.g. "Apple Pay" — compare letters only. */
   methodEnabled(...names) {
     return isMethodEnabled(this.availableMethods, ...names);
+  }
+  /** Back to the list of methods (the «Endre» link): whatever widget the chosen one mounted goes. */
+  unchooseMethod() {
+    this.unmountKlarna();
+    this.unmountKustom();
+    this.unmountQliro();
+    this.unmountWalley();
+    this.unmountNexi();
+    this.unmountAdyen();
+    Vio.checkout.selectPaymentMethod("");
+  }
+  /**
+   * The cart this checkout pays carries a discount code — whatever its
+   * source, the campaign's included: only the ways to pay that take
+   * discounts can pay (Vipps, for now) — Commerce works the discounted amount
+   * out for them, the others would charge list prices
+   * (`renderVippsOnlyNote`). Their buttons are off, and a method chosen
+   * before the code went on is unchosen.
+   */
+  get discountOnCart() {
+    const id = this.checkoutState?.sponsorId;
+    return !!id && (!!Vio.cart.discountCodeForSponsor(id) || Vio.cart.discountSourceForSponsor(id) === "CAMPAIGN");
+  }
+  /** A way to pay the cart's discount code turns off: one that does not take discounts (its `discounts` config), while a code is on. */
+  discountOff(method) {
+    return this.discountOnCart && !methodTakesDiscounts(method, this.offeredMethodInfo);
+  }
+  /**
+   * A code is on the cart and none of the ways to pay on offer takes it:
+   * «Fjern» in place of a row of buttons that are all off.
+   */
+  get noMethodTakesDiscount() {
+    const offered = this.offeredMethods();
+    return this.discountOnCart && Array.isArray(offered) && offered.length > 0 && offered.every((m2) => this.discountOff(m2));
   }
   /**
    * Stripe's Payment Element shows the wallets of the account that charges —
@@ -22981,20 +25714,20 @@ var _VioCheckout = class _VioCheckout extends i4 {
       const checkout = await Vio.checkout.getCheckout(checkoutId, sponsorId || void 0);
       const address = checkout?.shipping_address ?? checkout?.billing_address;
       if (!address) return;
-      const text4 = (value) => typeof value === "string" ? value.trim() : "";
-      const code = text4(address.phone_code).replace(/^\+/, "");
-      const phone = text4(address.phone);
+      const text5 = (value) => typeof value === "string" ? value.trim() : "";
+      const code = text5(address.phone_code).replace(/^\+/, "");
+      const phone = text5(address.phone);
       const found = {
-        firstName: text4(address.first_name),
-        lastName: text4(address.last_name),
-        email: text4(checkout?.email),
-        address: [text4(address.address1), text4(address.address2)].filter(Boolean).join(", "),
-        postalCode: text4(address.zip),
-        city: text4(address.city),
+        firstName: text5(address.first_name),
+        lastName: text5(address.last_name),
+        email: text5(checkout?.email),
+        address: [text5(address.address1), text5(address.address2)].filter(Boolean).join(", "),
+        postalCode: text5(address.zip),
+        city: text5(address.city),
         phone: phone ? code ? `+${code} ${phone}` : phone : ""
       };
       for (const [field, value] of Object.entries(found)) {
-        if (value && !text4(this.form[field])) this.onFieldChange(field, value);
+        if (value && !text5(this.form[field])) this.onFieldChange(field, value);
       }
     } catch {
     }
@@ -23064,10 +25797,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
   }
   async onPay(method) {
     if (this.shippingBlocked) return;
+    if (this.discountOff(method)) return;
     this.paymentError = null;
     this.paymentNotice = null;
     if (!this.cartPayable) {
-      this.paymentError = EMPTY_CART_MESSAGE2;
+      this.paymentError = this.nothingToPayMessage();
       return;
     }
     if (method === "apple-pay") {
@@ -23144,7 +25878,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
           console.warn("[VioCheckout] Vipps payment could not start:", err);
         }
         redirect.fail(errorText(err));
-        this.paymentError = friendlyPaymentError(errorText(err), "vipps");
+        this.paymentError = paymentErrorText(err, "vipps");
       }).finally(() => {
         this.vippsLoading = false;
       });
@@ -23160,7 +25894,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     if (!s4 || !s4.paymentMethod) return;
     if (this.shippingBlocked) return;
     if (!this.cartPayable) {
-      this.paymentError = EMPTY_CART_MESSAGE2;
+      this.paymentError = this.nothingToPayMessage();
       return;
     }
     if (!this.isAddressValid) {
@@ -23191,7 +25925,10 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const providerOrderId = r6.order?.orderId != null ? String(r6.order.orderId) : "";
     this.setOrderSponsor(sponsorId, checkoutId);
     this.confirmedOrder = {
-      items: [...this.items],
+      // The methods confirmed on this page work their amounts out of the list
+      // prices (discount codes are for Vipps, whose receipt is read from its
+      // checkout): their receipt prints the lines the same way.
+      items: this.items.map(({ discount: _discount, ...line }) => line),
       currency: this.checkoutState?.currency ?? "",
       total: typeof r6.chargedTotal === "number" ? r6.chargedTotal : this.checkoutState?.subtotal ?? 0,
       ...providerOrderId ? { providerRef: { label: `Ordre hos ${this.methodLabel(method)}`, value: providerOrderId } } : {},
@@ -23204,7 +25941,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     this.open = true;
     void this.fillOrderNumber(checkoutId, sponsorId);
     void this.emitPaymentSuccess(
-      { method, sponsorId, result, checkoutId },
+      {
+        method,
+        sponsorId,
+        result,
+        checkoutId,
+        // Back from the provider's page: the cart of this tab need not be the paid one.
+        ...returnCheckoutId ? { returned: true } : {}
+      },
       checkoutId,
       sponsorId,
       () => Vio.cart.clearSponsorCart(sponsorId)
@@ -23388,6 +26132,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
         items: read.items,
         ...providerSaidTotal ? {} : { total: read.total, currency: read.currency || o7.currency },
         ...!o7.shipping && read.shipping ? { shipping: read.shipping } : {},
+        ...read.discount ? { discount: read.discount } : {},
         ...!o7.email && read.email ? { email: read.email } : {}
       };
     } catch (err) {
@@ -23434,7 +26179,17 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * another tab drops it to 0 here.
    */
   get cartPayable() {
-    return (this.checkoutState?.subtotal ?? 0) > 0;
+    return this.linesTotal() > 0;
+  }
+  /** Said when a pay button is pressed on a cart with nothing to pay for: empty, or only a discount code's gift. */
+  nothingToPayMessage() {
+    return isGiftOnlyCart(this.items) ? DISCOUNT_TEXT.giftOnly : EMPTY_CART_MESSAGE2;
+  }
+  /** What the lines cost: the state's subtotal (list prices) less what the cart's discount code takes off them. */
+  linesTotal() {
+    const s4 = this.checkoutState;
+    if (!s4) return 0;
+    return Math.max(0, Math.round((s4.subtotal - (s4.discount ?? 0)) * 100) / 100);
   }
   orderTotal() {
     const s4 = this.checkoutState;
@@ -23478,11 +26233,12 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const o7 = this.shippingOption;
     return o7 ? o7.method || o7.name || "" : "";
   }
-  /** Total to charge — items + shipping (express). */
+  /** Total to charge — the lines (less the discount code) + shipping. */
   payTotalLabel() {
     const s4 = this.checkoutState;
     if (!s4) return "";
-    return formatPrice(s4.subtotal + this.shippingMajor(), s4.currency);
+    const lines = s4.discount ? this.linesTotal() : s4.subtotal;
+    return formatPrice(lines + this.shippingMajor(), s4.currency);
   }
   render() {
     return b2`
@@ -23680,7 +26436,14 @@ var _VioCheckout = class _VioCheckout extends i4 {
     const checkoutId = returnCheckoutId || this.checkoutState?.checkoutId;
     this.setOrderSponsor(sponsorId, checkoutId);
     void this.emitPaymentSuccess(
-      { method, sponsorId, result, checkoutId },
+      {
+        method,
+        sponsorId,
+        result,
+        checkoutId,
+        // Back from the provider's page: the cart of this tab need not be the paid one.
+        ...returnCheckoutId ? { returned: true } : {}
+      },
       checkoutId,
       sponsorId,
       () => {
@@ -23753,12 +26516,16 @@ var _VioCheckout = class _VioCheckout extends i4 {
                         <span>${it.name}</span>
                         <small>Antall: ${it.quantity}</small>
                       </span>
-                      <span class="confirm-line-price">
-                        ${formatPrice(it.unitPrice * it.quantity, it.currency)}
-                      </span>
+                      <span class="confirm-line-price">${renderLinePrice(it)}</span>
                     </div>
                   `
     )}
+                ${o7.discount && o7.discount.amount > 0 ? b2`
+                      <div class="order-row discount" part="confirm-discount">
+                        <span>${discountRow(o7.discount.amount, o7.currency, o7.discount.code).label}</span>
+                        <span>${discountRow(o7.discount.amount, o7.currency, o7.discount.code).value}</span>
+                      </div>
+                    ` : ""}
                 ${o7.shipping ? b2`
                       <div class="order-row">
                         <span>Frakt – ${o7.shipping.name}</span>
@@ -23894,6 +26661,13 @@ var _VioCheckout = class _VioCheckout extends i4 {
    * cart into the same order, resume it. Never a second order, never a
    * widget showing a total the backend will not charge (the validation
    * callback would refuse it). A failed sync takes the widget down.
+   *
+   * Refused because another tab replaced this checkout (the cart is shared
+   * between tabs; the change usually comes FROM that tab): the widget comes
+   * down and the method is unselected, so nothing mounts again by itself.
+   * Mounting again on its own would create a checkout for this tab and
+   * replace the other tab's — the one the shopper is actually paying in.
+   * Picking Kustom again here builds a checkout of this tab's own.
    */
   syncKustomIfStale() {
     if (!this.kustomMountedOrderId || this.kustomMounting || this.kustomSyncing) return;
@@ -23911,6 +26685,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
         console.warn("[VioCheckout] Kustom sync failed:", err);
       }
       this.unmountKustom();
+      if (isCheckoutSuperseded(err)) {
+        this.paymentError = friendlyPaymentError(errorText(err), "kustom");
+        Vio.checkout.selectPaymentMethod("");
+        return;
+      }
       this.kustomNotice = "Bestillingen ble endret. Last inn betalingen p\xE5 nytt.";
     }).finally(() => {
       this.kustomSyncing = false;
@@ -24666,7 +27445,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
     `;
   }
   renderCheckoutBody() {
-    const method = this.checkoutState?.paymentMethod;
+    const chosen = this.checkoutState?.paymentMethod;
+    const method = chosen && this.discountOff(chosen) ? void 0 : chosen;
     const showCompleteCta = !!method && !this.isExpressMethod(method);
     const needsOurForm = !!method && !collectsOwnAddress(method);
     return b2`
@@ -24799,15 +27579,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           <button
                             type="button"
                             style="background:none; border:none; color:var(--vio-color-accent, #c14a3b); text-decoration:underline; font-size:13px; cursor:pointer;"
-                            @click=${() => {
-      this.unmountKlarna();
-      this.unmountKustom();
-      this.unmountQliro();
-      this.unmountWalley();
-      this.unmountNexi();
-      this.unmountAdyen();
-      Vio.checkout.selectPaymentMethod("");
-    }}
+                            @click=${() => this.unchooseMethod()}
                           >
                             Endre
                           </button>
@@ -24896,7 +27668,8 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             data-vio-cta="select_apple_pay"
                             data-vio-cta-label="Apple Pay"
                             @click=${() => this.onPay("apple-pay")}
-                            ?disabled=${this.applePayInProgress}
+                            ?disabled=${this.applePayInProgress || this.discountOff("apple-pay")}
+                            ?data-discount-off=${this.discountOff("apple-pay")}
                           >
                             ${this.applePayInProgress ? "\xC5pner\u2026" : b2`<span style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width:18px;height:18px"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>Apple Pay</span>`}
                           </button>
@@ -24907,43 +27680,44 @@ var _VioCheckout = class _VioCheckout extends i4 {
                             data-vio-cta="select_stripe"
                             data-vio-cta-label="Stripe"
                             @click=${() => this.onPay("stripe")}
-                            ?disabled=${this.stripeLoading}
+                            ?disabled=${this.stripeLoading || this.discountOff("stripe")}
+                            ?data-discount-off=${this.discountOff("stripe")}
                           >
                             <img src=${STRIPE_LOGO_SRC3} style="height: 20px; display: block;" alt="Stripe" />
                           </button>
                         ` : ""}
                     ${this.methodEnabled("klarna") && this.klarnaAvailable ? b2`
-                          <button class="payment-btn" data-vio-cta="select_klarna" data-vio-cta-label="Klarna" @click=${() => this.onPay("klarna")}>
+                          <button class="payment-btn" data-vio-cta="select_klarna" data-vio-cta-label="Klarna" @click=${() => this.onPay("klarna")} ?disabled=${this.discountOff("klarna")} ?data-discount-off=${this.discountOff("klarna")}>
                             Klarna
                           </button>
                         ` : ""}
                     ${this.methodEnabled("kustom") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_kustom" data-vio-cta-label="Kustom" @click=${() => this.onPay("kustom")}>
+                          <button class="payment-btn" data-vio-cta="select_kustom" data-vio-cta-label="Kustom" @click=${() => this.onPay("kustom")} ?disabled=${this.discountOff("kustom")} ?data-discount-off=${this.discountOff("kustom")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Kustom</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("qliro") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_qliro" data-vio-cta-label="Qliro" @click=${() => this.onPay("qliro")}>
+                          <button class="payment-btn" data-vio-cta="select_qliro" data-vio-cta-label="Qliro" @click=${() => this.onPay("qliro")} ?disabled=${this.discountOff("qliro")} ?data-discount-off=${this.discountOff("qliro")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Qliro</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("walley") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_walley" data-vio-cta-label="Walley" @click=${() => this.onPay("walley")}>
+                          <button class="payment-btn" data-vio-cta="select_walley" data-vio-cta-label="Walley" @click=${() => this.onPay("walley")} ?disabled=${this.discountOff("walley")} ?data-discount-off=${this.discountOff("walley")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Walley</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("nexi") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_nexi" data-vio-cta-label="Nexi" @click=${() => this.onPay("nexi")}>
+                          <button class="payment-btn" data-vio-cta="select_nexi" data-vio-cta-label="Nexi" @click=${() => this.onPay("nexi")} ?disabled=${this.discountOff("nexi")} ?data-discount-off=${this.discountOff("nexi")}>
                             <span style="font-weight:800;font-size:16px;letter-spacing:-0.01em">Nexi</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("adyen") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_adyen" @click=${() => this.onPay("adyen")}>
+                          <button class="payment-btn" data-vio-cta="select_adyen" @click=${() => this.onPay("adyen")} ?disabled=${this.discountOff("adyen")} ?data-discount-off=${this.discountOff("adyen")}>
                             <span style="font-weight:700;font-size:15px;letter-spacing:-0.01em">${this.methodLabel("adyen")}</span>
                           </button>
                         ` : ""}
                     ${this.methodEnabled("vipps") ? b2`
-                          <button class="payment-btn" data-vio-cta="select_vipps" @click=${() => this.onPay("vipps")} aria-label="Vipps">
+                          <button class="payment-btn" data-vio-cta="select_vipps" @click=${() => this.onPay("vipps")} aria-label="Vipps" ?disabled=${this.discountOff("vipps")} ?data-discount-off=${this.discountOff("vipps")}>
                             ${this.vippsOfficial ? b2`<vipps-mobilepay-button
                                   brand="vipps"
                                   variant="primary"
@@ -24954,6 +27728,11 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           </button>
                         ` : ""}
                   </div>
+                  ${this.noMethodTakesDiscount ? renderDiscountDeadEnd({
+      removing: this.discountRemoval === "removing",
+      failed: this.discountRemoval === "failed",
+      onRemove: this.onRemoveDeadEndDiscount
+    }) : this.discountOnCart && (this.offeredMethods() ?? []).some((m2) => this.discountOff(m2)) ? renderVippsOnlyNote() : ""}
                 `}
             ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
             ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
@@ -24972,15 +27751,15 @@ var _VioCheckout = class _VioCheckout extends i4 {
                           <b>${item.name}</b>
                           <span>×${item.quantity}</span>
                         </div>
-                        <div class="order-line-price">
-                          ${formatPrice(item.unitPrice * item.quantity, item.currency)}
-                        </div>
+                        <div class="order-line-price">${renderLinePrice(item)}</div>
                       </div>
                     `
     )}
+                  ${this.discountField.render()}
                   <div class="order-row" style="margin-top: 16px;">
                     <span>Sum</span><span>${this.orderTotal()}</span>
                   </div>
+                  ${this.renderSummaryDiscount()}
                   <div class="order-row">
                     <span>Frakt${this.shippingInEffect() !== null && this.summaryShippingName() ? ` \u2013 ${this.summaryShippingName()}` : ""}</span>
                     <span>${this.shippingInEffect() !== null ? formatShippingPrice(this.shippingMajor(), this.checkoutState?.currency) : this.shippingLabel}</span>
@@ -24988,11 +27767,22 @@ var _VioCheckout = class _VioCheckout extends i4 {
                   <div class="order-row total">
                     <span>Totalt</span><span>${this.payTotalLabel()}</span>
                   </div>
+                  ${!this.cartPayable && isGiftOnlyCart(this.items) ? b2`<p class="summary-note" part="summary-gift-note" role="alert">${DISCOUNT_TEXT.giftOnly}</p>` : ""}
                 </section>
               ` : ""}
         </div>
       </div>
     `;
+  }
+  /** «Rabatt (KODE)  −52 Kr» in the summary — what the cart's discount code takes off the lines; nothing without one. */
+  renderSummaryDiscount() {
+    const s4 = this.checkoutState;
+    const amount2 = s4?.discount ?? 0;
+    if (!s4 || !(amount2 > 0)) return "";
+    const row = discountRow(amount2, s4.currency, Vio.cart.discountCodeForSponsor(s4.sponsorId));
+    return b2`<div class="order-row discount" part="summary-discount">
+      <span>${row.label}</span><span>${row.value}</span>
+    </div>`;
   }
 };
 __decorateClass([
@@ -25067,6 +27857,12 @@ __decorateClass([
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "availableMethods", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "offeredMethodInfo", 2);
+__decorateClass([
+  r5()
+], _VioCheckout.prototype, "discountRemoval", 2);
 __decorateClass([
   r5()
 ], _VioCheckout.prototype, "vippsOfficial", 2);
@@ -25168,6 +27964,734 @@ function ctaMethod(method) {
   return String(method ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
 }
 
+// src/ui/hls.ts
+var HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
+var isHlsUrl = (url) => /\.m3u8(\?|#|$)/i.test(url);
+function canPlayHlsNatively(video) {
+  try {
+    return typeof video.canPlayType === "function" && video.canPlayType("application/vnd.apple.mpegurl") !== "";
+  } catch {
+    return false;
+  }
+}
+var loading = null;
+function loadHls(url = HLS_JS_URL) {
+  const w2 = globalThis;
+  if (w2.Hls) return Promise.resolve(w2.Hls);
+  if (loading) return loading;
+  if (!w2.document) return Promise.resolve(null);
+  loading = new Promise((resolve) => {
+    const script = w2.document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = () => resolve(w2.Hls ?? null);
+    script.onerror = () => {
+      loading = null;
+      resolve(null);
+    };
+    w2.document.head.appendChild(script);
+  });
+  return loading;
+}
+async function attachSource(video, src, opts = {}) {
+  const plain = () => {
+    video.src = src;
+    return {
+      detach() {
+        video.removeAttribute("src");
+        try {
+          video.load();
+        } catch {
+        }
+      }
+    };
+  };
+  if (!isHlsUrl(src) || canPlayHlsNatively(video)) return plain();
+  const Hls = await (opts.load ?? loadHls)(opts.hlsUrl);
+  if (!Hls || !Hls.isSupported()) return plain();
+  const hls = new Hls({ maxBufferLength: 12, backBufferLength: 10, startLevel: -1 });
+  hls.loadSource(src);
+  hls.attachMedia(video);
+  return {
+    detach() {
+      try {
+        hls.destroy();
+      } catch {
+      }
+    }
+  };
+}
+
+// src/ui/components/vio-reel.ts
+var ACTIVE_RATIO = 0.6;
+var REEL_TEMPLATE_ID = "reel";
+var VioReel = class extends i4 {
+  constructor() {
+    super(...arguments);
+    this.experienceId = 0;
+    this.experience = null;
+    this.currency = "NOK";
+    this.noAutoplay = false;
+    this.cueLabel = "I videoen n\xE5";
+    this.vioSlot = "";
+    this.vioSlotName = "";
+    this.vioScope = "";
+    this.vioScopeName = "";
+    this.vioCampaign = "";
+    this.vioContentId = "";
+    this.vioContentTitle = "";
+    this.slotRegistration = new SlotRegistration(this, "reel");
+    this.doc = null;
+    this.products = /* @__PURE__ */ new Map();
+    this.status = "idle";
+    this.active = 0;
+    this.muted = true;
+    this.playing = false;
+    this.progress = 0;
+    this.cueProductId = null;
+    this.fullscreen = false;
+    this.attached = /* @__PURE__ */ new Map();
+    this.observer = null;
+    this.unobserveImpression = null;
+    this.listTracked = /* @__PURE__ */ new Set();
+    this.loadToken = 0;
+    this.onFullscreenChange = () => {
+      this.fullscreen = typeof document !== "undefined" && document.fullscreenElement === this;
+    };
+    /** What the last `load()` was for: the object itself, or the id. */
+    this.loadedFor = void 0;
+    /** The document and the videos the current playback wiring is for: a second call for the same render is a no-op (it must not detach what the first activated). */
+    this.playbackFor = null;
+    this.feedEl = null;
+    this.activatedOnce = false;
+    this.fallbackTimer = null;
+    /** Whether the reel itself is on the page's screen (pauses when scrolled away). */
+    this.visible = true;
+    this.onFeedScroll = () => {
+      const index = this.indexFromScroll();
+      if (index !== this.active) void this.activate(index);
+    };
+  }
+  get effectiveSlot() {
+    return this.slotRegistration.effective;
+  }
+  get effectiveCampaignId() {
+    return this.slotRegistration.campaignId;
+  }
+  static {
+    this.styles = i`
+    :host {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      font-family: var(--vio-font-sans, -apple-system, sans-serif);
+      color: var(--vio-color-text, #0a0a0a);
+      --_h: var(--vio-reel-height, min(85vh, calc(100vw * 16 / 9)));
+      --_radius: var(--vio-reel-radius, var(--vio-radius-lg, 12px));
+    }
+    :host(:fullscreen) { --_h: 100vh; --_radius: 0; background: #000; }
+    .reel { position: relative; height: var(--_h); border-radius: var(--_radius); overflow: hidden; background: #000; }
+    .feed {
+      height: 100%;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+    .feed::-webkit-scrollbar { display: none; }
+    .item { position: relative; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; background: #000; }
+    video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: var(--vio-reel-video-fit, cover); background: #000; }
+    .poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .shade {
+      position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(to bottom, rgba(0,0,0,.45) 0, transparent 22%, transparent 55%, rgba(0,0,0,.6) 100%);
+    }
+    .top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: flex-start; gap: 10px; padding: 14px 14px 0; color: #fff; }
+    .brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+    .brand img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; background: #fff; }
+    .brand-name { font-size: 10px; letter-spacing: var(--vio-tracking-label, .1em); text-transform: uppercase; opacity: .9; }
+    .title { display: block; font-family: var(--vio-font-serif, Georgia, serif); font-size: 15px; line-height: 1.25; margin-top: 2px; text-shadow: 0 1px 8px rgba(0,0,0,.4); }
+    .controls { display: flex; gap: 6px; flex: 0 0 auto; }
+    .ctrl {
+      width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer;
+      background: rgba(255,255,255,.18); color: #fff; backdrop-filter: blur(6px);
+      display: inline-flex; align-items: center; justify-content: center; font-size: 14px; padding: 0; font-family: inherit;
+    }
+    .ctrl:hover { background: rgba(255,255,255,.3); }
+    .counter { position: absolute; right: 14px; top: 56px; color: #fff; font-size: 11px; opacity: .85; }
+    .tap { position: absolute; inset: 0; border: 0; background: transparent; cursor: pointer; padding: 0; }
+    .play-hint {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,.85); color: #000;
+      display: flex; align-items: center; justify-content: center; font-size: 22px; pointer-events: none;
+    }
+    .bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 0 12px; }
+    .products {
+      display: flex; gap: 8px; overflow-x: auto; padding: 28px 12px 6px; scroll-snap-type: x proximity;
+      scrollbar-width: none;
+    }
+    .products::-webkit-scrollbar { display: none; }
+    .card {
+      position: relative; flex: 0 0 auto; width: var(--vio-reel-card-width, 232px); display: flex; gap: 10px; align-items: center;
+      padding: 8px; border: 0; cursor: pointer; text-align: left; font-family: inherit; color: var(--vio-color-text, #0a0a0a);
+      background: var(--vio-color-surface, #fff); border-radius: var(--vio-radius-md, 10px); scroll-snap-align: start;
+      box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    }
+    .card.current { outline: 2px solid var(--vio-color-accent, #c14a3b); outline-offset: 0; }
+    .card img, .card .ph { width: 56px; height: 72px; object-fit: cover; border-radius: var(--vio-radius-sm, 6px); background: var(--vio-color-surface-muted, #f2f2f2); flex: 0 0 auto; }
+    .card .txt { min-width: 0; flex: 1; }
+    .card .b { font-size: 9px; letter-spacing: var(--vio-tracking-label, .1em); text-transform: uppercase; color: var(--vio-color-text-tertiary, #999); }
+    .card .n { font-size: 12px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .card .p { font-size: 12px; font-weight: 600; margin-top: 2px; }
+    .cue {
+      position: absolute; top: -18px; left: 8px; padding: 3px 8px; border-radius: 999px;
+      background: var(--vio-color-accent, #c14a3b); color: var(--vio-color-text-on-primary, #fff);
+      font-size: 9px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; white-space: nowrap;
+    }
+    .progress { height: 3px; margin: 0 12px; background: rgba(255,255,255,.3); border-radius: 2px; overflow: hidden; }
+    .progress > i { display: block; height: 100%; width: 0; background: #fff; transition: width .2s linear; }
+    .nav { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; }
+    @media (max-width: 600px), (pointer: coarse) { .nav { display: none; } }
+    .skeleton { height: 100%; background: linear-gradient(90deg, #1a1a1a 25%, #262626 37%, #1a1a1a 63%); background-size: 400% 100%; animation: vio-reel-shimmer 1.4s ease infinite; }
+    @keyframes vio-reel-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  `;
+  }
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  connectedCallback() {
+    super.connectedCallback();
+    this.slotRegistration.connect(this.slotAttributes());
+    if (typeof document !== "undefined") document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    void this.load();
+  }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.loadToken++;
+    this.teardownPlayback();
+    this.unobserveImpression?.();
+    this.unobserveImpression = null;
+    this.slotRegistration.clear();
+    if (typeof document !== "undefined") document.removeEventListener("fullscreenchange", this.onFullscreenChange);
+  }
+  updated(changed) {
+    this.slotRegistration.sync(this.slotAttributes());
+    if ((changed.has("experienceId") || changed.has("experience")) && this.loadKey() !== this.loadedFor) void this.load();
+    if (changed.has("status") && this.status === "ready") queueMicrotask(() => this.setupPlayback());
+  }
+  loadKey() {
+    return this.experience ?? (this.experienceId > 0 ? this.experienceId : null);
+  }
+  slotAttributes() {
+    return { vioSlot: this.vioSlot, vioSlotName: this.vioSlotName, vioScope: this.vioScope, vioScopeName: this.vioScopeName, vioCampaign: this.vioCampaign };
+  }
+  // ── Loading (ADR-0042 points 6–8) ──────────────────────────────────────────
+  async load() {
+    const token = ++this.loadToken;
+    this.loadedFor = this.loadKey();
+    this.teardownPlayback();
+    this.doc = null;
+    this.products = /* @__PURE__ */ new Map();
+    let experience = null;
+    if (this.experience) {
+      experience = parseExperience(this.experience);
+      if (!experience) {
+        this.status = "error";
+        return;
+      }
+    } else {
+      if (!(this.experienceId > 0)) {
+        this.status = "idle";
+        return;
+      }
+      if (!Vio.isInitialized) {
+        this.status = "error";
+        this.warn("Vio not initialized \u2014 call Vio.init({ apiKey }) first");
+        return;
+      }
+      this.status = "loading";
+      experience = await this.fetchExperience(this.experienceId);
+      if (token !== this.loadToken) return;
+      if (!experience) {
+        this.status = "error";
+        return;
+      }
+    }
+    const pageCampaigns = this.slotRegistration.campaignHint;
+    if (!experienceCompatible(experience, pageCampaigns)) {
+      this.status = "incompatible";
+      this.warn(`experience ${experience.id} belongs to campaign ${experience.campaignId}, the page to ${pageCampaigns.join("/")} \u2014 not shown`);
+      this.trackSafe("sdk_error", {
+        context: { errorCode: "reel_incompatible", ...this.attribution(experience) },
+        props: { experience_id: experience.id, revision: experience.revision, page_campaigns: pageCampaigns }
+      });
+      return;
+    }
+    this.doc = experience;
+    this.applyTheme(experience);
+    if (!experience.videos.length) {
+      this.status = "empty";
+      return;
+    }
+    this.status = "loading";
+    const products = await this.fetchProducts(experience);
+    if (token !== this.loadToken) return;
+    this.products = products;
+    this.active = 0;
+    this.status = "ready";
+    this.observeForAnalytics();
+  }
+  /**
+   * Cache first: the revision the reader last saw is shown at once and a
+   * newer one is only STORED (applied on the next mount). Without a cached
+   * copy the network answer is shown. Network down: the cached copy, if any.
+   */
+  async fetchExperience(id) {
+    const key = experienceCacheKey(Vio.config.apiKey, id);
+    const cached = readCachedExperience(key);
+    const refresh = async () => {
+      const res = await Vio.api.experience(id, { ifNoneMatch: cached?.etag ?? null });
+      if (res.status === 304) return cached?.experience ?? null;
+      const fresh = parseExperience(res.body);
+      if (fresh && fresh.revision !== null) writeCachedExperience(key, { etag: res.etag, experience: fresh, savedAt: Date.now() });
+      return fresh;
+    };
+    if (cached) {
+      void refresh().catch(() => void 0);
+      return cached.experience;
+    }
+    try {
+      return await refresh();
+    } catch (err) {
+      this.warn(`experience ${id} could not be loaded \u2014`, err);
+      return null;
+    }
+  }
+  async fetchProducts(experience) {
+    const refs = experienceProductRefs(experience);
+    const out = /* @__PURE__ */ new Map();
+    if (!refs.length) return out;
+    try {
+      if (!Vio.bootstrapCache) {
+        try {
+          await Vio.bootstrap();
+        } catch {
+        }
+      }
+      const commerce = Vio.commerceFor(experience.sponsorId, { campaignId: experience.campaignId });
+      const list = await commerce.channel.product.getByIds({
+        product_ids: refs.map((r6) => r6.productId),
+        currency: this.currency,
+        image_size: "large"
+      });
+      for (const p3 of list) out.set(Number(p3.id), p3);
+    } catch (err) {
+      this.warn("products of the experience could not be loaded \u2014", err);
+    }
+    return out;
+  }
+  applyTheme(experience) {
+    for (const [k2, v2] of safeThemeEntries(experience.theme)) this.style.setProperty(k2, v2);
+  }
+  // ── Playback ──────────────────────────────────────────────────────────────
+  get videoEls() {
+    return Array.from(this.renderRoot.querySelectorAll("video"));
+  }
+  /**
+   * Which video the feed is snapped to. The feed's own scroll position is the
+   * source of truth for the active video; the page-level observer only says
+   * whether the reel is on screen at all.
+   */
+  indexFromScroll() {
+    const feed = this.feedEl;
+    const n6 = this.doc?.videos.length ?? 0;
+    if (!feed || n6 === 0) return 0;
+    const h3 = feed.clientHeight;
+    const index = h3 > 0 ? Math.round(feed.scrollTop / h3) : 0;
+    return Math.max(0, Math.min(n6 - 1, index));
+  }
+  setupPlayback() {
+    const doc = this.doc;
+    const videos = this.videoEls;
+    if (!doc) return;
+    const same = this.playbackFor && this.playbackFor.doc === doc && this.playbackFor.videos.length === videos.length && this.playbackFor.videos.every((v2, i5) => v2 === videos[i5]);
+    if (same && this.feedEl) return;
+    this.teardownPlayback();
+    this.playbackFor = { doc, videos };
+    if (!videos.length) return;
+    this.feedEl = this.renderRoot.querySelector(".feed");
+    this.feedEl?.addEventListener("scroll", this.onFeedScroll, { passive: true });
+    if (typeof IntersectionObserver !== "undefined") {
+      this.observer = new IntersectionObserver(
+        (entries) => {
+          for (const e7 of entries) {
+            this.visible = e7.isIntersecting && e7.intersectionRatio >= ACTIVE_RATIO;
+            if (this.visible) void this.activate(this.indexFromScroll());
+            else this.pauseAll();
+          }
+        },
+        { threshold: [0, ACTIVE_RATIO] }
+      );
+      this.observer.observe(this);
+    }
+    this.fallbackTimer = setTimeout(() => {
+      this.fallbackTimer = null;
+      if (!this.activatedOnce) void this.activate(this.indexFromScroll());
+    }, 400);
+  }
+  teardownPlayback() {
+    this.observer?.disconnect();
+    this.observer = null;
+    this.feedEl?.removeEventListener("scroll", this.onFeedScroll);
+    this.feedEl = null;
+    this.playbackFor = null;
+    this.activatedOnce = false;
+    if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+    this.fallbackTimer = null;
+    for (const [, a3] of this.attached) void Promise.resolve(a3).then((s4) => s4.detach()).catch(() => void 0);
+    this.attached.clear();
+  }
+  pauseAll() {
+    for (const v2 of this.videoEls) v2.pause?.();
+    this.playing = false;
+  }
+  /** Make `index` THE video: wire it and the next one, play it, pause the rest, unload the far ones. */
+  async activate(index) {
+    const videos = this.videoEls;
+    const doc = this.doc;
+    if (!doc || !videos[index]) return;
+    this.activatedOnce = true;
+    const sameVideo = this.active === index && this.attached.has(index);
+    this.active = index;
+    if (!sameVideo) this.progress = 0;
+    this.cueProductId = cueProductAt(doc.videos[index].cues, 0);
+    for (const [i5, v2] of videos.entries()) {
+      if (Math.abs(i5 - index) > 1) {
+        const a3 = this.attached.get(i5);
+        if (a3) {
+          this.attached.delete(i5);
+          void Promise.resolve(a3).then((s4) => s4.detach()).catch(() => void 0);
+        }
+        if (!v2.paused) v2.pause();
+      } else if (i5 !== index && !v2.paused) {
+        v2.pause();
+      }
+    }
+    await this.ensureAttached(index);
+    if (videos[index + 1]) void this.ensureAttached(index + 1);
+    if (this.active !== index) return;
+    const video = videos[index];
+    video.muted = this.muted;
+    if (!this.noAutoplay && this.visible && video.paused) this.tryPlay(video);
+    if (this.visible) this.trackVideoList(index);
+  }
+  ensureAttached(index) {
+    const existing = this.attached.get(index);
+    if (existing) return Promise.resolve(existing);
+    const video = this.videoEls[index];
+    const src = this.doc.videos[index].media.playbackUrl;
+    const pending2 = attachSource(video, src);
+    this.attached.set(index, pending2);
+    pending2.then((s4) => this.attached.get(index) === pending2 && this.attached.set(index, s4)).catch(() => this.attached.delete(index));
+    return pending2;
+  }
+  tryPlay(video) {
+    try {
+      const p3 = video.play?.();
+      if (p3 && typeof p3.catch === "function") {
+        ;
+        p3.then(() => this.playing = true).catch(() => {
+          if (!video.muted) {
+            video.muted = true;
+            this.muted = true;
+            video.play?.()?.then?.(() => this.playing = true).catch(() => this.playing = false);
+          } else {
+            this.playing = false;
+          }
+        });
+      } else {
+        this.playing = true;
+      }
+    } catch {
+      this.playing = false;
+    }
+  }
+  togglePlay() {
+    const video = this.videoEls[this.active];
+    if (!video) return;
+    if (video.paused) this.tryPlay(video);
+    else {
+      video.pause();
+      this.playing = false;
+    }
+  }
+  toggleMute() {
+    this.muted = !this.muted;
+    for (const v2 of this.videoEls) v2.muted = this.muted;
+  }
+  toggleFullscreen() {
+    try {
+      if (document.fullscreenElement === this) void document.exitFullscreen?.();
+      else void this.requestFullscreen?.();
+    } catch {
+    }
+  }
+  go(delta) {
+    const target = this.videoEls[this.active + delta];
+    target?.closest(".item")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  onTimeUpdate(index, ev) {
+    if (index !== this.active || !this.doc) return;
+    const video = ev.currentTarget;
+    const d3 = video.duration;
+    this.progress = Number.isFinite(d3) && d3 > 0 ? Math.min(100, video.currentTime / d3 * 100) : 0;
+    const cue = cueProductAt(this.doc.videos[index].cues, video.currentTime);
+    if (cue !== this.cueProductId) {
+      this.cueProductId = cue;
+      if (cue !== null) this.scrollCardIntoView(index, cue);
+    }
+  }
+  scrollCardIntoView(index, productId) {
+    const card = this.renderRoot.querySelector(`.item[data-index="${index}"] .card[data-product="${productId}"]`);
+    card?.scrollIntoView?.({ behavior: "smooth", inline: "start", block: "nearest" });
+  }
+  // ── Products → the detail (and the cart, the analytics) ───────────────────
+  /** Same event a `<vio-product>` emits: `<vio-product-detail>` opens, the analytics listener records `select_item`. The video keeps playing. */
+  openProduct(video, ref) {
+    const doc = this.doc;
+    const product = this.products.get(ref.productId);
+    if (!doc) return;
+    this.dispatchEvent(
+      new CustomEvent("vio:product-click", {
+        bubbles: true,
+        composed: true,
+        detail: {
+          productId: String(ref.productId),
+          brand: product?.brand ?? "",
+          name: product?.title ?? "",
+          price: product ? displayPrice(product) : "",
+          retailer: resolveSponsorIdentity(doc.sponsorId)?.name ?? "",
+          imageUrl: this.imageOf(ref, product),
+          ...this.attribution(doc),
+          sponsorId: String(doc.sponsorId),
+          campaignId: doc.campaignId,
+          experienceId: doc.id,
+          videoId: video.id,
+          revision: doc.revision
+        }
+      })
+    );
+  }
+  imageOf(ref, product) {
+    return ref.imageOverrideUrl ?? (product ? primaryImageUrl(product) ?? "" : "");
+  }
+  // ── Analytics ─────────────────────────────────────────────────────────────
+  attribution(doc) {
+    const base = typeof Vio.attribution === "function" ? Vio.attribution(this.effectiveSlot, { sponsorId: doc.sponsorId, campaignId: [doc.campaignId, ...this.slotRegistration.campaignHint] }) : { slot: this.effectiveSlot || void 0 };
+    return {
+      ...base,
+      sponsorId: doc.sponsorId,
+      componentTemplateId: REEL_TEMPLATE_ID,
+      locationId: this.effectiveSlot || void 0,
+      ...this.vioContentId ? { contentId: this.vioContentId } : {},
+      ...this.vioContentTitle ? { contentTitle: this.vioContentTitle } : {}
+    };
+  }
+  commerceOf(videos) {
+    const items = [];
+    const seen = /* @__PURE__ */ new Set();
+    let currency;
+    for (const v2 of videos) {
+      for (const ref of v2.products) {
+        if (seen.has(ref.productId)) continue;
+        seen.add(ref.productId);
+        const p3 = this.products.get(ref.productId);
+        items.push({
+          productId: ref.productId,
+          name: p3?.title,
+          price: p3 ? Number(p3.price?.amount_incl_taxes ?? p3.price?.amount) || void 0 : void 0
+        });
+        currency ??= p3?.price?.currency_code;
+      }
+    }
+    return items.length ? { items, currency } : null;
+  }
+  observeForAnalytics() {
+    const doc = this.doc;
+    if (!doc || this.unobserveImpression || !this.isConnected) return;
+    try {
+      this.unobserveImpression = Vio.analytics.observeImpression(this, this.attribution(doc), {
+        key: `reel:${this.effectiveSlot || doc.id}`,
+        commerce: () => this.commerceOf(doc.videos),
+        props: { experience_id: doc.id, revision: doc.revision, videos: doc.videos.length }
+      });
+    } catch {
+    }
+  }
+  /** `view_item_list` once per video, when it becomes the one on screen. */
+  trackVideoList(index) {
+    const doc = this.doc;
+    const video = doc?.videos[index];
+    if (!doc || !video || this.listTracked.has(video.id) || !video.products.length) return;
+    this.listTracked.add(video.id);
+    this.trackSafe("view_item_list", {
+      context: this.attribution(doc),
+      commerce: this.commerceOf([video]) ?? void 0,
+      props: { experience_id: doc.id, video_id: video.id, revision: doc.revision, list_name: video.title ?? doc.title }
+    });
+  }
+  trackSafe(name, opts) {
+    try {
+      Vio.analytics.track(name, opts);
+    } catch {
+    }
+  }
+  warn(...args) {
+    try {
+      console.warn("[vio-reel]", ...args);
+    } catch {
+    }
+  }
+  // ── Render ────────────────────────────────────────────────────────────────
+  render() {
+    if (this.status === "idle" || this.status === "incompatible" || this.status === "error" || this.status === "empty") return A;
+    if (this.status === "loading" || !this.doc) return b2`<div class="reel" aria-busy="true"><div class="skeleton"></div></div>`;
+    const doc = this.doc;
+    const identity = resolveSponsorIdentity(doc.sponsorId);
+    return b2`
+      <div class="reel" part="reel">
+        <div class="feed" role="list" aria-label=${doc.title || "Reel"}>
+          ${doc.videos.map((video, i5) => this.renderItem(doc, video, i5, identity))}
+        </div>
+        ${doc.videos.length > 1 ? b2`<div class="nav">
+              <button class="ctrl" @click=${() => this.go(-1)} aria-label="Forrige" ?disabled=${this.active === 0}>↑</button>
+              <button class="ctrl" @click=${() => this.go(1)} aria-label="Neste" ?disabled=${this.active >= doc.videos.length - 1}>↓</button>
+            </div>` : A}
+      </div>
+    `;
+  }
+  renderItem(doc, video, i5, identity) {
+    const isActive = i5 === this.active;
+    return b2`
+      <section class="item" data-index=${i5} role="listitem" aria-label=${video.title ?? `${i5 + 1}/${doc.videos.length}`}>
+        <video
+          data-index=${i5}
+          playsinline
+          loop
+          .muted=${this.muted}
+          preload=${i5 === 0 ? "auto" : "metadata"}
+          poster=${video.media.posterUrl ?? ""}
+          @timeupdate=${(ev) => this.onTimeUpdate(i5, ev)}
+          @play=${() => isActive && (this.playing = true)}
+          @pause=${() => isActive && (this.playing = false)}
+          aria-hidden=${isActive ? "false" : "true"}
+        ></video>
+        <div class="shade"></div>
+        <button class="tap" aria-label=${this.playing && isActive ? "Pause" : "Spill av"} @click=${() => this.togglePlay()}></button>
+        ${isActive && !this.playing ? b2`<div class="play-hint" aria-hidden="true">▶</div>` : A}
+        <div class="top">
+          <div class="brand">
+            ${identity?.logoUrl ? b2`<img src=${identity.logoUrl} alt="" />` : A}
+            <div style="min-width:0">
+              ${identity?.name ? b2`<span class="brand-name">${identity.name}</span>` : A}
+              ${video.title || doc.title ? b2`<span class="title">${video.title ?? doc.title}</span>` : A}
+            </div>
+          </div>
+          <div class="controls">
+            <button class="ctrl" @click=${() => this.toggleMute()} aria-label=${this.muted ? "Lyd p\xE5" : "Lyd av"} aria-pressed=${!this.muted}>${this.muted ? "\u{1F507}" : "\u{1F50A}"}</button>
+            <button class="ctrl" @click=${() => this.toggleFullscreen()} aria-label=${this.fullscreen ? "Avslutt fullskjerm" : "Fullskjerm"}>${this.fullscreen ? "\u2921" : "\u2922"}</button>
+          </div>
+        </div>
+        ${doc.videos.length > 1 ? b2`<div class="counter">${i5 + 1}/${doc.videos.length}</div>` : A}
+        <div class="bottom">
+          ${video.products.length ? b2`<div class="products" role="list">${video.products.map((ref) => this.renderCard(video, ref, isActive))}</div>` : A}
+          <div class="progress" aria-hidden="true"><i style=${`width:${isActive ? this.progress : 0}%`}></i></div>
+        </div>
+      </section>
+    `;
+  }
+  renderCard(video, ref, isActive) {
+    const p3 = this.products.get(ref.productId);
+    const img = this.imageOf(ref, p3);
+    const current2 = isActive && this.cueProductId === ref.productId;
+    const focal = ref.focal ? `object-position:${Math.round(ref.focal.x * 100)}% ${Math.round(ref.focal.y * 100)}%` : "";
+    return b2`
+      <button class="card ${current2 ? "current" : ""}" data-product=${ref.productId} role="listitem" @click=${() => this.openProduct(video, ref)} aria-label=${p3?.title ?? `Produkt ${ref.productId}`}>
+        ${current2 ? b2`<span class="cue">${this.cueLabel}</span>` : A}
+        ${img ? b2`<img src=${img} alt="" loading="lazy" style=${focal} />` : b2`<span class="ph"></span>`}
+        <span class="txt">
+          ${p3?.brand ? b2`<span class="b">${p3.brand}</span>` : A}
+          <span class="n">${p3?.title ?? ""}</span>
+          ${p3 ? b2`<span class="p">${displayPrice(p3)}</span>` : A}
+        </span>
+      </button>
+    `;
+  }
+};
+__decorateClass([
+  n5({ type: Number, attribute: "experience-id" })
+], VioReel.prototype, "experienceId", 2);
+__decorateClass([
+  n5({ attribute: false })
+], VioReel.prototype, "experience", 2);
+__decorateClass([
+  n5({ type: String })
+], VioReel.prototype, "currency", 2);
+__decorateClass([
+  n5({ type: Boolean, attribute: "no-autoplay" })
+], VioReel.prototype, "noAutoplay", 2);
+__decorateClass([
+  n5({ type: String, attribute: "cue-label" })
+], VioReel.prototype, "cueLabel", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot" })
+], VioReel.prototype, "vioSlot", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-slot-name" })
+], VioReel.prototype, "vioSlotName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope" })
+], VioReel.prototype, "vioScope", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-scope-name" })
+], VioReel.prototype, "vioScopeName", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-campaign" })
+], VioReel.prototype, "vioCampaign", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-id" })
+], VioReel.prototype, "vioContentId", 2);
+__decorateClass([
+  n5({ type: String, attribute: "vio-content-title" })
+], VioReel.prototype, "vioContentTitle", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "doc", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "products", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "status", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "active", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "muted", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "playing", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "progress", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "cueProductId", 2);
+__decorateClass([
+  r5()
+], VioReel.prototype, "fullscreen", 2);
+
 // src/ui/elements.ts
 function registerVioElements() {
   if (typeof customElements === "undefined" || typeof customElements.get !== "function" || typeof customElements.define !== "function")
@@ -25177,7 +28701,8 @@ function registerVioElements() {
     ["vio-product-carousel", VioProductCarousel],
     ["vio-product-detail", VioProductDetail],
     ["vio-cart", VioCart],
-    ["vio-checkout", VioCheckout]
+    ["vio-checkout", VioCheckout],
+    ["vio-reel", VioReel]
   ];
   for (const [tag, ctor] of defs) {
     if (!customElements.get(tag)) customElements.define(tag, ctor);
@@ -25448,14 +28973,25 @@ var VioCheckout2 = o({
     onCtaClick: "vio:cta-click"
   }
 });
+var VioReel2 = o({
+  react: React,
+  tagName: "vio-reel",
+  elementClass: VioReel,
+  events: {
+    onProductClick: "vio:product-click"
+  }
+});
 export {
   ADD_ITEM_MUTATION,
+  APPLY_DISCOUNT_MUTATION,
+  APPLY_DISCOUNT_MUTATION_LEGACY,
   AnalyticsManager,
   BUYER_REF_MAX_LENGTH,
   CHECKOUT_ATTRIBUTION_CAPS,
   CHECKOUT_SPONSOR_STORAGE_KEY,
   CLIENT_LANDING_URL_MAX_LENGTH,
   CONTENT_URL_MAX_LENGTH,
+  COUPON_REASONS,
   CREATE_CART_MUTATION,
   CREATE_CHECKOUT_MUTATION,
   CREATE_CHECKOUT_WITH_ATTRIBUTION_MUTATION,
@@ -25469,11 +29005,20 @@ export {
   CheckoutManager,
   CommerceClient,
   Configuration,
+  DELETE_APPLIED_DISCOUNT_MUTATION,
   DELETE_ITEM_MUTATION,
   DETAIL_SECTION_IDS,
+  DISCOUNT_CODE_MAX_LENGTH,
+  DISCOUNT_PARAM,
+  DISCOUNT_PAYMENT_REASONS,
+  DISCOUNT_SESSION_KEY,
   ESSENTIAL_DETAIL_SECTIONS,
+  EXPERIENCE_CACHE_PREFIX,
+  EXPERIENCE_CACHE_TTL_MS,
+  EXPERIENCE_SCHEMA_VERSION,
   GET_AVAILABLE_PAYMENT_METHODS_QUERY,
   GET_CART_QUERY,
+  GET_CART_WITH_DISCOUNT_CODE_QUERY,
   GET_CHECKOUT_QUERY,
   GET_LINE_ITEMS_BY_SUPPLIER_QUERY,
   GET_VIPPS_STATUS_QUERY,
@@ -25497,15 +29042,20 @@ export {
   VioProduct2 as VioProduct,
   VioProductCarousel2 as VioProductCarousel,
   VioProductDetail2 as VioProductDetail,
+  VioReel2 as VioReel,
   VioTokens,
   activeCampaignEntry,
   addItem,
+  applyDiscount,
   applyVioTheme,
   autoSlotDisplayName,
   autoSlotId,
   buyerRefOf,
   campaignCandidates,
   capContentUrl,
+  cartDiscountTotal,
+  cartListTotal,
+  cartNetTotal,
   cartSlicesFrom,
   checkApplePayAvailability,
   checkoutAttributionOf,
@@ -25518,14 +29068,22 @@ export {
   createVioApi,
   ctaContextOf,
   ctaText,
+  cueProductAt,
   defaultDetailLayout,
+  deleteAppliedDiscount,
   deleteItem,
+  discountParam,
+  discountReasonOf,
+  discountReasonOfError,
   displayPrice,
   dominantCampaignOf,
   effectiveDetailSections,
   ensureVippsButton,
   entryContextOf,
   executeCartGraphQL,
+  experienceCacheKey,
+  experienceCompatible,
+  experienceProductRefs,
   formatPrice,
   gatewayHas,
   getAvailablePaymentMethods,
@@ -25538,20 +29096,29 @@ export {
   getLineItemsBySupplier,
   getVippsStatus,
   isCtaId,
+  isGiftLine,
+  isGiftOnlyCart,
   isUnknownFeatureError,
   isUnknownTokenError,
   landingUrl,
+  lineDiscount,
+  lineListTotal,
+  lineNetTotal,
   lineOriginWire,
   lineOrigins,
+  netUnitPrice,
   normalizeBuyerRef,
   normalizeDetailLayout,
+  normalizeDiscountCode,
   normalizeOrigin,
   normalizeScope,
   normalizeSlotKind,
   originAndPath,
+  parseExperience,
   primaryImageUrl,
   purchaseFromPaymentSuccess,
   purchaseIdsOf,
+  readCachedExperience,
   readInternal,
   resetGatewayFeatures,
   resolveCampaignId,
@@ -25561,6 +29128,7 @@ export {
   resolveInternal,
   resolveLanding,
   resolveSlotCampaign,
+  safeThemeEntries,
   sameOrigin,
   showApplePaySheet,
   sponsorCampaignEntry,
@@ -25572,6 +29140,7 @@ export {
   updateShippingsBySupplier,
   vippsButtonAttributes,
   withGatewayFeature,
+  writeCachedExperience,
   writeInternal
 };
 /*! Bundled license information:
