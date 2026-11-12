@@ -288,7 +288,19 @@ can open without the page leaving, and closing the app left the shopper under th
 button shows after 4 s or when the page is visible again (vio-web-sdk #137). Also «Avbryt» on the Vipps return
 wait (#136).
 
-The vendored SDK is **0.37.8**, built from `vio-web-sdk` `main` `66cd826` (the 0.37.8 release
+**With the 0.38.0 and 0.39.0 bundles** (2026-11-10/11, first in Vev with 0.39.1): discount codes. The
+campaign's code, set in Vio's dashboard per campaign and brand, goes on the brand's cart by reference (the code never
+reaches the page), and only on brands paid with a method that takes discounts. A page without a code behaves as
+before. Also: a carousel's impression names its sponsor, and the `purchase` after Vipps says what was paid. See the
+vio-web-sdk CHANGELOG for 0.38.0 and 0.39.0.
+
+**With the 0.39.1 bundle** (2026-11-12): Kustom. Reopening the checkout in the same tab, page and cart takes up
+the checkout it already has, so Kustom keeps one order instead of one per opening. With the same cart in two tabs, the
+tab whose checkout the other replaced stops («Handlekurven ble endret i en annen fane…») instead of writing its page
+into the other tab's order, which sent the shopper back to the wrong page (vio-web-sdk #150; needs
+vio-shopcart-microservice #120).
+
+The vendored SDK is **0.39.1**, built from `vio-web-sdk` `main` `7a96b52` (the 0.39.1 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
