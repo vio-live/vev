@@ -7107,6 +7107,19 @@ function lineImageUrl(image) {
   }
   return "";
 }
+function isSameLine(line, want) {
+  const p1 = normId(line.productId);
+  const p22 = normId(want.productId);
+  const v1 = normId(line.variantId);
+  const v2 = normId(want.variantId);
+  if (p1 && p22 && p1 === p22 && v1 === v2) return true;
+  if (v1 && v2 && v1 === v2) return true;
+  if (p1 && p22 && p1 === p22 && !v1 && !v2) return true;
+  const n1 = (line.name || "").trim().toLowerCase();
+  const n22 = (want.name || "").trim().toLowerCase();
+  if (n1 && n22 && n1 === n22 && v1 === v2) return true;
+  return false;
+}
 var CartManager = class extends EventTarget {
   constructor(scope = "", hooks = {}) {
     super();
@@ -7651,6 +7664,16 @@ var CartManager = class extends EventTarget {
       }
     }
   }
+  /**
+   * The cart's line for this product (and variant) when the cart's discount
+   * code gives it away. That line is one unit: an add of the same product
+   * changes nothing (`addManual`), so a product's page turns its «Legg i
+   * handlekurv» off and says why. `undefined` otherwise.
+   */
+  giftLineFor(sponsorId, productId, variantId) {
+    const cart = this.cartsBySponsor.get(sponsorId);
+    return cart?.items.find((i5) => isSameLine(i5, { productId, variantId }) && isGiftLine(i5));
+  }
   // MARK: - Mutations
   /** Add a Product DTO to a sponsor's cart. Bumps quantity if already present.
    * When a variantId is given, the line uses the VARIANT's price / image / title
@@ -7690,19 +7713,7 @@ var CartManager = class extends EventTarget {
     } else if (opts.sponsorName && !cart.sponsorName) {
       cart.sponsorName = opts.sponsorName;
     }
-    const existing = cart.items.find((i5) => {
-      const p1 = normId(i5.productId);
-      const p22 = normId(opts.productId);
-      const v1 = normId(i5.variantId);
-      const v2 = normId(opts.variantId);
-      if (p1 && p22 && p1 === p22 && v1 === v2) return true;
-      if (v1 && v2 && v1 === v2) return true;
-      if (p1 && p22 && p1 === p22 && !v1 && !v2) return true;
-      const n1 = (i5.name || "").trim().toLowerCase();
-      const n22 = (opts.name || "").trim().toLowerCase();
-      if (n1 && n22 && n1 === n22 && v1 === v2) return true;
-      return false;
-    });
+    const existing = cart.items.find((i5) => isSameLine(i5, opts));
     if (existing) {
       if (isGiftLine(existing)) return existing;
       existing.quantity += qty;
@@ -10715,7 +10726,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.39.3";
+var SDK_VERSION = "0.39.4";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -18659,6 +18670,8 @@ var DISCOUNT_TEXT = {
   giftMaxOne: "Du kan bare f\xE5 \xE9n gave per bestilling. Reduser antallet og pr\xF8v igjen.",
   /** On the «+» of a gift line, which does nothing. */
   giftMaxOneShort: "Maks \xE9n gave per bestilling",
+  /** On a product's page when the product is the cart's gift already: «Legg i handlekurv» is off. */
+  giftInCart: "Produktet er allerede med som gave. Maks \xE9n gave per bestilling.",
   // ── With a code on the cart, only Vipps ───────────────────────────────────
   /** Under the ways to pay that are off while a discount code is on the cart (they would charge list prices). */
   vippsOnly: "Med rabattkode kan du bare betale med Vipps.",
@@ -18805,7 +18818,8 @@ var vippsOnlyStyles = i`
     cursor: not-allowed !important;
     filter: grayscale(1);
   }
-  .vipps-only-note {
+  .vipps-only-note,
+  .gift-in-cart-note {
     margin: 8px 0;
     font-size: 13px;
     line-height: 1.35;
@@ -21249,8 +21263,18 @@ var VioProductDetail = class extends i4 {
     });
     return variant?.id;
   }
+  /**
+   * This product (the variant chosen) is the cart's gift already: the code
+   * gives one unit, and an add changes nothing. «Legg i handlekurv» is off,
+   * with a note — never a «Lagt i handlekurven» for units that were not added
+   * (QA 2026-11-12).
+   */
+  get giftInCart() {
+    if (!this.product) return false;
+    return !!Vio.cart.giftLineFor(this.sponsorId, this.product.id, this.selectedVariant()?.id);
+  }
   async addToCart() {
-    if (!this.product || this.availableQuantity <= 0 || this.adding) return;
+    if (!this.product || this.availableQuantity <= 0 || this.adding || this.giftInCart) return;
     if (!this.requireSelection()) return;
     this.adding = true;
     try {
@@ -22075,11 +22099,12 @@ var VioProductDetail = class extends i4 {
               part="add-to-cart"
               data-vio-cta="add_to_cart"
               @click=${this.addToCart}
-              ?disabled=${this.availableQuantity <= 0 || this.adding}
+              ?disabled=${this.availableQuantity <= 0 || this.adding || this.giftInCart}
             >
               ${this.adding ? "Legger til\u2026" : this.availableQuantity <= 0 ? "Utsolgt" : "Legg i handlekurv"}
             </button>
           </div>
+          ${this.giftInCart ? b2`<p class="gift-in-cart-note" part="gift-in-cart-note" role="note">${DISCOUNT_TEXT.giftInCart}</p>` : A}
 
           ${this.availableQuantity > 0 && this.methodEnabled(...NO_EXPRESS_BUTTON_METHODS) ? b2`
                 <button
@@ -23839,6 +23864,9 @@ var EMPTY_CART_MESSAGE = "Handlekurven er tom. Legg til et produkt og pr\xF8v ig
 var CART_CHANGED_MESSAGE = "Handlekurven ble endret i en annen fane. Last siden p\xE5 nytt og pr\xF8v igjen.";
 var CART_PAID_MESSAGE = "Denne handlekurven er allerede betalt. Start en ny handlekurv.";
 var PAYMENT_START_FAILED_MESSAGE = "Betalingen kunne ikke startes. Pr\xF8v igjen, eller velg en annen betalingsm\xE5te.";
+function withoutOtherMethodHint(text5) {
+  return String(text5 ?? "").replace(/,\s*eller velg en annen betalingsmåte\./g, ".");
+}
 var SHIPS_APART = "kan ikke sendes sammen";
 function friendlyPaymentError(raw, method) {
   void method;
@@ -25550,6 +25578,18 @@ var _VioCheckout = class _VioCheckout extends i4 {
   get discountOnCart() {
     const id = this.checkoutState?.sponsorId;
     return !!id && (!!Vio.cart.discountCodeForSponsor(id) || Vio.cart.discountSourceForSponsor(id) === "CAMPAIGN");
+  }
+  /**
+   * The payment error as shown: with a discount code on the cart and at most
+   * one way to pay on offer that takes it (Vipps), no «velg en annen
+   * betalingsmåte» — there is no other one to pick.
+   */
+  get paymentErrorShown() {
+    const text5 = this.paymentError;
+    if (!text5 || !this.discountOnCart) return text5;
+    const offered = Array.isArray(this.offeredMethodInfo) ? this.offeredMethodInfo : [];
+    const takers = offered.filter((m2) => methodTakesDiscounts(m2?.name, this.offeredMethodInfo)).length;
+    return takers <= 1 ? withoutOtherMethodHint(text5) : text5;
   }
   /** A way to pay the cart's discount code turns off: one that does not take discounts (its `discounts` config), while a code is on. */
   discountOff(method) {
@@ -27453,7 +27493,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
             ` : ""}
         ${this.shippingBlocked ? this.renderShippingBlocked() : this.renderKlarnaPanel()}
         ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
-        ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
+        ${this.paymentError ? b2`<div class="payment-error">${this.paymentErrorShown}</div>` : ""}
       </section>
     `;
   }
@@ -27748,7 +27788,7 @@ var _VioCheckout = class _VioCheckout extends i4 {
     }) : this.discountOnCart && (this.offeredMethods() ?? []).some((m2) => this.discountOff(m2)) ? renderVippsOnlyNote() : ""}
                 `}
             ${this.paymentNotice ? b2`<div class="payment-notice">${this.paymentNotice}</div>` : ""}
-            ${this.paymentError ? b2`<div class="payment-error">${this.paymentError}</div>` : ""}
+            ${this.paymentError ? b2`<div class="payment-error">${this.paymentErrorShown}</div>` : ""}
           </section>
 
           ${this.items.length > 0 ? b2`
