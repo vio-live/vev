@@ -308,7 +308,12 @@ picture in the cart (Commerce sends a line's image as a list, #153).
 cart («Rabatten er endret av butikken. Handlekurven er oppdatert – prøv igjen.») instead of the cart opening the
 checkout in silence (vio-web-sdk #155).
 
-The vendored SDK is **0.39.3**, built from `vio-web-sdk` `main` `ad038a0` (the 0.39.3 release
+**With the 0.39.4 bundle** (2026-11-13): the cart's gift is not added again from the product page — «Legg i
+handlekurv» is off while the product is the gift, with «Produktet er allerede med som gave. Maks én gave per
+bestilling.» (vio-web-sdk #158) — and a refused payment with a discount code no longer suggests another way to pay
+(#157).
+
+The vendored SDK is **0.39.4**, built from `vio-web-sdk` `main` `478a5c9` (the 0.39.4 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
