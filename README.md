@@ -313,7 +313,12 @@ handlekurv» is off while the product is the gift, with «Produktet er allerede 
 bestilling.» (vio-web-sdk #158) — and a refused payment with a discount code no longer suggests another way to pay
 (#157).
 
-The vendored SDK is **0.39.4**, built from `vio-web-sdk` `main` `478a5c9` (the 0.39.4 release
+**With the 0.40.1 bundle** (2026-11-17): on the page of the cart's gift, «Kjøp nå med Vipps» says what it pays —
+the cart as it is — instead of counting the gift again («3 varer · 2 625 Kr» for a cart of 2 and 1 260 kr), and a
+«Kjøp nå» from there adds nothing (vio-web-sdk #162). It also carries 0.40.0: the reel's video analytics
+(ADR-0043), which Vev does not use — no block renders `<vio-reel>`, so no video events leave a Vev page.
+
+The vendored SDK is **0.40.1**, built from `vio-web-sdk` `main` `6c8fa29` (the 0.40.1 release
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 

@@ -10726,7 +10726,7 @@ function adyenReturnOutcome(payment) {
 }
 
 // src/core/version.ts
-var SDK_VERSION = "0.39.4";
+var SDK_VERSION = "0.40.1";
 
 // src/core/checkout/phone.ts
 var CALLING_CODES = {
@@ -14217,7 +14217,14 @@ var AnalyticsManager = class extends EventTarget {
       cta_variant: ctx.ctaVariant,
       option_value: this.options.privateContent ? void 0 : ctx.optionValue,
       product_id: ctx.productId,
-      product_variant_id: ctx.productVariantId
+      product_variant_id: ctx.productVariantId,
+      // Shoppable reel (ADR-0043): ids and numbers, nothing personal.
+      experience_id: ctx.experienceId,
+      experience_revision: ctx.experienceRevision,
+      video_id: ctx.videoId,
+      video_index: ctx.videoIndex,
+      video_percent: ctx.videoPercent,
+      watch_seconds: ctx.watchSeconds
     });
     const com = opts.commerce;
     const commerce = com ? compact({
@@ -14442,7 +14449,15 @@ var AnalyticsManager = class extends EventTarget {
       if (d3.productId === void 0) return;
       const price = Number(d3.price);
       this.track("select_item", {
-        context: { sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0, campaignId: campaignOf(d3), slot: slotOf(d3), componentTemplateId: templateOf(d3), ...contentOf(d3) },
+        context: {
+          sponsorId: d3.sponsorId !== void 0 ? Number(d3.sponsorId) : void 0,
+          campaignId: campaignOf(d3),
+          slot: slotOf(d3),
+          componentTemplateId: templateOf(d3),
+          ...contentOf(d3),
+          // A product card of a reel's video (ADR-0043): which experience and video.
+          ...reelOf(d3)
+        },
         commerce: {
           items: [
             {
@@ -14939,6 +14954,15 @@ function slotOf(detail) {
 function templateOf(detail) {
   const value = typeof detail.componentTemplateId === "string" ? detail.componentTemplateId.trim() : "";
   return fitsId(value || void 0);
+}
+function reelOf(detail) {
+  const out = {};
+  const int = (v2) => typeof v2 === "number" && Number.isInteger(v2) ? v2 : Number.NaN;
+  if (int(detail.experienceId) > 0) out.experienceId = detail.experienceId;
+  if (int(detail.revision) >= 0) out.experienceRevision = detail.revision;
+  if (typeof detail.videoId === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(detail.videoId)) out.videoId = detail.videoId;
+  if (int(detail.videoIndex) >= 0 && detail.videoIndex <= 255) out.videoIndex = detail.videoIndex;
+  return out;
 }
 function contentOf(detail) {
   const out = {};
@@ -21250,6 +21274,7 @@ var VioProductDetail = class extends i4 {
   addCurrentToCart() {
     if (!this.product) return void 0;
     const variant = this.selectedVariant();
+    if (this.giftInCart) return variant?.id;
     const sponsorName = resolveSponsorIdentity(this.sponsorId)?.name || void 0;
     const { campaignId, slot, contentId, componentTemplateId, contentUrl, contentTitle } = this.attribution();
     const layout = layoutOriginOf(this.layoutNow);
@@ -21485,8 +21510,9 @@ var VioProductDetail = class extends i4 {
     const cart = Vio.cart.getCart(this.sponsorId);
     const items = cart?.items ?? [];
     if (items.length === 0) return null;
-    const units = items.reduce((n6, i5) => n6 + (Number(i5.quantity) || 0), 0) + this.quantity;
-    const total = cartNetTotal(items) + this.unitPrice * this.quantity;
+    const adds = this.giftInCart ? 0 : this.quantity;
+    const units = items.reduce((n6, i5) => n6 + (Number(i5.quantity) || 0), 0) + adds;
+    const total = cartNetTotal(items) + this.unitPrice * adds;
     return { units, total, currency: cart?.currency || this.currency };
   }
   /** The line under the Vipps button: what is paid (a cart with lines) or what happens in the app (Express, empty cart). */
@@ -28017,6 +28043,95 @@ function ctaMethod(method) {
   return String(method ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
 }
 
+// src/ui/components/reel-tracker.ts
+var MAX_STEP_SECONDS = 2.5;
+var MIN_WATCH_SECONDS = 0.5;
+var MARKS = [25, 50, 75];
+var ReelTracker = class {
+  constructor(emit2, options = {}) {
+    this.emit = emit2;
+    this.started = /* @__PURE__ */ new Set();
+    this.marks = /* @__PURE__ */ new Map();
+    this.completed = /* @__PURE__ */ new Set();
+    this.unmuted = /* @__PURE__ */ new Set();
+    /** Seconds played and not reported yet, per video. */
+    this.pending = /* @__PURE__ */ new Map();
+    this.playing = null;
+    this.heartbeat = options.heartbeatSeconds ?? 30;
+  }
+  /** The video started (or resumed) playing. */
+  play(video, { autoplay = false } = {}) {
+    if (this.playing && this.playing.video.id !== video.id) this.stop(this.playing.video);
+    if (!this.playing || this.playing.video.id !== video.id) this.playing = { video, last: null };
+    if (!this.started.has(video.id)) {
+      this.started.add(video.id);
+      this.emit("video_start", video, { autoplay });
+    }
+  }
+  /** A time update of the playing video. Ignored for any other video. */
+  time(video, currentTime, duration) {
+    const p3 = this.playing;
+    if (!p3 || p3.video.id !== video.id || !Number.isFinite(currentTime)) return;
+    const hasLength = Number.isFinite(duration) && duration > 0;
+    if (p3.last !== null) {
+      const step = currentTime - p3.last;
+      if (step > 0 && step <= MAX_STEP_SECONDS) this.add(video, step);
+      else if (step < 0 && hasLength && p3.last >= duration * 0.9 && currentTime <= duration * 0.1) this.complete(video);
+    }
+    p3.last = currentTime;
+    if (hasLength) {
+      const pct = currentTime / duration * 100;
+      for (const m2 of MARKS) if (pct >= m2) this.mark(video, m2);
+      if (pct >= 99 || duration - currentTime <= 0.25) this.complete(video);
+    }
+    const owed = this.pending.get(video.id);
+    if (owed && owed.seconds >= this.heartbeat) this.report(video.id);
+  }
+  /** The video paused (or stopped being the one on screen): report what it played. */
+  pause(video) {
+    if (this.playing?.video.id === video.id) this.stop(video);
+  }
+  /** The reader turned the sound on while this video was the one on screen. */
+  unmute(video) {
+    if (this.unmuted.has(video.id)) return;
+    this.unmuted.add(video.id);
+    this.emit("video_unmute", video, {});
+  }
+  /** Report every second played and not reported yet (the page hides, the reel goes away). */
+  flush() {
+    if (this.playing) this.playing.last = null;
+    for (const id of [...this.pending.keys()]) this.report(id);
+  }
+  stop(video) {
+    this.report(video.id);
+    if (this.playing?.video.id === video.id) this.playing = null;
+  }
+  add(video, seconds) {
+    const owed = this.pending.get(video.id) ?? { video, seconds: 0 };
+    owed.seconds += seconds;
+    this.pending.set(video.id, owed);
+  }
+  report(id) {
+    const owed = this.pending.get(id);
+    if (!owed || owed.seconds < MIN_WATCH_SECONDS) return;
+    this.pending.delete(id);
+    this.emit("video_watch", owed.video, { watchSeconds: Math.min(3600, Math.round(owed.seconds * 10) / 10) });
+  }
+  mark(video, m2) {
+    const seen = this.marks.get(video.id) ?? /* @__PURE__ */ new Set();
+    if (seen.has(m2)) return;
+    seen.add(m2);
+    this.marks.set(video.id, seen);
+    this.emit("video_progress", video, { videoPercent: m2 });
+  }
+  complete(video) {
+    if (this.completed.has(video.id)) return;
+    for (const m2 of MARKS) this.mark(video, m2);
+    this.completed.add(video.id);
+    this.emit("video_complete", video, { videoPercent: 100 });
+  }
+};
+
 // src/ui/hls.ts
 var HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 var isHlsUrl = (url) => /\.m3u8(\?|#|$)/i.test(url);
@@ -28107,6 +28222,16 @@ var VioReel = class extends i4 {
     this.observer = null;
     this.unobserveImpression = null;
     this.listTracked = /* @__PURE__ */ new Set();
+    /** The video events of the experience on screen (null before it is ready). */
+    this.tracker = null;
+    /** The next `play` of the active video comes from `activate` (autoplay), not from a tap. */
+    this.autoplayIntent = false;
+    /* Before the analytics manager's own listeners (which flush by beacon): a
+       capture listener on window runs first for both events. */
+    this.onPageHidden = (ev) => {
+      if (ev.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+      this.tracker?.flush();
+    };
     this.loadToken = 0;
     this.onFullscreenChange = () => {
       this.fullscreen = typeof document !== "undefined" && document.fullscreenElement === this;
@@ -28216,12 +28341,20 @@ var VioReel = class extends i4 {
     super.connectedCallback();
     this.slotRegistration.connect(this.slotAttributes());
     if (typeof document !== "undefined") document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    if (typeof window !== "undefined") {
+      window.addEventListener("visibilitychange", this.onPageHidden, { capture: true });
+      window.addEventListener("pagehide", this.onPageHidden, { capture: true });
+    }
     void this.load();
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     this.loadToken++;
     this.teardownPlayback();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("visibilitychange", this.onPageHidden, { capture: true });
+      window.removeEventListener("pagehide", this.onPageHidden, { capture: true });
+    }
     this.unobserveImpression?.();
     this.unobserveImpression = null;
     this.slotRegistration.clear();
@@ -28243,6 +28376,7 @@ var VioReel = class extends i4 {
     const token = ++this.loadToken;
     this.loadedFor = this.loadKey();
     this.teardownPlayback();
+    this.tracker = null;
     this.doc = null;
     this.products = /* @__PURE__ */ new Map();
     let experience = null;
@@ -28291,6 +28425,7 @@ var VioReel = class extends i4 {
     if (token !== this.loadToken) return;
     this.products = products;
     this.active = 0;
+    this.tracker = new ReelTracker((name, video, fields) => this.trackVideo(name, video, fields));
     this.status = "ready";
     this.observeForAnalytics();
   }
@@ -28393,6 +28528,7 @@ var VioReel = class extends i4 {
     }, 400);
   }
   teardownPlayback() {
+    this.tracker?.flush();
     this.observer?.disconnect();
     this.observer = null;
     this.feedEl?.removeEventListener("scroll", this.onFeedScroll);
@@ -28407,6 +28543,7 @@ var VioReel = class extends i4 {
   pauseAll() {
     for (const v2 of this.videoEls) v2.pause?.();
     this.playing = false;
+    this.tracker?.flush();
   }
   /** Make `index` THE video: wire it and the next one, play it, pause the rest, unload the far ones. */
   async activate(index) {
@@ -28415,6 +28552,10 @@ var VioReel = class extends i4 {
     if (!doc || !videos[index]) return;
     this.activatedOnce = true;
     const sameVideo = this.active === index && this.attached.has(index);
+    if (this.active !== index) {
+      const previous = this.videoRef(this.active);
+      if (previous) this.tracker?.pause(previous);
+    }
     this.active = index;
     if (!sameVideo) this.progress = 0;
     this.cueProductId = cueProductAt(doc.videos[index].cues, 0);
@@ -28435,7 +28576,10 @@ var VioReel = class extends i4 {
     if (this.active !== index) return;
     const video = videos[index];
     video.muted = this.muted;
-    if (!this.noAutoplay && this.visible && video.paused) this.tryPlay(video);
+    if (!this.noAutoplay && this.visible && video.paused) {
+      this.autoplayIntent = true;
+      this.tryPlay(video);
+    }
     if (this.visible) this.trackVideoList(index);
   }
   ensureAttached(index) {
@@ -28472,8 +28616,10 @@ var VioReel = class extends i4 {
   togglePlay() {
     const video = this.videoEls[this.active];
     if (!video) return;
-    if (video.paused) this.tryPlay(video);
-    else {
+    if (video.paused) {
+      this.autoplayIntent = false;
+      this.tryPlay(video);
+    } else {
       video.pause();
       this.playing = false;
     }
@@ -28481,6 +28627,25 @@ var VioReel = class extends i4 {
   toggleMute() {
     this.muted = !this.muted;
     for (const v2 of this.videoEls) v2.muted = this.muted;
+    const current2 = this.videoRef(this.active);
+    if (!this.muted && current2) this.tracker?.unmute(current2);
+  }
+  /** The id and position of the video at `index`, or null. */
+  videoRef(index) {
+    const video = this.doc?.videos[index];
+    return video ? { id: video.id, index } : null;
+  }
+  onPlay(index) {
+    if (index !== this.active) return;
+    this.playing = true;
+    const ref = this.videoRef(index);
+    if (ref) this.tracker?.play(ref, { autoplay: this.autoplayIntent });
+    this.autoplayIntent = false;
+  }
+  onPause(index) {
+    if (index === this.active) this.playing = false;
+    const ref = this.videoRef(index);
+    if (ref) this.tracker?.pause(ref);
   }
   toggleFullscreen() {
     try {
@@ -28498,6 +28663,8 @@ var VioReel = class extends i4 {
     const video = ev.currentTarget;
     const d3 = video.duration;
     this.progress = Number.isFinite(d3) && d3 > 0 ? Math.min(100, video.currentTime / d3 * 100) : 0;
+    const ref = this.videoRef(index);
+    if (ref) this.tracker?.time(ref, video.currentTime, d3);
     const cue = cueProductAt(this.doc.videos[index].cues, video.currentTime);
     if (cue !== this.cueProductId) {
       this.cueProductId = cue;
@@ -28530,6 +28697,7 @@ var VioReel = class extends i4 {
           campaignId: doc.campaignId,
           experienceId: doc.id,
           videoId: video.id,
+          videoIndex: doc.videos.indexOf(video),
           revision: doc.revision
         }
       })
@@ -28573,7 +28741,7 @@ var VioReel = class extends i4 {
     const doc = this.doc;
     if (!doc || this.unobserveImpression || !this.isConnected) return;
     try {
-      this.unobserveImpression = Vio.analytics.observeImpression(this, this.attribution(doc), {
+      this.unobserveImpression = Vio.analytics.observeImpression(this, { ...this.attribution(doc), ...this.experienceContext(doc) }, {
         key: `reel:${this.effectiveSlot || doc.id}`,
         commerce: () => this.commerceOf(doc.videos),
         props: { experience_id: doc.id, revision: doc.revision, videos: doc.videos.length }
@@ -28588,9 +28756,29 @@ var VioReel = class extends i4 {
     if (!doc || !video || this.listTracked.has(video.id) || !video.products.length) return;
     this.listTracked.add(video.id);
     this.trackSafe("view_item_list", {
-      context: this.attribution(doc),
+      context: { ...this.attribution(doc), ...this.experienceContext(doc), videoId: video.id, videoIndex: index },
       commerce: this.commerceOf([video]) ?? void 0,
       props: { experience_id: doc.id, video_id: video.id, revision: doc.revision, list_name: video.title ?? doc.title }
+    });
+  }
+  /** The experience and the revision the reader got (ADR-0043). */
+  experienceContext(doc) {
+    return { experienceId: doc.id, ...doc.revision !== null ? { experienceRevision: doc.revision } : {} };
+  }
+  /** One `video_*` event of the experience on screen (./reel-tracker.ts). */
+  trackVideo(name, video, fields) {
+    const doc = this.doc;
+    if (!doc) return;
+    this.trackSafe(name, {
+      context: {
+        ...this.attribution(doc),
+        ...this.experienceContext(doc),
+        videoId: video.id,
+        videoIndex: video.index,
+        ...fields.videoPercent !== void 0 ? { videoPercent: fields.videoPercent } : {},
+        ...fields.watchSeconds !== void 0 ? { watchSeconds: fields.watchSeconds } : {}
+      },
+      ...fields.autoplay !== void 0 ? { props: { autoplay: fields.autoplay } } : {}
     });
   }
   trackSafe(name, opts) {
@@ -28635,8 +28823,8 @@ var VioReel = class extends i4 {
           preload=${i5 === 0 ? "auto" : "metadata"}
           poster=${video.media.posterUrl ?? ""}
           @timeupdate=${(ev) => this.onTimeUpdate(i5, ev)}
-          @play=${() => isActive && (this.playing = true)}
-          @pause=${() => isActive && (this.playing = false)}
+          @play=${() => this.onPlay(i5)}
+          @pause=${() => this.onPause(i5)}
           aria-hidden=${isActive ? "false" : "true"}
         ></video>
         <div class="shade"></div>
