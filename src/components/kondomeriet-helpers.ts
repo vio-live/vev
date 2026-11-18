@@ -558,6 +558,34 @@ const BLACK_WEEK_REF1: [RegExp, string][] = [
   [/undertoy/, "undertoy"],
 ];
 
+/** The Black Week sheet's «Rabatt» per row (by its ref1 suffix), for the editor's picker. */
+const BLACK_WEEK_DISCOUNT: Record<string, string> = {
+  blowcastpro: "60 %",
+  wingmanplus: "60 %",
+  blowcastlite: "60 %",
+  julekalender: "30 %",
+  pleasure: "40 %",
+  corrida: "40 %",
+  analplugg: "70 %",
+  alexneo: "20 %",
+  easytoys: "40 %",
+  easytoys_slikk: "40 %",
+  wevibemelt: "15 %",
+  petal: "30 %",
+  womanizersnap: "25 %",
+  womanizerpremium: "32 %",
+  tenga: "15 %",
+  easyglide: "20 %",
+  kondomer: "20 %",
+  undertoy: "20 %",
+};
+
+/** The sheet's discount for one shop slug («60 %»), or null. */
+export function blackWeekDiscount(slug: string | null | undefined): string | null {
+  const row = blackWeekRef1(slug);
+  return row ? BLACK_WEEK_DISCOUNT[row] ?? null : null;
+}
+
 /** The words (dash-separated) every slug of a group starts with: «womanizer-premium-2». */
 function commonSlug(slugs: string[]): string {
   const parts = slugs.map((x) => x.split("-").filter(Boolean));
@@ -1288,7 +1316,7 @@ const FRESH_CATALOG_QUERY = `
         options_enabled
         options { id name values }
         variants { id title }
-        price { amount amount_incl_taxes currency_code }
+        price { amount amount_incl_taxes currency_code compare_at compare_at_incl_taxes }
         images { url }
         origin_url
       }

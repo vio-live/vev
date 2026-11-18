@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox, SilkeButton, SilkeModal, SilkeText } from "@vev/silke";
-import { CatalogModal } from "./product-picker";
+import { CatalogModal, type PickerFacts } from "./product-picker";
 import { resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
 import {
   deriveLabels,
@@ -11,6 +11,7 @@ import {
   addProductsAsCards,
   allGroupIds,
   applyCardPick,
+  blackWeekDiscount,
   familiesOf,
   parseGroups,
   serializeGroups,
@@ -20,6 +21,11 @@ import {
   type GroupsValue,
   type KondomerietGroup,
 } from "./kondomeriet-helpers";
+
+/** In the picker, next to each price: the Black Week sheet's discount for the product (by its shop slug). */
+function pickerFacts(p: CatalogProduct): PickerFacts {
+  return { discount: blackWeekDiscount(slugFromProductUrl((p as any).origin_url)) };
+}
 
 /**
  * Properties-panel editor of the Kondomeriet blocks' product groups. A group
@@ -487,6 +493,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
           title="Select colors, sizes or models of one product"
           // Fresh on every opening, never the page's cached list (see loadFreshCatalog).
           load={loadForPicker}
+          describe={pickerFacts}
           selectedIds={selected}
           onToggle={toggleDraft}
           onClose={closeCardPicker}
@@ -497,6 +504,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
           multi
           title="Select products"
           load={loadForPicker}
+          describe={pickerFacts}
           selectedIds={selected}
           onToggle={toggleDraft}
           onClose={closeAddProducts}
