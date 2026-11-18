@@ -5,6 +5,7 @@ import { COMPONENT_TEMPLATE_ID, getProductPriceAmount, vioAttribution, type VioA
 import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit";
 import {
   KONDOMERIET_NAME,
+  brandIdentity,
   compareAtAmount,
   directBadgeFrom,
   perksFrom,
@@ -17,7 +18,7 @@ import {
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOpenInfo, trackOptionSelect } from "./kondomeriet-track";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
-import { OptionSelector, badgeFor, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
+import { OptionSelector, SellerLogo, badgeFor, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
 
 const InfoIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
@@ -46,6 +47,8 @@ export type KondomerietCardConfig = {
   showName?: boolean;
   showPrice?: boolean;
   showRetailer?: boolean;
+  /** «Du handler direkte hos <brand>» with the brand's logo (default on). */
+  showSeller?: boolean;
   showDescription?: boolean;
   descriptionText?: string;
   annonse?: boolean;
@@ -116,6 +119,7 @@ export function KondomerietCardView({
     showName = true,
     showPrice = true,
     showRetailer = false,
+    showSeller = true,
     showDescription = false,
     descriptionText = "",
     annonse = false,
@@ -225,6 +229,9 @@ export function KondomerietCardView({
   const was = compareAtAmount(p);
   const badge = badgeFor(discountMode, discountText, group.group, p, now);
   const brand = group.brand;
+  // The seller (the bootstrap's sponsor): its logo and name, as the SDK detail names it.
+  const identity = brandIdentity(sponsorId);
+  const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
   const description = ownDescription || (showDescription ? plainText(p?.description).replace(/\n+/g, " ") : "");
@@ -341,6 +348,14 @@ export function KondomerietCardView({
       {priceEl}
       {inBody ? vippsEl : null}
       {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
+      {showSeller ? (
+        <div className="knd-seller">
+          {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
+          <span>
+            Du handler direkte hos <strong>{sellerName}</strong>
+          </span>
+        </div>
+      ) : null}
     </>
   );
 

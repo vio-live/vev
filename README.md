@@ -412,6 +412,13 @@ bar, pill or icon, and three own texts — *Subtitle* (under the name), *Label o
 editable CSS. **Card image** (Vev image): replaces the product's photo on the card and goes first in the product
 info (or alone, *Product info: only this image*); the carousel / grid take *Card images*, one per card number.
 
+**The seller, as in Replit.** The card shows, where the Vio card puts its retailer, the brand's logo (20 px high,
+its own width) and «Du handler direkte hos **Kondomeriet**» — the SDK detail's seller note — from
+`Vio.sponsorIdentity` (name and logo of the bootstrap's sponsor); *Show seller* turns it off, *Seller line* /
+*Seller logo* style it, and without a logo only the text shows. The product info's note under the button is the
+SDK's `renderSellerNote`, with the logo beside it and the brand's «Kjøpsvilkår» / «Angrerett og retur» when it
+gave them; the Hurtigkasse note stays above it.
+
 **The brand's promises.** When the brand has promises in Vio (dashboard → brand profile, `highlights` on the
 bootstrap's sponsor, read with `Vio.sponsorIdentity`), the drawer draws them as the SDK detail does (the
 `.highlights` strip, the SDK's icons) and the editable promises step aside; without them the editable list stays.

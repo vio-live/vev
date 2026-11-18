@@ -6,12 +6,14 @@ import {
   DEFAULT_STOCK_TEXT,
   KONDOMERIET_DETAIL_EVENT,
   KONDOMERIET_NAME,
+  brandIdentity,
+  type BrandIdentity,
   compareAtAmount,
   isSoldOut,
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
-import { badgeFor, classRef, detailPrice, plainText } from "./kondomeriet-ui";
+import { SellerLogo, badgeFor, classRef, detailPrice, plainText } from "./kondomeriet-ui";
 import { parseRichDescription, renderRich, splitPlainRating } from "./kondomeriet-description";
 
 /**
@@ -98,6 +100,8 @@ const EXTRA_CSS = `
 .description.rich li { margin: 3px 0; }
 .description.rich strong { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
 details.description-block > .description { padding-top: 0; }
+/* The brand's logo beside the seller note: small, never distorted. */
+.seller-note .knd-seller-logo { display: inline-block; height: 20px; width: auto; max-width: 110px; object-fit: contain; vertical-align: middle; margin: -2px 6px 0 0; }
 `;
 
 /**
@@ -145,19 +149,6 @@ function splitRateName(name: string): { carrier: string; method: string } {
 }
 
 type ShippingRate = { name: string; price: number; currency: string; description: string; logoUrl: string };
-type BrandHighlight = { icon: string; title: string; text?: string };
-type BrandIdentity = { name?: string; logoUrl?: string | null; termsUrl?: string; refundPolicyUrl?: string; highlights?: BrandHighlight[] };
-
-/** Who the brand is to the SDK — `Vio.sponsorIdentity` (bootstrap: name, logo, terms, promises). */
-function brandIdentity(sponsorId: number | null): BrandIdentity | null {
-  if (sponsorId == null) return null;
-  try {
-    const id = (Vio as any).sponsorIdentity?.(sponsorId);
-    return id && typeof id === "object" ? (id as BrandIdentity) : null;
-  } catch {
-    return null;
-  }
-}
 
 const Check = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -260,6 +251,7 @@ export function KondomerietDetail({
   // The brand's promises from Vio (brand profile → bootstrap), drawn as the
   // SDK detail draws them; the editable list only when the brand has none.
   const identity = useMemo(() => brandIdentity(sponsorId), [sponsorId]);
+  const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const highlights = Array.isArray(identity?.highlights) ? identity!.highlights!.filter((h) => h && h.title) : [];
   const perks = highlights.length ? [] : request.perks ?? [];
   const stockText = request.stockText?.trim() || DEFAULT_STOCK_TEXT;
@@ -469,8 +461,25 @@ export function KondomerietDetail({
                     </li>
                   ))}
                 </ul>
+                {/* The SDK detail's seller note (renderSellerNote): «Du handler direkte hos <name>.» and the
+                    brand's own pages when it gave them — with its logo beside it. */}
                 <p className="seller-note">
-                  Du handler direkte hos <strong>{KONDOMERIET_NAME}</strong>.
+                  {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
+                  Du handler direkte hos <strong>{sellerName}</strong>.
+                  {identity?.termsUrl || identity?.refundPolicyUrl ? (
+                    <span className="seller-links">
+                      {identity?.termsUrl ? (
+                        <a href={identity.termsUrl} target="_blank" rel="noopener noreferrer">
+                          Kjøpsvilkår
+                        </a>
+                      ) : null}
+                      {identity?.refundPolicyUrl ? (
+                        <a href={identity.refundPolicyUrl} target="_blank" rel="noopener noreferrer">
+                          Angrerett og retur
+                        </a>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </p>
               </div>
               {/* The brand's promises (Vio dashboard → brand profile), the SDK detail's highlights strip. */}

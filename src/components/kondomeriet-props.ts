@@ -88,6 +88,12 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     },
   },
   { name: "showRetailer", title: "Show 'Kondomeriet'", type: "boolean", initialValue: false },
+  {
+    name: "showSeller",
+    title: "Show seller (logo + «Du handler direkte hos …»)",
+    type: "boolean",
+    initialValue: true,
+  },
   // Product info (the drawer): trust texts the editor can change or clear.
   {
     name: "directBadge",
@@ -241,6 +247,8 @@ export const KONDOMERIET_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .knd-subtitle", title: "Subtitle", properties: ["color", "font-size", "font-weight", "line-height"] },
   { selector: ".vio-native-card .knd-tag", title: "Label on the photo", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .knd-footer", title: "Footer", properties: ["color", "font-size", "line-height"] },
+  { selector: ".vio-native-card .knd-seller", title: "Seller line", properties: ["color", "font-size", "letter-spacing", "gap"] },
+  { selector: ".vio-native-card .knd-seller-logo", title: "Seller logo", properties: ["height", "max-width", "opacity"] },
   { selector: ".vio-native-card .knd-info-icon", title: "Product info icon", properties: ["background", "color", "box-shadow", "width", "height"] },
 ];
 
@@ -261,7 +269,7 @@ export const GROUPS_PROP = {
 };
 
 const CONFIG_KEYS = [
-  "layout", "accentColor", "showBrand", "showName", "showPrice", "showRetailer", "showDescription", "descriptionText",
+  "layout", "accentColor", "showBrand", "showName", "showPrice", "showRetailer", "showSeller", "showDescription", "descriptionText",
   "annonse", "annonseText", "optionTitle", "selectorStyle", "vippsLabel", "infoButton", "infoButtonStyle", "infoLabel",
   "hurtigkasseTarget", "directBadge", "directBadgeOnCard", "perks", "stockText", "infoImageOnly", "discountMode",
   "discountText", "vippsButton", "imageClickAction", "subtitle", "tagText", "footerText",
