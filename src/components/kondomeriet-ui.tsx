@@ -104,6 +104,37 @@ const KND_CSS = `
 .vio-native-card .vnc-meta .knd-more { margin: -4px 0 12px; }
 .vio-native-card .vnc-meta .knd-more + .knd-seller { margin-top: 0; }
 .vio-native-card .vnc-body > .knd-more:first-child { margin-top: 12px; }
+/* The Kondomeriet Product List's row (variant="row"): a small square image,
+   the text beside it, the buy button on the right — under the text when the
+   list is narrow (a phone), the image staying on the left. */
+.vio-native-card.knd-row {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) minmax(220px, 260px); grid-template-areas: "img main cta";
+  align-items: center; column-gap: 18px; row-gap: 10px; padding: 16px 0; min-height: 0; height: auto; cursor: default;
+}
+.vio-native-card.knd-row .knd-row-image { grid-area: img; align-self: start; width: 100%; cursor: pointer; }
+.vio-native-card.knd-row .knd-row-image .vnc-badge { top: 5px; left: 5px; font-size: 11px; padding: 4px 6px; }
+.vio-native-card.knd-row .knd-row-main { grid-area: main; min-width: 0; display: flex; flex-direction: column; align-self: center; }
+.vio-native-card.knd-row .vnc-brand { font-size: 11px; margin-bottom: 3px; }
+.vio-native-card.knd-row .vnc-name { font-size: 15px; margin: 0 0 6px; cursor: pointer; }
+.vio-native-card.knd-row .vnc-price { font-size: 18px; margin-bottom: 4px; }
+.vio-native-card.knd-row .knd-option-group, .vio-native-card.knd-row .knd-option-values { margin-bottom: 8px; }
+.vio-native-card.knd-row .knd-offer-end { margin: 0 0 4px; }
+.vio-native-card.knd-row .knd-row-annonse { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #888; margin-bottom: 4px; }
+.vio-native-card.knd-row .knd-seller { margin-top: 6px; font-size: 11.5px; }
+.vio-native-card.knd-row .knd-seller .knd-seller-logo { height: 16px; }
+.vio-native-card.knd-row .knd-row-cta { grid-area: cta; min-width: 0; align-self: center; }
+.vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps, .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps-official,
+.vio-native-card.knd-row .knd-row-cta > .knd-more { margin: 0; }
+.vio-native-card.knd-row .knd-row-cta .knd-vipps-note { margin: 6px 0 0; }
+@container knd-rows (max-width: 599.98px) {
+  .vio-native-card.knd-row {
+    grid-template-columns: 84px minmax(0, 1fr); grid-template-areas: "img main" "img cta";
+    column-gap: 14px; padding: 14px 0; align-items: start;
+  }
+  .vio-native-card.knd-row .vnc-price { font-size: 17px; }
+}
+/* On sale (a real compare-at in the feed): the sale price in the sale colour, the old one struck through beside it. */
+.vio-native-card .vnc-price.knd-on-sale .knd-now { color: var(--knd-sale, #c8102e); }
 .vio-native-card .vnc-price .knd-was {
   margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
 }
@@ -174,21 +205,26 @@ export function classRef(cls: string) {
   };
 }
 
-/** `-60 %` from the feed's sale (compare-at above the price) — the Vio card's «Auto (from sale price)» formula. */
+/** `−60 %` from the feed's sale (compare-at above the price) — the Vio card's «Auto (from sale price)» formula. */
 export function salePercent(product: any): string | null {
   const now = getProductPriceAmount(product);
   const was = compareAtAmount(product);
   if (now == null || was == null || now <= 0) return null;
-  return `-${Math.round((1 - now / was) * 100)} %`;
+  const pct = Math.round((1 - now / was) * 100);
+  return pct > 0 ? `\u2212${pct} %` : null;
 }
 
 /**
- * The badge of the card and the drawer, in the Vio badge's place: the
- * editor's text while its dates say so, else the feed sale's percentage.
- * Never a made-up price: the Hurtigkasse charges the shop's price.
+ * The badge of the card, the row and the drawer, in the Vio badge's place.
+ * A real sale in the feed (compare-at above the price) wins: its «−NN %» is
+ * computed from the two prices, which are shown together (the old one struck
+ * through). Without one, the editor's text from the sheet while its dates
+ * say so. The sheet's % never becomes an old price: Norwegian pricing rules
+ * want the «før-pris» to be a price the shop really charged, and the
+ * Hurtigkasse charges the shop's price.
  */
 export function cardBadge(group: KondomerietGroup, product: any, now = Date.now()): string | null {
-  return activeDiscount(group, now) ?? salePercent(product);
+  return salePercent(product) ?? activeDiscount(group, now);
 }
 
 /** The brand's logo in a seller line: a fixed height, its own width, and gone if it does not load. */

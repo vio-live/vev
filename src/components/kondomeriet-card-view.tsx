@@ -126,6 +126,13 @@ type CardViewProps = {
   imageOverride?: string;
   /** One of the first cards on screen: its image loads eagerly, with high priority. */
   priority?: boolean;
+  /**
+   * `card` (default) | `row`: the Kondomeriet Product List's row — a small
+   * square image, brand / name / price beside it, the buy button on the right
+   * (under the text on a phone). Same group, price, options, buy and
+   * analytics as the card: only the markup differs.
+   */
+  variant?: "card" | "row";
 };
 
 /** The card sells itself (Vipps or the disabled bar) rather than sending to the product info: the Auto/Always/Never rule. */
@@ -146,7 +153,9 @@ export function KondomerietCardView({
   rootRef,
   imageOverride,
   priority = false,
+  variant = "card",
 }: CardViewProps) {
+  const row = variant === "row";
   const { disabled: editor } = useEditorState();
   const {
     layout = "standard",
@@ -206,9 +215,11 @@ export function KondomerietCardView({
     else if (rootRef) (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
   };
   // Vipps' own button wraps below 220px; its compact form keeps one line (as the Vio card).
+  // A row measures its button's column, not the whole row.
+  const ctaRef = useRef<HTMLDivElement | null>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
-    const el = localRef.current;
+    const el = row ? ctaRef.current : localRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setNarrow(el.getBoundingClientRect().width < 220));
     ro.observe(el);
@@ -225,6 +236,24 @@ export function KondomerietCardView({
   const isImageOnly = layout === "image-only";
   const isOverlay = layout === "overlay";
   const showMeta = !isImageOnly && !isOverlay;
+
+  if (loading && row) {
+    return (
+      <div className="vio-native-card knd-row" aria-busy="true">
+        <div className="vnc-image knd-row-image">
+          <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
+        </div>
+        <div className="knd-row-main">
+          <div className="vnc-skel" style={{ height: 10, width: "35%", marginBottom: 8 }} />
+          <div className="vnc-skel" style={{ height: 15, width: "75%", marginBottom: 8 }} />
+          <div className="vnc-skel" style={{ height: 15, width: "25%" }} />
+        </div>
+        <div className="knd-row-cta">
+          <div className="vnc-skel" style={{ height: 46 }} />
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -418,10 +447,11 @@ export function KondomerietCardView({
   const selector = (
     <OptionSelector group={group} index={safeIndex} onSelect={select} style={selectorStyle} title={optionTitle} />
   );
+  // The sale price big; with a real compare-at, the old price struck through beside it (the badge says the %).
   const priceEl =
     showPrice && price ? (
-      <div className="vnc-price">
-        {price}
+      <div className={was != null ? "vnc-price knd-on-sale" : "vnc-price"}>
+        <span className="knd-now">{price}</span>
         {was != null ? <span className="knd-was">{cardPrice(was, p)}</span> : null}
       </div>
     ) : null;
@@ -447,16 +477,86 @@ export function KondomerietCardView({
       {inBody && buyHere && canBuy && note ? <div className="knd-vipps-note">{note}</div> : null}
       {inBody && trust ? <div className="knd-trust">{trust}</div> : null}
       {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
-      {showSeller ? (
-        <div className="knd-seller">
-          {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
-          <span>
-            Du handler direkte hos <strong>{sellerName}</strong>
-          </span>
+      {sellerEl}
+    </>
+  );
+
+  const editorWarnings = (
+    <>
+      {editor && cw.error ? (
+        <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
+          Editor: tracking link ignored — {cw.error}.{" "}
+          {cw.link ? `Circlewise uses the default (ref1 ${cw.link.ref1}).` : "«Kjøp med Vipps» goes direct to the Hurtigkasse."}
+        </div>
+      ) : null}
+      {editor && buyHere && !option.slug ? (
+        <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
+          Editor: «{option.label}» has no kondomeriet.no URL — set its Hurtigkasse slug in the group's Details.
         </div>
       ) : null}
     </>
   );
+  const sellerEl = showSeller ? (
+    <div className="knd-seller">
+      {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
+      <span>
+        Du handler direkte hos <strong>{sellerName}</strong>
+      </span>
+    </div>
+  ) : null;
+  const imageKeys = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onImage();
+    }
+  };
+  const imgEl = img ? (
+    <img
+      src={img}
+      alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()}
+      // The box is square (.vnc-image, aspect-ratio 1/1): the size only states the ratio — no layout shift.
+      width={500}
+      height={500}
+      decoding="async"
+      loading={priority ? "eager" : "lazy"}
+      {...({ fetchpriority: priority ? "high" : "auto" } as any)}
+      onError={(e) => {
+        const el = e.currentTarget;
+        if (image.fallback && el.src !== image.fallback) el.src = image.fallback;
+      }}
+    />
+  ) : null;
+
+  // The Kondomeriet Product List's row: the card's pieces in a row.
+  if (row) {
+    return (
+      <div ref={setRoot} className={`vio-native-card knd-row${buyHere ? "" : " knd-row-more"}`} style={accentStyle}>
+        <div className="vnc-image knd-row-image" role="button" tabIndex={0} aria-label={`${brand} ${name} ${price} – ${infoLabel}`} onClick={onImage} onKeyDown={imageKeys}>
+          {imgEl}
+          {badge ? <span className="vnc-badge">{badge}</span> : null}
+        </div>
+        <div className="knd-row-main">
+          {showBrand && brand ? <div className="vnc-brand">{brand}</div> : null}
+          {showName && name ? (
+            <div className="vnc-name" role="button" tabIndex={0} onClick={() => openInfo()} onKeyDown={(e) => (e.key === "Enter" ? openInfo() : null)}>
+              {name}
+            </div>
+          ) : null}
+          {buyHere ? selector : null}
+          {priceEl}
+          {offer ? <div className="knd-offer-end">{offer}</div> : null}
+          {annonse ? <div className="knd-row-annonse">{annonseText}</div> : null}
+          {sellerEl}
+          {editorWarnings}
+        </div>
+        <div className="knd-row-cta" ref={ctaRef}>
+          {vippsEl}
+          {buyHere && canBuy && note ? <div className="knd-vipps-note">{note}</div> : null}
+        </div>
+        {!editor ? <KondomerietDetailHost /> : null}
+      </div>
+    );
+  }
 
   return (
     <div ref={setRoot} className={rootClass} style={accentStyle}>
@@ -467,29 +567,9 @@ export function KondomerietCardView({
         tabIndex={0}
         aria-label={`${brand} ${name} ${price} – ${infoLabel}`}
         onClick={onImage}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onImage();
-          }
-        }}
+        onKeyDown={imageKeys}
       >
-        {img ? (
-          <img
-            src={img}
-            alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()}
-            // The box is square (.vnc-image, aspect-ratio 1/1): the size only states the ratio — no layout shift.
-            width={500}
-            height={500}
-            decoding="async"
-            loading={priority ? "eager" : "lazy"}
-            {...({ fetchpriority: priority ? "high" : "auto" } as any)}
-            onError={(e) => {
-              const el = e.currentTarget;
-              if (image.fallback && el.src !== image.fallback) el.src = image.fallback;
-            }}
-          />
-        ) : null}
+        {imgEl}
         {badge ? <span className="vnc-badge">{badge}</span> : null}
         {annonse ? <span className="vnc-annonse">{annonseText}</span> : null}
         {tagText.trim() ? <span className="knd-tag">{tagText.trim()}</span> : null}
@@ -515,17 +595,7 @@ export function KondomerietCardView({
             {vippsEl}
           </>
         )}
-        {editor && cw.error ? (
-          <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
-            Editor: tracking link ignored — {cw.error}.{" "}
-            {cw.link ? `Circlewise uses the default (ref1 ${cw.link.ref1}).` : "«Kjøp med Vipps» goes direct to the Hurtigkasse."}
-          </div>
-        ) : null}
-        {editor && buyHere && !option.slug ? (
-          <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
-            Editor: «{option.label}» has no kondomeriet.no URL — set its Hurtigkasse slug in the group's Details.
-          </div>
-        ) : null}
+        {editorWarnings}
         {buyHere && infoButton && infoButtonStyle === "bar" ? (
           <button type="button" className="vnc-btn-text vnc-btn-bar" onClick={onInfoButton}>
             {infoLabel}

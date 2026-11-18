@@ -334,6 +334,7 @@ touches `Vio.cart` or `Vio.checkout`.
 | **Kondomeriet Config (SDK)** | Once per page, instead of Vio Config. Same connection (API key, sponsor, campaign, environment), page identity, slots, theme and analytics, but no Vio cart, checkout, SDK detail or cart button — it mounts only the Kondomeriet detail drawer. It *is* `VioConfig` with an internal `overlaysOverride` prop (not in the panel), so the connection flow is not copied. |
 | **Kondomeriet Product Card** | One card for a product **group**. |
 | **Kondomeriet Product Carousel** / **Grid** | One card per group; same layout options as the Vio carousel / grid. |
+| **Kondomeriet Product List** | The same groups as rows: a small square image, brand / name / price beside it, «Kjøp nå med Vipps» or «Se mer» (the same Auto / Always / Never rule) on the right, under the text on a phone. Thin line between rows; kicker, heading and disclaimer above. Each row is the card (`KondomerietCardView`, `variant="row"`): same price, options, buying, product info and analytics. For Vio it is a grid (slot kind and template `product-grid`). |
 
 **Same look as the Vio blocks.** The card is the Vio Product Card: the same `.vio-native-card` markup, styles,
 layouts (standard, image only, info over image, horizontal), accent colour, badge, «Annonse», price and editable CSS
@@ -367,13 +368,14 @@ discount badge (the carousel / grid add, reorder and remove cards). Stored as JS
 - **Stock**: quantity 0 is sold out (the feed sweep sets it) — the option is struck through and disabled, like a
   sold-out size in the SDK detail, and the button says «Utsolgt». The card starts on the first option in stock.
 - **Price**: the selected option's price incl. taxes, written as the Vio card writes it (`1199 NOK`) and, in the
-  drawer, as the SDK detail does (`1 199 Kr`). A real sale from the feed (`compare_at` above the price) adds the old
-  price struck through (the SDK detail's `.compare-at`) and a `-60 %` badge — the Vio card's «Auto (from sale
-  price)» — on the card and in the drawer.
+  drawer, as the SDK detail does (`1 199 Kr`). A real sale from the feed (`compare_at` above the price) shows the
+  sale price in the sale colour with the old price struck through beside it, and a `−NN %` badge computed from the
+  two — on the card, the row and in the drawer, with nothing to set.
 - **Discount badge**: per card, manual text (e.g. `−60 %`) with optional start / end (`datetime-local`, read in
-  the reader's time zone — Norway for VG readers), shown in the Vio badge's place on the card and on the drawer's
-  photo while its dates say so; it wins over the sale %. It never changes the price: the Hurtigkasse charges the
-  shop's.
+  the reader's time zone — Norway for VG readers), shown in the Vio badge's place on the card, the row and the
+  drawer's photo while its dates say so — **unless the feed has a real sale**, whose computed % replaces it. The
+  sheet's % never becomes an old price: Norwegian pricing rules want the «før-pris» to be a price the shop really
+  charged, and the Hurtigkasse charges the shop's price.
 - **Picker**: the Kondomeriet blocks' catalog picker reads the catalog fresh each time it opens (`useCache: false`,
   `loadFreshCatalog`): the shared `loadCatalog` of the Vio pickers answered with a list the gateway had cached, so a
   product added to the collection that day did not show. The Vio blocks' pickers are unchanged.
@@ -417,7 +419,7 @@ gets two columns, 320 px one carousel card plus a peek. Inside the card the Vio 
 Vipps button (compact «Kjøp nå»), the option pills and the bars on one line.
 
 **More of the Vio card's choices, and the editor's own.** Besides layout, accent, brand / name / price / retailer /
-description / «Annonse»: *Discount badge* (Off · Auto — the card's badge in its dates, else the sale % · Manual),
+description / «Annonse»: *Discount badge* (Off · Auto — the feed's sale %, else the card's badge in its dates · Manual),
 *Vipps Hurtigkasse button* (bar / off), *Image click* (product info / Kjøp med Vipps), the product-info button as
 bar, pill or icon, and three own texts — *Subtitle* (under the name), *Label on the photo*, *Footer* — all with
 editable CSS. **Card image** (Vev image): replaces the product's photo on the card and goes first in the product

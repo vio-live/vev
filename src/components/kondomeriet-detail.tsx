@@ -73,6 +73,8 @@ const EXTRA_CSS = `
   font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
 }
 .buy-vipps-official[aria-disabled="true"] { pointer-events: none; opacity: 0.5; }
+/* On sale (a real compare-at): the sale price in the sale colour; the SDK's .compare-at strikes the old one. */
+.price.knd-now-sale { color: var(--knd-sale, #c8102e); }
 
 /* «Kjøp direkte fra artikkelen»: the same badge, in the brand's row. */
 .knd-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -504,7 +506,7 @@ export function KondomerietDetail({
               {rating ? <RatingLine text={rating} /> : null}
               {amount != null ? (
                 <div className="price-row">
-                  <span className="price">{detailPrice(amount, p)}</span>
+                  <span className={was != null ? "price knd-now-sale" : "price"}>{detailPrice(amount, p)}</span>
                   {was != null ? <span className="compare-at">{detailPrice(was, p)}</span> : null}
                 </div>
               ) : null}
