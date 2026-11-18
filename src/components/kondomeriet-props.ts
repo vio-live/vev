@@ -141,19 +141,25 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     ...CARD_CONFIG_PROPS.find((p) => p.name === "discountText"),
     hidden: (ctx: any) => (ctx?.value?.discountMode ?? "auto") !== "manual",
   },
+  // Where the card sells (replaces the old «Vipps Hurtigkasse button»: a
+  // block placed with that switched off reads as Never — resolveBuyOnCard).
   {
-    name: "vippsButton",
-    title: "Vipps Hurtigkasse button",
+    name: "buyOnCard",
+    title: "Buy on card",
     type: "select",
-    initialValue: "bar",
+    initialValue: "auto",
+    description:
+      "Auto: one product → «Kjøp med Vipps» on the card; options (colours, sizes) → only «Se mer», chosen and bought in the product info. Always: selector and Vipps on every card. Never: only «Se mer». A card's own choice (Details) wins.",
     options: {
       display: "dropdown",
       items: [
-        { value: "bar", label: "Full-width bar" },
-        { value: "hidden", label: "Off (product info only)" },
+        { value: "auto", label: "Auto (Vipps for single products)" },
+        { value: "always", label: "Always (selector + Vipps)" },
+        { value: "never", label: "Never (only «Se mer»)" },
       ],
     },
   },
+  { name: "moreLabel", title: "«Se mer» label", type: "string", initialValue: "Se mer" },
   {
     name: "imageClickAction",
     title: "Image click",
@@ -247,6 +253,7 @@ export const KONDOMERIET_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .knd-subtitle", title: "Subtitle", properties: ["color", "font-size", "font-weight", "line-height"] },
   { selector: ".vio-native-card .knd-tag", title: "Label on the photo", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .knd-footer", title: "Footer", properties: ["color", "font-size", "line-height"] },
+  { selector: ".vio-native-card .knd-more", title: "«Se mer» button", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .knd-seller", title: "Seller line", properties: ["color", "font-size", "letter-spacing", "gap"] },
   { selector: ".vio-native-card .knd-seller-logo", title: "Seller logo", properties: ["height", "max-width", "opacity"] },
   { selector: ".vio-native-card .knd-info-icon", title: "Product info icon", properties: ["background", "color", "box-shadow", "width", "height"] },
@@ -272,7 +279,7 @@ const CONFIG_KEYS = [
   "layout", "accentColor", "showBrand", "showName", "showPrice", "showRetailer", "showSeller", "showDescription", "descriptionText",
   "annonse", "annonseText", "optionTitle", "selectorStyle", "vippsLabel", "infoButton", "infoButtonStyle", "infoLabel",
   "hurtigkasseTarget", "directBadge", "directBadgeOnCard", "perks", "stockText", "infoImageOnly", "discountMode",
-  "discountText", "vippsButton", "imageClickAction", "subtitle", "tagText", "footerText",
+  "discountText", "vippsButton", "buyOnCard", "moreLabel", "imageClickAction", "subtitle", "tagText", "footerText",
 ] as const;
 
 export function pickKondomerietConfig(props: Record<string, any>): KondomerietCardConfig {

@@ -21,11 +21,26 @@ function ctx(option: KondomerietOption, attribution: VioAttribution, sponsorId: 
 }
 
 /** "Se produktinfo" / the image: `select_item` + `view_item` (the drawer opens) + `cta_click open`. */
-export function trackOpenInfo(option: KondomerietOption, attribution: VioAttribution, sponsorId: number | null, label?: string): void {
+/** The button id of «Se mer» — the card that sends to the product info to choose and buy (`cta_click see_more`). */
+export const SEE_MORE_CTA = "see_more";
+
+/**
+ * «Se produktinfo» / the image / «Se mer»: `select_item` + `view_item` (the
+ * drawer opens) + `cta_click` — `open`, or `see_more` for the «Se mer» card,
+ * so a card that buys in place can be compared with one that sends to the
+ * product info.
+ */
+export function trackOpenInfo(
+  option: KondomerietOption,
+  attribution: VioAttribution,
+  sponsorId: number | null,
+  label?: string,
+  cta: string = "open"
+): void {
   const item = productToItem(option.product);
   trackSelectItem(item, undefined, attribution);
   trackViewItem(item, attribution);
-  trackCta({ ...ctx(option, attribution, sponsorId), cta: "open", location: "card", label });
+  trackCta({ ...ctx(option, attribution, sponsorId), cta, location: "card", label });
 }
 
 /** A colour / model / size picked: `cta_click size` with the option, like the SDK detail's pills. */

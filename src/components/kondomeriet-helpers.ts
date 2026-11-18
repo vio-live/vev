@@ -49,7 +49,31 @@ export type KondomerietGroup = {
   /** `datetime-local` values ("2026-11-27T00:00"), read in the reader's time zone. Empty: open-ended. */
   discountStart?: string;
   discountEnd?: string;
+  /** This card's «Buy on card», overriding the block's; absent = the block's. */
+  buyOnCard?: BuyOnCard;
 };
+
+/**
+ * Where a card sells (Angelo, conversion default): `auto` — a single product
+ * buys on the card («Kjøp med Vipps» + «Se produktinfo»), a group with options
+ * shows only «Se mer», which opens the product info to choose and buy there;
+ * `always` — the selector and Vipps on every card (the earlier behaviour);
+ * `never` — only «Se mer».
+ */
+export type BuyOnCard = "auto" | "always" | "never";
+
+function cleanBuyOnCard(v: unknown): BuyOnCard | undefined {
+  return v === "auto" || v === "always" || v === "never" ? v : undefined;
+}
+
+/**
+ * The card's mode: its group's choice, else the block's, else — for a block
+ * placed before this prop existed — `never` if its Vipps button was switched
+ * off (the old `vippsButton: hidden`, which this prop replaces), else `auto`.
+ */
+export function resolveBuyOnCard(groupValue: unknown, blockValue: unknown, legacyVippsButton: unknown): BuyOnCard {
+  return cleanBuyOnCard(groupValue) ?? cleanBuyOnCard(blockValue) ?? (legacyVippsButton === "hidden" ? "never" : "auto");
+}
 
 /** Vev value of a group editor field. */
 export type GroupsValue = { data?: string };
@@ -100,6 +124,7 @@ export function parseGroups(value?: GroupsValue | null): KondomerietGroup[] {
       discount: cleanText(src.discount),
       discountStart: cleanText(src.discountStart),
       discountEnd: cleanText(src.discountEnd),
+      buyOnCard: cleanBuyOnCard(src.buyOnCard),
     });
   }
   return groups;
@@ -122,6 +147,8 @@ function normalizeGroup(g: KondomerietGroup): KondomerietGroup {
   const slugs = keep(g.slugs);
   if (labels) out.labels = labels;
   if (slugs) out.slugs = slugs;
+  const buy = cleanBuyOnCard(g.buyOnCard);
+  if (buy) out.buyOnCard = buy;
   for (const k of ["title", "discount", "discountStart", "discountEnd"] as const) {
     const v = cleanText(g[k]);
     if (v) out[k] = v;
