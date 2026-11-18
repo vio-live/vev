@@ -5,9 +5,13 @@ import {
   fetchVioProducts,
   getActiveCountryCode,
   getActiveCurrency,
+  getActiveSponsorId,
   getProductPriceAmount,
+  resolveApiKey,
   sponsorForCommerce,
+  sponsorForSlot,
   withRetry,
+  type CatalogProduct,
   type VioAttribution,
 } from "./vio-helpers";
 
@@ -472,6 +476,65 @@ export function fetchKondomerietProducts(
     () => fetchCache.delete(key)
   );
   return pending;
+}
+
+// ---------------------------------------------------------------------------
+// The editor's catalog (fresh every time)
+// ---------------------------------------------------------------------------
+
+/** The Vio pickers' catalog query (vio-helpers' PRODUCTS_QUERY), asked for without the gateway's cache. */
+const FRESH_CATALOG_QUERY = `
+  query KondomerietCatalog($currency: String, $shippingCountryCode: String, $imageSize: ImageSize, $useCache: Boolean!) {
+    Channel {
+      Products(
+        barcode_list: []
+        sku_list: []
+        category_ids: []
+        product_ids: []
+        currency: $currency
+        image_size: $imageSize
+        useCache: $useCache
+        shipping_country_code: $shippingCountryCode
+      ) {
+        id
+        brand
+        title
+        options_enabled
+        options { id name values }
+        variants { id title }
+        price { amount amount_incl_taxes currency_code }
+        images { url }
+      }
+    }
+  }
+`;
+
+/**
+ * The sponsor's whole catalog, read fresh — for the Kondomeriet pickers. The
+ * Vio blocks' `loadCatalog` keeps one answer per page and asks the gateway
+ * with `useCache: true`, whose cached list outlives a reload: a product added
+ * to the collection that day (Ring For Sex, 410659) did not show. Here every
+ * opening asks again with `useCache: false` (which neither reads nor writes
+ * the gateway's cache), so the Vio blocks' pickers are left as they are.
+ */
+export function loadFreshCatalog(): Promise<CatalogProduct[]> {
+  return withRetry(
+    async () => {
+      if (!resolveApiKey()) throw new Error("Connect a Vio API key in the Config block to list its products");
+      ensureVioInit();
+      await Vio.bootstrap();
+      const sponsorId = sponsorForSlot(null, getActiveSponsorId());
+      if (sponsorId == null) throw new Error("Connect a Vio API key in the Config block to list its products");
+      const data = await Vio.commerceFor(sponsorId).raw.request(FRESH_CATALOG_QUERY, {
+        currency: getActiveCurrency(),
+        shippingCountryCode: getActiveCountryCode(),
+        imageSize: "large",
+        useCache: false,
+      });
+      return (data?.Channel?.Products ?? []) as CatalogProduct[];
+    },
+    { attempts: 4, delay: 400, label: "kondomeriet catalog" }
+  );
 }
 
 // ---------------------------------------------------------------------------

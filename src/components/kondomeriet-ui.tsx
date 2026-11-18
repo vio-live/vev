@@ -1,55 +1,64 @@
 import React from "react";
+import * as VioSdk from "../../vio-sdk";
 import { primaryImageUrl } from "../../vio-sdk";
 import { injectCardStyles } from "./card-view";
 import { getProductPriceAmount } from "./vio-helpers";
-import { compareAtAmount, formatKr, isSoldOut, type ResolvedGroup } from "./kondomeriet-helpers";
+import { activeDiscount, compareAtAmount, formatKr, isSoldOut, type KondomerietGroup, type ResolvedGroup } from "./kondomeriet-helpers";
 
 /**
- * The pieces the Kondomeriet card and its detail drawer share: the `knd-`
- * styles (on top of the Vio card's, which card-view.tsx injects), the option
- * selector, the price row and the Vipps button.
+ * What the Kondomeriet card and its drawer share. The card IS the Vio card:
+ * the same `.vio-native-card` markup and styles (injected by card-view.tsx),
+ * the same editable CSS. The only `knd-` rules here are the pieces the Vio
+ * card has no equivalent for: the option selector — drawn with the values of
+ * the SDK detail's own option pills (`.option-label`, `.option-pill`) — and
+ * the struck-through old price, drawn like the SDK detail's `.compare-at`.
  */
 
 const STYLE_ID = "kondomeriet-card-styles";
 const KND_CSS = `
-.vio-native-card.knd-card .vnc-name { min-height: 0; }
-.vio-native-card.knd-card .knd-option-title { font-size: 12px; color: var(--vio-color-text-secondary, #666); margin: 0 0 6px; }
-.vio-native-card.knd-card .knd-option-title b { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
-.vio-native-card.knd-card .knd-options { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
-.knd-pill {
-  border: 1px solid var(--vio-color-border, #d4d4d4); background: var(--vio-color-surface, #fff); color: var(--vio-color-text, #0a0a0a);
-  font-family: inherit; font-size: 12px; line-height: 1.2; padding: 6px 10px; border-radius: 999px; cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+.vio-native-card .knd-option-group { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.vio-native-card .knd-option-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: var(--vio-tracking-label, 0.1em);
+  color: var(--vio-color-text-secondary, #666); font-weight: 500; line-height: 1.4;
 }
-.knd-pill:hover { border-color: var(--vio-color-text, #0a0a0a); }
-.knd-pill[aria-pressed="true"] { border-color: var(--vnc-accent, #0a0a0a); box-shadow: inset 0 0 0 1px var(--vnc-accent, #0a0a0a); font-weight: 600; }
-.knd-pill.knd-soldout { color: #9a9a9a; text-decoration: line-through; }
-.knd-thumb {
-  width: 44px; height: 44px; padding: 0; overflow: hidden; cursor: pointer;
-  border: 1px solid var(--vio-color-border, #d4d4d4); border-radius: var(--vio-card-badge-radius, 4px);
-  background: var(--vio-color-surface-muted, #f2f2f2);
+.vio-native-card .knd-option-chosen { color: var(--vio-color-text, #0a0a0a); font-weight: 700; }
+.vio-native-card .knd-option-values { display: flex; flex-wrap: wrap; gap: 6px; }
+.vio-native-card .knd-option-pill {
+  flex: 0 0 auto; box-sizing: border-box; min-height: 36px; min-width: 36px; padding: 0 12px;
+  border-radius: var(--vio-detail-option-radius, 0); background: #fff; border: 1px solid var(--vio-color-border, #e5e5e5);
+  cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500; color: inherit;
+  transition: border-color 0.15s, background 0.15s;
 }
-.knd-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.knd-thumb[aria-pressed="true"] { border-color: var(--vnc-accent, #0a0a0a); box-shadow: 0 0 0 1px var(--vnc-accent, #0a0a0a); }
-.knd-thumb.knd-soldout { opacity: 0.4; }
-.vio-native-card.knd-card .knd-select {
-  width: 100%; box-sizing: border-box; margin: 0 0 12px; padding: 9px 10px; font-family: inherit; font-size: 13px;
-  border: 1px solid var(--vio-color-border, #d4d4d4); border-radius: var(--vio-card-bar-radius, 6px);
-  background: var(--vio-color-surface, #fff); color: var(--vio-color-text, #0a0a0a);
+.vio-native-card .knd-option-pill:hover { border-color: var(--vio-color-text, #0a0a0a); }
+.vio-native-card .knd-option-pill[aria-pressed="true"] {
+  border-color: var(--vio-color-text, #0a0a0a); background: var(--vio-color-text, #0a0a0a); color: var(--vio-color-text-on-primary, #fff);
 }
-.knd-price-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.knd-price-row .knd-was { font-size: 0.85em; font-weight: 500; color: var(--vio-color-text-tertiary, #8a8a8a); text-decoration: line-through; }
-.knd-price-row .knd-now.knd-sale { color: var(--knd-sale, #c8102e); }
-.knd-editor-note { font-size: 11px; color: #b42318; line-height: 1.4; margin: 6px 0 0; }
-.vio-native-card.knd-card .knd-btn-info {
-  width: 100%; margin-top: 8px; padding: 12px; box-sizing: border-box; cursor: pointer;
-  border: 1px solid currentColor; background: transparent; color: var(--vio-color-text, #0a0a0a);
-  border-radius: var(--vio-card-bar-radius, 6px); font-family: inherit; font-size: 12px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.08em; transition: background 0.15s ease;
+.vio-native-card .knd-option-pill.unavailable {
+  opacity: 0.4; cursor: not-allowed; text-decoration: line-through;
+  background: repeating-linear-gradient(-45deg, #fafafa, #fafafa 5px, #f0f0f0 5px, #f0f0f0 10px);
 }
-.vio-native-card.knd-card .knd-btn-info:hover { background: rgba(0, 0, 0, 0.04); }
+.vio-native-card .knd-option-pill.unavailable:hover { border-color: var(--vio-color-border, #e5e5e5); }
+.vio-native-card .knd-option-thumb {
+  flex: 0 0 auto; width: 44px; height: 44px; padding: 0; overflow: hidden; cursor: pointer; box-sizing: border-box;
+  background: var(--vio-color-surface-muted, #f2f2f2); border: 1px solid transparent; border-radius: var(--vio-detail-thumb-radius, 0);
+}
+.vio-native-card .knd-option-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.vio-native-card .knd-option-thumb[aria-pressed="true"] { border-color: var(--vio-color-text, #0a0a0a); }
+.vio-native-card .knd-option-thumb.unavailable { opacity: 0.4; cursor: not-allowed; }
+.vio-native-card .knd-option-select {
+  width: 100%; box-sizing: border-box; min-height: 36px; padding: 0 10px; font-family: inherit; font-size: 13px; font-weight: 500;
+  border: 1px solid var(--vio-color-border, #e5e5e5); border-radius: var(--vio-detail-option-radius, 0);
+  background: #fff; color: var(--vio-color-text, #0a0a0a);
+}
+.vio-native-card .vnc-price .knd-was {
+  margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
+}
+.vio-native-card.l-overlay .vnc-overlay-meta .knd-was { color: rgba(255, 255, 255, 0.75); }
+.vio-native-card.l-overlay .vnc-overlay-meta .knd-option-label { color: rgba(255, 255, 255, 0.85); }
+.vio-native-card.l-overlay .vnc-overlay-meta .knd-option-chosen { color: #fff; }
 @container (max-width: 220px) {
-  .vio-native-card.knd-card .knd-btn-info { padding: 10px 8px; font-size: 10.5px; letter-spacing: 0.04em; }
+  .vio-native-card .knd-option-pill { min-height: 30px; min-width: 30px; padding: 0 8px; font-size: 12px; }
+  .vio-native-card .knd-option-thumb { width: 36px; height: 36px; }
 }
 `;
 
@@ -62,7 +71,7 @@ export function injectKondomerietStyles(): void {
   document.head.appendChild(el);
 }
 
-/** A catalogue description (HTML) as plain text. */
+/** A catalogue description (HTML) as plain text, paragraphs kept as line breaks. */
 export function plainText(html: string | null | undefined): string {
   if (!html) return "";
   return html
@@ -80,7 +89,55 @@ export function plainText(html: string | null | undefined): string {
     .trim();
 }
 
-/** Selector of a group's options — shared by the card and the drawer. */
+/** The card's price as the Vio card writes it (`1199 NOK`). */
+export function cardPrice(amount: number | null | undefined, product: any): string {
+  return amount != null ? `${amount} ${product?.price?.currency_code ?? ""}`.trim() : "";
+}
+
+/** The detail's price as the SDK detail writes it (`1 199 Kr`) — its own formatter when the bundle exports it. */
+export function detailPrice(amount: number | null | undefined, product: any): string {
+  if (amount == null || !Number.isFinite(amount)) return "";
+  const fmt = (VioSdk as any).formatPrice;
+  if (typeof fmt === "function") {
+    try {
+      return fmt(amount, product?.price?.currency_code);
+    } catch {
+      /* fall through */
+    }
+  }
+  return formatKr(amount);
+}
+
+/**
+ * A ref that puts a class on a custom element (Vipps' `<vipps-mobilepay-button>`).
+ * React 18 writes `className` on a custom element as a `classname` attribute,
+ * so the class the stylesheet targets (`.vnc-btn-vipps-official`,
+ * `.buy-vipps-official`) never lands; set on the node it always does.
+ */
+export function classRef(cls: string) {
+  return (el: HTMLElement | null) => {
+    if (el && el.className !== cls) el.className = cls;
+  };
+}
+
+/** `-60 %` from the feed's sale (compare-at above the price) — the Vio card's «Auto (from sale price)» formula. */
+export function salePercent(product: any): string | null {
+  const now = getProductPriceAmount(product);
+  const was = compareAtAmount(product);
+  if (now == null || was == null || now <= 0) return null;
+  return `-${Math.round((1 - now / was) * 100)} %`;
+}
+
+/**
+ * The badge of the card and the drawer, in the Vio badge's place: the
+ * editor's text while its dates say so, else the feed sale's percentage.
+ * Never a made-up price: the Hurtigkasse charges the shop's price.
+ */
+export function cardBadge(group: KondomerietGroup, product: any, now = Date.now()): string | null {
+  return activeDiscount(group, now) ?? salePercent(product);
+}
+
+/** Selector of a group's options — the card's (light DOM, `knd-` classes). */
 export function OptionSelector({
   group,
   index,
@@ -96,53 +153,59 @@ export function OptionSelector({
 }) {
   if (group.options.length < 2) return null;
   const current = group.options[index];
-  const heading = title?.trim() ? (
-    <div className="knd-option-title">
-      {title.trim()}: <b>{current?.label}</b>
+  const label = (
+    <div className="knd-option-label">
+      {title?.trim() ? `${title.trim()}: ` : ""}
+      <span className="knd-option-chosen">{current?.label}</span>
     </div>
-  ) : null;
+  );
   if (style === "dropdown") {
     return (
-      <>
-        {heading}
+      <div className="knd-option-group">
+        {title?.trim() ? <div className="knd-option-label">{title.trim()}</div> : null}
         <select
-          className="knd-select"
+          className="knd-option-select"
           value={index}
           aria-label={title?.trim() || "Velg variant"}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onSelect(Number(e.target.value))}
         >
-          {group.options.map((o, i) => (
-            <option key={o.productId} value={i}>
-              {o.label}
-              {isSoldOut(o.product) ? " (utsolgt)" : ""}
-            </option>
-          ))}
+          {group.options.map((o, i) => {
+            const soldOut = isSoldOut(o.product);
+            return (
+              <option key={o.productId} value={i} disabled={soldOut && i !== index}>
+                {o.label}
+                {soldOut ? " (utsolgt)" : ""}
+              </option>
+            );
+          })}
         </select>
-      </>
+      </div>
     );
   }
   return (
-    <>
-      {heading}
-      <div className="knd-options" role="group" aria-label={title?.trim() || "Varianter"}>
+    <div className="knd-option-group">
+      {label}
+      <div className="knd-option-values" role="group" aria-label={title?.trim() || "Varianter"}>
         {group.options.map((o, i) => {
           const soldOut = isSoldOut(o.product);
           const pressed = i === index;
           const click = (e: React.MouseEvent) => {
             e.stopPropagation();
-            onSelect(i);
+            if (!soldOut) onSelect(i);
           };
+          const name = `${o.label}${soldOut ? " (utsolgt)" : ""}`;
           if (style === "thumbs") {
             const img = primaryImageUrl(o.product) ?? "";
             return (
               <button
                 key={o.productId}
                 type="button"
-                className={`knd-thumb${soldOut ? " knd-soldout" : ""}`}
+                className={`knd-option-thumb${soldOut ? " unavailable" : ""}`}
                 aria-pressed={pressed}
-                aria-label={`${o.label}${soldOut ? " (utsolgt)" : ""}`}
-                title={`${o.label}${soldOut ? " (utsolgt)" : ""}`}
+                aria-label={name}
+                title={name}
+                disabled={soldOut && !pressed}
                 onClick={click}
               >
                 {img ? <img src={img} alt="" loading="lazy" /> : null}
@@ -153,9 +216,10 @@ export function OptionSelector({
             <button
               key={o.productId}
               type="button"
-              className={`knd-pill${soldOut ? " knd-soldout" : ""}`}
+              className={`knd-option-pill${soldOut ? " unavailable" : ""}`}
               aria-pressed={pressed}
               title={soldOut ? "Utsolgt" : undefined}
+              disabled={soldOut && !pressed}
               onClick={click}
             >
               {o.label}
@@ -163,61 +227,6 @@ export function OptionSelector({
           );
         })}
       </div>
-    </>
-  );
-}
-
-/** Price of one option: the struck-through compare-at when the feed has a sale. */
-export function PriceRow({ product, className = "vnc-price" }: { product: any; className?: string }) {
-  const now = getProductPriceAmount(product);
-  if (now == null) return null;
-  const was = compareAtAmount(product);
-  return (
-    <div className={`${className} knd-price-row`}>
-      {was != null ? <span className="knd-was">{formatKr(was)}</span> : null}
-      <span className={`knd-now${was != null ? " knd-sale" : ""}`}>{formatKr(now)}</span>
     </div>
-  );
-}
-
-/**
- * "Kjøp med vipps" — the Vio card's orange Vipps bar (`.vnc-btn-vipps`, so the
- * editable CSS "Vipps button" styles it too). `soldOut` turns it into a
- * disabled "Utsolgt"; `title` explains a disabled button (no Hurtigkasse).
- */
-export function VippsWordmarkButton({
-  label,
-  disabled,
-  soldOut,
-  title,
-  onClick,
-  className = "vnc-btn-vipps",
-}: {
-  label: string;
-  disabled?: boolean;
-  soldOut?: boolean;
-  title?: string;
-  onClick: (e: React.MouseEvent) => void;
-  className?: string;
-}) {
-  if (soldOut) {
-    return (
-      <button type="button" className={className} disabled onClick={(e) => e.stopPropagation()}>
-        <span>Utsolgt</span>
-      </button>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={className}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={`${label} Vipps`}
-    >
-      <span>{label}</span>
-      <span className="vnc-vipps-badge">vipps</span>
-    </button>
   );
 }

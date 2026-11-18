@@ -1,94 +1,74 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ensureVippsButton } from "../../vio-sdk";
+import { getProductPriceAmount } from "./vio-helpers";
 import {
   KONDOMERIET_DETAIL_EVENT,
   KONDOMERIET_NAME,
+  compareAtAmount,
   isSoldOut,
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
-import {
-  OptionSelector,
-  PriceRow,
-  VippsWordmarkButton,
-  injectKondomerietStyles,
-  plainText,
-} from "./kondomeriet-ui";
+import { cardBadge, classRef, detailPrice, plainText } from "./kondomeriet-ui";
 
 /**
- * The Kondomeriet product detail — the drawer "Se produktinfo" opens. It is
- * laid out like the SDK's `<vio-product-detail>` (a bottom sheet on phones, a
- * side panel on wider screens: gallery, brand, name, the option pills, price,
- * the buy button, the description) but it is ours, because the SDK's detail
- * sells through Vio's cart: here the buy button is "Kjøp med Vipps", the
- * shop's own Hurtigkasse for the option chosen. It listens to its own event
+ * The Kondomeriet product detail — the drawer «Se produktinfo» opens — drawn
+ * with the SDK's own product detail stylesheet: the drawer lives in a shadow
+ * root that carries the styles of `<vio-product-detail>` (the detail Vio
+ * Config mounts), and its markup uses the same
+ * classes (`.backdrop`, `.modal`, `.topbar`, `.gallery-main`, `.headline`,
+ * `.price` / `.compare-at`, `.option-pill`, `.buy-vipps`, `.seller-note`,
+ * `.description-preview`…). So it looks — and follows the theme tokens and
+ * `--vio-detail-*` variables — exactly like the standard detail: side panel
+ * on desktop, bottom sheet on phones.
+ *
+ * Not the SDK element itself: that one sells through Vio's cart. Here the buy
+ * button is «Kjøp med Vipps», the shop's own Hurtigkasse for the option
+ * chosen, with the Hurtigkasse note under it. It opens on its own event
  * (`kondomeriet:open-detail`), never `vio:product-click`, so a Vio Config on
  * the same page never opens its detail or cart for these cards.
  *
  * One per page: `KondomerietDetailHost` is rendered by the Kondomeriet Config
- * and by every Kondomeriet card, and only the first one mounted shows the
- * drawer (claimed on globalThis — Vev may bundle blocks apart).
+ * and by every Kondomeriet card; only the first one mounted shows the drawer
+ * (claimed on globalThis — Vev may bundle blocks apart).
  */
 
-const STYLE_ID = "kondomeriet-detail-styles";
-const DETAIL_CSS = `
-.knd-detail-root { position: fixed; inset: 0; z-index: 2147483100; font-family: var(--vio-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif); color: var(--vio-color-text, #0a0a0a); }
-.knd-detail-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: knd-fade 0.18s ease; }
-.knd-detail-sheet {
-  position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 100vw); box-sizing: border-box;
-  background: var(--vio-color-surface, #fff); display: flex; flex-direction: column; box-shadow: -8px 0 32px rgba(0,0,0,0.18);
-  animation: knd-slide-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+/**
+ * The SDK detail's stylesheet as text (lit CSSResults, possibly nested), read
+ * from the `<vio-product-detail>` element class the SDK bundle defines on load
+ * (the package's `VioProductDetail` export is its React wrapper).
+ */
+function sdkDetailCss(): string {
+  const out: string[] = [];
+  const walk = (s: any) => {
+    if (!s) return;
+    if (Array.isArray(s)) s.forEach(walk);
+    else if (typeof s.cssText === "string") out.push(s.cssText);
+    else if (typeof s === "string") out.push(s);
+  };
+  try {
+    const elementClass: any = typeof customElements !== "undefined" ? customElements.get("vio-product-detail") : null;
+    walk(elementClass?.styles);
+  } catch {
+    /* an older bundle: the extra rules below still draw a usable drawer */
+  }
+  return out.join("\n");
 }
-.knd-detail-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--vio-color-border, #eee); }
-.knd-detail-top-title { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--vio-color-text-secondary, #666); font-weight: 600; }
-.knd-detail-close { width: 36px; height: 36px; border: none; background: transparent; font-size: 26px; line-height: 1; cursor: pointer; color: inherit; border-radius: 50%; }
-.knd-detail-close:hover { background: rgba(0,0,0,0.06); }
-.knd-detail-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-.knd-detail-gallery { position: relative; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; background: var(--vio-color-surface-muted, #f2f2f2); }
-.knd-detail-gallery::-webkit-scrollbar { display: none; }
-.knd-detail-gallery img { flex: 0 0 100%; width: 100%; aspect-ratio: 1 / 1; object-fit: contain; scroll-snap-align: start; display: block; }
-.knd-detail-badge { position: absolute; top: 12px; left: 12px; z-index: 2; background: var(--vnc-accent, #0a0a0a); color: #fff; font-size: 13px; font-weight: 700; padding: 6px 9px; border-radius: var(--vio-card-badge-radius, 4px); }
-.knd-detail-dots { display: flex; justify-content: center; gap: 6px; padding: 10px 0 0; }
-.knd-detail-dots span { width: 6px; height: 6px; border-radius: 50%; background: #d4d4d4; }
-.knd-detail-dots span.on { background: var(--vio-color-text, #0a0a0a); }
-.knd-detail-body { padding: 16px 20px 28px; }
-.knd-detail-brand { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--vio-color-text-secondary, #666); font-weight: 500; margin-bottom: 6px; }
-.knd-detail-name { font-family: var(--vio-font-serif, Georgia, serif); font-size: 24px; font-weight: 400; line-height: 1.2; margin: 0 0 14px; }
-.knd-detail-body .knd-option-title { font-size: 13px; color: var(--vio-color-text-secondary, #666); margin: 0 0 8px; }
-.knd-detail-body .knd-option-title b { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
-.knd-detail-body .knd-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
-.knd-detail-body .knd-pill { font-size: 13px; padding: 8px 14px; }
-.knd-detail-body .knd-select { width: 100%; margin: 0 0 16px; padding: 10px; font-size: 14px; border: 1px solid var(--vio-color-border, #d4d4d4); border-radius: var(--vio-card-bar-radius, 6px); background: var(--vio-color-surface, #fff); font-family: inherit; }
-.knd-detail-price { font-size: 22px; font-weight: 700; margin: 0 0 16px; }
-.knd-detail-vipps {
-  width: 100%; padding: 16px; border: none; border-radius: var(--vio-card-bar-radius, 6px); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  background: #ff5b24; color: #fff; font-family: inherit; font-size: 14px; font-weight: 700; letter-spacing: 0.04em; transition: background 0.15s;
+
+/** What the SDK detail has no rule for: the badge on the photo (the Vio card's badge). */
+const EXTRA_CSS = `
+.gallery-main .knd-badge {
+  position: absolute; top: 10px; left: 10px; z-index: 3;
+  background: var(--vnc-accent, #0a0a0a); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
 }
-.knd-detail-vipps:hover { background: #ec4f1c; }
-.knd-detail-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
-.knd-detail-vipps .vnc-vipps-badge { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
-.knd-detail-note { font-size: 12px; color: var(--vio-color-text-secondary, #666); line-height: 1.45; margin: 10px 0 0; text-align: center; }
-.knd-detail-desc-title { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; margin: 26px 0 8px; color: var(--vio-color-text-secondary, #666); }
-.knd-detail-desc p { font-size: 15px; line-height: 1.55; margin: 0 0 10px; color: var(--vio-color-text, #222); }
-@keyframes knd-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes knd-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes knd-slide-up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (max-width: 640px) {
-  .knd-detail-sheet { top: auto; left: 0; width: 100vw; max-height: 92vh; border-radius: 16px 16px 0 0; animation: knd-slide-up 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 -8px 32px rgba(0,0,0,0.18); }
-}
+.buy-vipps-official[aria-disabled="true"] { pointer-events: none; opacity: 0.5; }
 `;
 
-function injectDetailStyles(): void {
-  injectKondomerietStyles();
-  if (typeof document === "undefined" || document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = DETAIL_CSS;
-  document.head.appendChild(el);
-}
+const CLOSE_MS = 320;
 
-/** Every image of a product, primary first, no duplicates. */
+/** Every image of a product, in order, no duplicates. */
 function imagesOf(p: any): string[] {
   const list: any[] = Array.isArray(p?.images) ? [...p.images] : [];
   list.sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0));
@@ -97,45 +77,85 @@ function imagesOf(p: any): string[] {
   return out;
 }
 
-export function KondomerietDetail({ request, onClose }: { request: KondomerietDetailRequest; onClose: () => void }) {
+export function KondomerietDetail({
+  request,
+  host,
+  onClose,
+}: {
+  request: KondomerietDetailRequest;
+  /** The shadow host: `open` on it runs the SDK stylesheet's slide-in / slide-out. */
+  host: HTMLElement;
+  onClose: () => void;
+}) {
   const { group, attribution, sponsorId } = request;
   const [index, setIndex] = useState(request.index);
   const [photo, setPhoto] = useState(0);
-  const galleryRef = useRef<HTMLDivElement | null>(null);
+  const [vippsOfficial, setVippsOfficial] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
+  const [descClipped, setDescClipped] = useState(false);
+  const descRef = useRef<HTMLDivElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const closing = useRef(false);
+
+  const close = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    host.removeAttribute("open");
+    setTimeout(onClose, CLOSE_MS);
+  }, [host, onClose]);
 
   useEffect(() => {
-    injectDetailStyles();
-    // The page behind stays put; focus goes to the drawer and back on close.
+    // The closed position is laid out first (a forced reflow), then `open`:
+    // the SDK stylesheet's slide-in runs. Not on an animation frame — a
+    // background tab may never run one, leaving the drawer shut.
+    void (host.shadowRoot?.querySelector(".modal") as HTMLElement | null)?.offsetWidth;
+    host.setAttribute("open", "");
     const opener = document.activeElement as HTMLElement | null;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    closeRef.current?.focus();
+    closeRef.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
+    let cancelled = false;
+    ensureVippsButton().then((ok: boolean) => {
+      if (!cancelled) setVippsOfficial(ok);
+    });
     return () => {
+      cancelled = true;
+      host.removeAttribute("open");
       document.body.style.overflow = prevOverflow;
       document.removeEventListener("keydown", onKey);
-      opener?.focus?.();
+      opener?.focus?.({ preventScroll: true });
     };
-  }, [onClose]);
+  }, [host, close]);
 
   const option = group.options[Math.min(Math.max(0, index), group.options.length - 1)];
   const p = option.product;
   const images = imagesOf(p);
+  const activeImage = images[Math.min(photo, Math.max(0, images.length - 1))];
   const soldOut = isSoldOut(p);
   const canBuy = !!option.slug && !soldOut;
-  const paragraphs = plainText(p?.description).split("\n").filter(Boolean);
+  const amount = getProductPriceAmount(p);
+  const was = compareAtAmount(p);
+  const description = plainText(p?.description);
   const vippsLabel = request.vippsLabel || "Kjøp med";
-  const accentStyle = request.accentColor ? ({ ["--vnc-accent" as any]: request.accentColor } as React.CSSProperties) : undefined;
+  // The card's badge rule, for the option on screen: the group's text in its
+  // dates, else this option's own sale %.
+  const badge = cardBadge(group.group, p);
 
-  // Another option: its own photos, from the first.
+  // Another option: its own photos, from the first; the description folds again.
   useEffect(() => {
     setPhoto(0);
-    if (galleryRef.current) galleryRef.current.scrollLeft = 0;
+    setDescOpen(false);
   }, [option.productId]);
+  // «Les mer» only when the preview hides part of the text (as the SDK measures it).
+  useEffect(() => {
+    const el = descRef.current;
+    if (!el || descOpen) return;
+    setDescClipped(el.scrollHeight > el.clientHeight + 1);
+  }, [option.productId, descOpen, description]);
 
   const select = (i: number) => {
     if (i === index) return;
@@ -146,86 +166,165 @@ export function KondomerietDetail({ request, onClose }: { request: KondomerietDe
 
   const buy = () => {
     if (!canBuy) return;
-    buyWithHurtigkasse(option, {
-      attribution,
-      sponsorId,
-      where: "detail",
-      label: `${vippsLabel} Vipps`,
-      target: request.target,
-    });
+    buyWithHurtigkasse(option, { attribution, sponsorId, where: "detail", label: `${vippsLabel} Vipps`, target: request.target });
   };
 
-  return (
-    <div className="knd-detail-root" role="dialog" aria-modal="true" aria-label={`${group.title} – produktinfo`} style={accentStyle}>
-      <div className="knd-detail-backdrop" onClick={onClose} />
-      <div className="knd-detail-sheet">
-        <div className="knd-detail-top">
-          <span className="knd-detail-top-title">Produktinfo</span>
-          <button ref={closeRef} type="button" className="knd-detail-close" aria-label="Lukk" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <div className="knd-detail-scroll">
-          <div
-            className="knd-detail-gallery"
-            ref={galleryRef}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              const i = el.clientWidth ? Math.round(el.scrollLeft / el.clientWidth) : 0;
-              if (i !== photo) setPhoto(i);
-            }}
-          >
-            {request.badge ? <span className="knd-detail-badge">{request.badge}</span> : null}
-            {images.length ? (
-              images.map((src, i) => <img key={src} src={src} alt={i === 0 ? `${group.title} ${option.label}` : ""} />)
-            ) : (
-              <div style={{ width: "100%", aspectRatio: "1 / 1" }} />
-            )}
+  const optionsBlock =
+    group.options.length > 1 ? (
+      <div className="buy-options">
+        <div className="option-group">
+          <div className="option-label">
+            <span>
+              {request.optionTitle?.trim() || "Variant"}: <span className="option-chosen">{option.label}</span>
+            </span>
           </div>
-          {images.length > 1 ? (
-            <div className="knd-detail-dots" aria-hidden="true">
-              {images.map((src, i) => (
-                <span key={src} className={i === photo ? "on" : ""} />
-              ))}
-            </div>
-          ) : null}
-          <div className="knd-detail-body">
-            {group.brand ? <div className="knd-detail-brand">{group.brand}</div> : null}
-            <h2 className="knd-detail-name">{group.title}</h2>
-            <OptionSelector
-              group={group}
-              index={index}
-              onSelect={select}
-              style="pills"
-              title={request.optionTitle || "Variant"}
-            />
-            <PriceRow product={p} className="knd-detail-price" />
-            <VippsWordmarkButton
-              className="knd-detail-vipps"
-              label={vippsLabel}
-              soldOut={soldOut}
-              disabled={!canBuy}
-              onClick={buy}
-            />
-            <p className="knd-detail-note">
-              {option.slug
-                ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.`
-                : `Dette produktet kan ikke kjøpes direkte her.`}
-            </p>
-            {paragraphs.length ? (
-              <>
-                <div className="knd-detail-desc-title">Beskrivelse</div>
-                <div className="knd-detail-desc">
-                  {paragraphs.map((t, i) => (
-                    <p key={i}>{t}</p>
-                  ))}
-                </div>
-              </>
-            ) : null}
+          <div className="option-values">
+            {group.options.map((o, i) => {
+              const out = isSoldOut(o.product);
+              return (
+                <button
+                  key={o.productId}
+                  type="button"
+                  className={`option-pill${out ? " unavailable" : ""}`}
+                  aria-pressed={i === index}
+                  disabled={out && i !== index}
+                  title={out ? "Utsolgt" : ""}
+                  onClick={() => select(i)}
+                >
+                  {o.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
-    </div>
+    ) : null;
+
+  const vippsEl = !canBuy ? (
+    <button type="button" className="buy-vipps" disabled>
+      {soldOut ? <span>Utsolgt</span> : (
+        <>
+          <span>{vippsLabel}</span>
+          <span className="vipps-badge">vipps</span>
+        </>
+      )}
+    </button>
+  ) : vippsOfficial ? (
+    React.createElement("vipps-mobilepay-button", {
+      ref: classRef("buy-vipps-official"),
+      brand: "vipps",
+      language: "no",
+      verb: "buy",
+      variant: "primary",
+      rounded: "true",
+      stretched: "true",
+      role: "button",
+      "aria-label": `${vippsLabel} Vipps`,
+      onClick: buy,
+    } as any)
+  ) : (
+    <button type="button" className="buy-vipps" onClick={buy} aria-label={`${vippsLabel} Vipps`}>
+      <span>{vippsLabel}</span>
+      <span className="vipps-badge">vipps</span>
+    </button>
+  );
+
+  return (
+    <>
+      <div className="backdrop" onClick={close} />
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Produkt" tabIndex={-1}>
+        <div className="handle" onClick={close} aria-hidden="true" />
+        <div className="topbar">
+          <div className="topbar-sponsor">
+            <span className="topbar-name">{KONDOMERIET_NAME}</span>
+          </div>
+          <button ref={closeRef} type="button" className="close" aria-label="Lukk" onClick={close}>
+            ×
+          </button>
+        </div>
+
+        <div className="body">
+          <div className="gallery">
+            <div className="gallery-main">
+              {badge ? <span className="knd-badge">{badge}</span> : null}
+              {activeImage ? <img src={activeImage} alt={`${group.title} ${option.label}`} /> : null}
+            </div>
+            {images.length > 1 ? (
+              <div className="thumbs">
+                <div className="gallery-thumbs">
+                  {images.map((src, i) => (
+                    <button
+                      key={src}
+                      type="button"
+                      className={`gallery-thumb${i === photo ? " active" : ""}`}
+                      aria-label={`Bilde ${i + 1}`}
+                      aria-current={i === photo ? "true" : "false"}
+                      onClick={() => setPhoto(i)}
+                    >
+                      <img src={src} alt="" loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="info">
+            {group.brand ? <div className="brand">{group.brand}</div> : null}
+            <div className="headline">
+              <div className="title-row">
+                <h2 className="name">{group.title}</h2>
+                {soldOut ? <div className="stock out-of-stock">Utsolgt</div> : null}
+              </div>
+              {amount != null ? (
+                <div className="price-row">
+                  <span className="price">{detailPrice(amount, p)}</span>
+                  {was != null ? <span className="compare-at">{detailPrice(was, p)}</span> : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="purchase">
+              <div className="buy">
+                {optionsBlock}
+                {vippsEl}
+                <p className="vipps-note">
+                  {option.slug
+                    ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.`
+                    : "Dette produktet kan ikke kjøpes direkte her."}
+                </p>
+                <p className="seller-note">
+                  Du handler direkte hos <strong>{KONDOMERIET_NAME}</strong>.
+                </p>
+              </div>
+              {description ? (
+                <div className={`description-block description-preview preview${descOpen ? " open" : ""}${descClipped ? " clipped" : ""}`}>
+                  <button
+                    className="desc-head"
+                    type="button"
+                    aria-expanded={descOpen || !descClipped}
+                    onClick={() => descClipped && setDescOpen((o) => !o)}
+                  >
+                    Beskrivelse
+                  </button>
+                  <div
+                    ref={descRef}
+                    className={`description${descOpen ? "" : " collapsed"}`}
+                    onClick={() => descClipped && !descOpen && setDescOpen(true)}
+                  >
+                    {description}
+                  </div>
+                  {descClipped ? (
+                    <button className="desc-more" type="button" onClick={() => setDescOpen((o) => !o)}>
+                      {descOpen ? "Vis mindre" : "Les mer"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -246,6 +345,7 @@ export function KondomerietDetailHost() {
   const [request, setRequest] = useState<KondomerietDetailRequest | null>(null);
   // Each opening is a fresh drawer (its own option, photo and focus).
   const [openCount, setOpenCount] = useState(0);
+  const [shadow, setShadow] = useState<{ host: HTMLElement; mount: HTMLElement } | null>(null);
 
   useEffect(() => {
     const state = hostState();
@@ -264,6 +364,26 @@ export function KondomerietDetailHost() {
     };
   }, []);
 
+  // The shadow root that carries the SDK detail's stylesheet.
+  useEffect(() => {
+    if (!isOwner || typeof document === "undefined") return;
+    const host = document.createElement("div");
+    host.className = "knd-product-detail";
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `${sdkDetailCss()}\n${EXTRA_CSS}`;
+    root.appendChild(style);
+    const mount = document.createElement("div");
+    mount.style.display = "contents";
+    root.appendChild(mount);
+    setShadow({ host, mount });
+    return () => {
+      setShadow(null);
+      host.remove();
+    };
+  }, [isOwner]);
+
   useEffect(() => {
     if (!isOwner) return;
     const onOpen = (e: Event) => {
@@ -276,8 +396,18 @@ export function KondomerietDetailHost() {
     return () => document.removeEventListener(KONDOMERIET_DETAIL_EVENT, onOpen);
   }, [isOwner]);
 
-  const close = React.useCallback(() => setRequest(null), []);
+  // The card's accent colour, for the badge.
+  useEffect(() => {
+    if (!shadow) return;
+    if (request?.accentColor) shadow.host.style.setProperty("--vnc-accent", request.accentColor);
+    else shadow.host.style.removeProperty("--vnc-accent");
+  }, [shadow, request]);
 
-  if (!isOwner || !request || typeof document === "undefined") return null;
-  return createPortal(<KondomerietDetail key={openCount} request={request} onClose={close} />, document.body);
+  const close = useCallback(() => setRequest(null), []);
+
+  if (!isOwner || !request || !shadow) return null;
+  return createPortal(
+    <KondomerietDetail key={openCount} request={request} host={shadow.host} onClose={close} />,
+    shadow.mount
+  );
 }

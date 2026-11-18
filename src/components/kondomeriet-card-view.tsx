@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useEditorState } from "@vev/react";
-import { primaryImageUrl } from "../../vio-sdk";
-import { COMPONENT_TEMPLATE_ID, vioAttribution, type VioAttribution } from "./vio-helpers";
+import { ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
+import { COMPONENT_TEMPLATE_ID, getProductPriceAmount, vioAttribution, type VioAttribution } from "./vio-helpers";
+import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit";
 import {
   KONDOMERIET_NAME,
-  activeDiscount,
+  compareAtAmount,
   initialOptionIndex,
   isSoldOut,
   openKondomerietDetail,
@@ -14,20 +15,22 @@ import {
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOpenInfo, trackOptionSelect } from "./kondomeriet-track";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
-import { OptionSelector, PriceRow, VippsWordmarkButton, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
+import { OptionSelector, cardBadge, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
 
 /**
  * The Kondomeriet card: ONE card for a product group — several Vio products
- * (one per colour / model / size) behind a selector, each with its own photo,
- * price, stock and Hurtigkasse slug. It wears the Vio card's look (the same
- * `.vio-native-card` styles and editable CSS, injected by card-view.tsx) plus
- * a few `knd-` rules: the selector, the struck-through old price and the two
- * buttons — "Kjøp med Vipps" (the shop's Hurtigkasse, never Vio's cart) and
- * "Se produktinfo" (the Kondomeriet detail drawer).
+ * (one per colour / model / size) behind a selector. It is drawn exactly like
+ * the Vio Product Card (`ProductCardView` in card-view.tsx): the same markup,
+ * classes, layouts (standard / image only / info over image / horizontal),
+ * badge, «Annonse», price, Vipps button (Vipps' own web component when it
+ * loads, the orange bar otherwise) and bar / pill button, so the editable CSS
+ * and the accent colour act the same. What differs: the option selector, the
+ * Vipps button posts kondomeriet.no's Hurtigkasse (never Vio's cart), and the
+ * card's button opens the product info.
  */
 
 export type KondomerietCardConfig = {
-  layout?: string; // standard | horizontal
+  layout?: string; // standard | image-only | overlay | horizontal (the Vio card's)
   accentColor?: string;
   showBrand?: boolean;
   showName?: boolean;
@@ -37,11 +40,13 @@ export type KondomerietCardConfig = {
   descriptionText?: string;
   annonse?: boolean;
   annonseText?: string;
-  /** "Farge", "Modell", "Størrelse" — the selector's heading; empty: none. */
+  /** "Farge", "Modell", "Størrelse" — before the chosen option; empty: just the option. */
   optionTitle?: string;
   selectorStyle?: string; // pills | thumbs | dropdown
   vippsLabel?: string;
   infoButton?: boolean;
+  /** The Vio card's button styles for the product-info button: bar | text (pill on the image). */
+  infoButtonStyle?: string;
   infoLabel?: string;
   hurtigkasseTarget?: HurtigkasseTarget;
 };
@@ -86,6 +91,7 @@ export function KondomerietCardView({
     selectorStyle = "pills",
     vippsLabel = "Kjøp med",
     infoButton = true,
+    infoButtonStyle = "bar",
     infoLabel = "Se produktinfo",
     hurtigkasseTarget = "_blank",
   } = config;
@@ -104,7 +110,6 @@ export function KondomerietCardView({
 
   const hasDates = !!(group?.group.discountStart || group?.group.discountEnd);
   const now = useMinuteClock(hasDates);
-  const badge = group ? activeDiscount(group.group, now) : null;
 
   const localRef = useRef<HTMLDivElement | null>(null);
   const setRoot = (el: HTMLDivElement | null) => {
@@ -112,10 +117,32 @@ export function KondomerietCardView({
     if (typeof rootRef === "function") rootRef(el);
     else if (rootRef) (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
   };
+  // Vipps' own button wraps below 220px; its compact form keeps one line (as the Vio card).
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = localRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.getBoundingClientRect().width < 220));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [groupKey, loading]);
+  const [vippsOfficial, setVippsOfficial] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    ensureVippsButton().then((ok: boolean) => {
+      if (!cancelled) setVippsOfficial(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const cutByFrame = useCutByFrame(localRef, standalone, group);
 
-  const layoutClass = layout === "horizontal" ? "horizontal" : "standard";
-  const rootClass = `vio-native-card knd-card l-${layoutClass}${standalone ? " vnc-standalone" : ""}`;
+  const rootClass = `vio-native-card knd-card l-${layout}${standalone ? " vnc-standalone" : ""}`;
   const accentStyle = accentColor ? ({ ["--vnc-accent" as any]: accentColor } as React.CSSProperties) : undefined;
+  const isImageOnly = layout === "image-only";
+  const isOverlay = layout === "overlay";
+  const showMeta = !isImageOnly && !isOverlay;
 
   if (loading) {
     return (
@@ -123,11 +150,13 @@ export function KondomerietCardView({
         <div className="vnc-image">
           <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
         </div>
-        <div className="vnc-meta">
-          <div className="vnc-skel" style={{ height: 10, width: "40%", marginBottom: 8 }} />
-          <div className="vnc-skel" style={{ height: 16, width: "85%", marginBottom: 10 }} />
-          <div className="vnc-skel" style={{ height: 16, width: "30%" }} />
-        </div>
+        {showMeta ? (
+          <div className="vnc-meta">
+            <div className="vnc-skel" style={{ height: 10, width: "40%", marginBottom: 8 }} />
+            <div className="vnc-skel" style={{ height: 16, width: "85%", marginBottom: 10 }} />
+            <div className="vnc-skel" style={{ height: 16, width: "30%" }} />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -148,6 +177,12 @@ export function KondomerietCardView({
   const img = primaryImageUrl(p) ?? "";
   const soldOut = isSoldOut(p);
   const canBuy = !!option.slug && !soldOut;
+  const amount = getProductPriceAmount(p);
+  const price = cardPrice(amount, p);
+  const was = compareAtAmount(p);
+  const badge = cardBadge(group.group, p, now);
+  const brand = group.brand;
+  const name = group.title;
   const ownDescription = descriptionText.trim();
   const description = ownDescription || (showDescription ? plainText(p?.description).replace(/\n+/g, " ") : "");
   const attribution = (): VioAttribution => vioAttribution(slot, sponsorId, componentTemplateId);
@@ -167,7 +202,7 @@ export function KondomerietCardView({
       optionTitle,
       vippsLabel,
       target: hurtigkasseTarget,
-      badge,
+      badge: cardBadge(group.group, p),
       accentColor,
       attribution: attr,
       sponsorId,
@@ -188,13 +223,75 @@ export function KondomerietCardView({
     });
   };
 
+  const onInfoButton = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    openInfo();
+  };
+
+  // The Vio card's Vipps button: Vipps' own when it loads, the orange bar otherwise.
+  // Sold out / no Hurtigkasse: the bar, disabled.
+  const vippsEl = !canBuy ? (
+    <button
+      type="button"
+      className="vnc-btn-vipps"
+      disabled
+      onClick={(e) => e.stopPropagation()}
+      title={soldOut ? undefined : "Mangler Hurtigkasse-lenke for dette produktet"}
+    >
+      {soldOut ? <span>Utsolgt</span> : (
+        <>
+          {narrow ? null : <span>{vippsLabel}</span>}
+          <span className="vnc-vipps-badge">vipps</span>
+        </>
+      )}
+    </button>
+  ) : vippsOfficial ? (
+    React.createElement("vipps-mobilepay-button", {
+      ...vippsButtonAttributes("buy", { compact: narrow }),
+      ref: classRef("vnc-btn-vipps-official"),
+      role: "button",
+      "aria-label": `${vippsLabel} Vipps`,
+      onClick: buy,
+    } as any)
+  ) : (
+    <button type="button" className="vnc-btn-vipps" onClick={buy} aria-label={`${vippsLabel} Vipps`}>
+      {narrow ? null : <span>{vippsLabel}</span>}
+      <span className="vnc-vipps-badge">vipps</span>
+    </button>
+  );
+
+  const selector = (
+    <OptionSelector group={group} index={safeIndex} onSelect={select} style={selectorStyle} title={optionTitle} />
+  );
+  const priceEl =
+    showPrice && price ? (
+      <div className="vnc-price">
+        {price}
+        {was != null ? <span className="knd-was">{cardPrice(was, p)}</span> : null}
+      </div>
+    ) : null;
+
+  // The Vio card's meta: brand, name, description, (selector), price, Vipps, retailer.
+  const metaBlock = (inBody: boolean) => (
+    <>
+      {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || " "}</div> : null}
+      {showName && name ? <div className="vnc-name">{name}</div> : null}
+      {inBody && description ? <p className="vnc-description">{description}</p> : null}
+      {inBody ? selector : null}
+      {priceEl}
+      {inBody ? vippsEl : null}
+      {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
+    </>
+  );
+
   return (
     <div ref={setRoot} className={rootClass} style={accentStyle}>
+      <EditorNotices notices={cutByFrame ? [CUT_BY_FRAME_NOTICE] : []} />
       <div
         className="vnc-image"
         role="button"
         tabIndex={0}
-        aria-label={`${group.title} ${option.label} – ${infoLabel}`}
+        aria-label={`${brand} ${name} ${price} – ${infoLabel}`}
         onClick={openInfo}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -203,41 +300,33 @@ export function KondomerietCardView({
           }
         }}
       >
-        {img ? <img src={img} alt={`${group.title} ${group.options.length > 1 ? option.label : ""}`.trim()} loading="lazy" /> : null}
+        {img ? <img src={img} alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()} loading="lazy" /> : null}
         {badge ? <span className="vnc-badge">{badge}</span> : null}
         {annonse ? <span className="vnc-annonse">{annonseText}</span> : null}
+        {infoButton && infoButtonStyle === "text" ? (
+          <button type="button" className="vnc-btn-text vnc-btn-pill" onClick={onInfoButton}>
+            {infoLabel}
+          </button>
+        ) : null}
+        {isOverlay ? <div className="vnc-overlay-meta">{metaBlock(false)}</div> : null}
       </div>
 
       <div className="vnc-body">
-        <div className="vnc-meta">
-          {showBrand ? <div className="vnc-brand">{group.brand || " "}</div> : null}
-          {showName && group.title ? <div className="vnc-name">{group.title}</div> : null}
-          {description ? <p className="vnc-description">{description}</p> : null}
-          <OptionSelector group={group} index={safeIndex} onSelect={select} style={selectorStyle} title={optionTitle} />
-          {showPrice ? <PriceRow product={p} /> : null}
-          {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
-        </div>
-        <VippsWordmarkButton
-          label={vippsLabel}
-          soldOut={soldOut}
-          disabled={!canBuy}
-          title={option.slug ? undefined : "Mangler Hurtigkasse-lenke for dette produktet"}
-          onClick={buy}
-        />
+        {showMeta ? (
+          <div className="vnc-meta">{metaBlock(true)}</div>
+        ) : (
+          <>
+            {group.options.length > 1 ? <div style={{ marginTop: 12 }}>{selector}</div> : null}
+            {vippsEl}
+          </>
+        )}
         {editor && !option.slug ? (
-          <div className="knd-editor-note">
+          <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
             Editor: «{option.label}» has no kondomeriet.no URL — set its Hurtigkasse slug in the group's Details.
           </div>
         ) : null}
-        {infoButton ? (
-          <button
-            type="button"
-            className="knd-btn-info"
-            onClick={(e) => {
-              e.stopPropagation();
-              openInfo();
-            }}
-          >
+        {infoButton && infoButtonStyle !== "text" ? (
+          <button type="button" className="vnc-btn-text vnc-btn-bar" onClick={onInfoButton}>
             {infoLabel}
           </button>
         ) : null}

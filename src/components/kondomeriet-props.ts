@@ -4,14 +4,18 @@ import type { KondomerietCardConfig } from "./kondomeriet-card-view";
 
 /**
  * Props of the Kondomeriet card / carousel / grid. The look-and-feel fields
- * are the Vio card's own (same names, same defaults where they apply), minus
- * what makes no sense without Vio's cart: the add button, its action, the
- * auto discount badge, the Vio Vipps Express button. On top: the selector,
- * the two buttons and where the Hurtigkasse opens.
+ * are the Vio card's own — the same definitions, taken from CARD_CONFIG_PROPS
+ * (layout, accent, brand / name / price / description, «Annonse») — so they
+ * behave the same. Left out is what needs Vio's cart: the add button and its
+ * action, the image's «add» action, the discount badge mode (the Kondomeriet
+ * badge is the group's own text, else the feed sale's %), and the Vio Vipps
+ * Express button (here the Vipps button is always the Hurtigkasse). On top:
+ * the selector, the product-info button and where the Hurtigkasse opens.
  */
 
 /** The Vio card fields reused as they are. */
 const REUSED = new Set([
+  "layout",
   "accentColor",
   "showBrand",
   "showName",
@@ -23,21 +27,10 @@ const REUSED = new Set([
 ]);
 
 const reused = CARD_CONFIG_PROPS.filter((p) => REUSED.has(p.name));
+const layoutProp = reused.find((p) => p.name === "layout");
 
 export const KONDOMERIET_CARD_PROPS: any[] = [
-  {
-    name: "layout",
-    title: "Card layout",
-    type: "select",
-    initialValue: "standard",
-    options: {
-      display: "dropdown",
-      items: [
-        { value: "standard", label: "Standard (image + info)" },
-        { value: "horizontal", label: "Horizontal" },
-      ],
-    },
-  },
+  layoutProp,
   {
     name: "optionTitle",
     title: "Selector heading",
@@ -61,6 +54,21 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
   },
   { name: "vippsLabel", title: "Vipps button label", type: "string", initialValue: "Kjøp med" },
   { name: "infoButton", title: "'Product info' button", type: "boolean", initialValue: true },
+  {
+    name: "infoButtonStyle",
+    title: "Product info button style",
+    type: "select",
+    initialValue: "bar",
+    // The Vio card's button styles: its full-width bar, or its pill on the photo.
+    options: {
+      display: "dropdown",
+      items: [
+        { value: "bar", label: "Full-width bar" },
+        { value: "text", label: "Text (pill)" },
+      ],
+    },
+    hidden: (ctx: any) => ctx?.value?.infoButton === false,
+  },
   { name: "infoLabel", title: "Product info label", type: "string", initialValue: "Se produktinfo" },
   {
     name: "hurtigkasseTarget",
@@ -76,19 +84,18 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     },
   },
   { name: "showRetailer", title: "Show 'Kondomeriet'", type: "boolean", initialValue: false },
-  ...reused,
+  ...reused.filter((p) => p.name !== "layout"),
 ];
 
 /** Carousel / grid: one description text for every card would be wrong. */
 export const KONDOMERIET_LIST_CARD_PROPS: any[] = KONDOMERIET_CARD_PROPS.filter((p) => p.name !== "descriptionText");
 
-/** The Vio card's editable CSS, plus the Kondomeriet pieces. */
+/** The Vio card's editable CSS (every entry: the card uses all its classes), plus the selector and the old price. */
 export const KONDOMERIET_EDITABLE_CSS: any[] = [
-  ...CARD_EDITABLE_CSS.filter((c) => !/vnc-add|vnc-btn-text/.test(c.selector)),
-  { selector: ".vio-native-card .knd-pill", title: "Option pill", properties: ["background", "color", "border-color", "border-radius", "font-size", "padding"] },
-  { selector: ".vio-native-card .knd-btn-info", title: "Product info button", properties: ["background", "color", "border-color", "border-radius", "font-size", "padding", "letter-spacing"] },
+  ...CARD_EDITABLE_CSS,
+  { selector: ".vio-native-card .knd-option-pill", title: "Option pill", properties: ["background", "color", "border-color", "border-radius", "font-size", "padding"] },
+  { selector: ".vio-native-card .knd-option-label", title: "Option label", properties: ["color", "font-size", "letter-spacing"] },
   { selector: ".vio-native-card .knd-was", title: "Old price", properties: ["color", "font-size"] },
-  { selector: ".vio-native-card .knd-now.knd-sale", title: "Sale price", properties: ["color", "font-size", "font-weight"] },
 ];
 
 export const GROUP_PROP = {
@@ -123,6 +130,7 @@ export function pickKondomerietConfig(props: Record<string, any>): KondomerietCa
     selectorStyle,
     vippsLabel,
     infoButton,
+    infoButtonStyle,
     infoLabel,
     hurtigkasseTarget,
   } = props;
@@ -141,6 +149,7 @@ export function pickKondomerietConfig(props: Record<string, any>): KondomerietCa
     selectorStyle,
     vippsLabel,
     infoButton,
+    infoButtonStyle,
     infoLabel,
     hurtigkasseTarget,
   };
