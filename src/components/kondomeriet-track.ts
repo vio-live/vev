@@ -1,5 +1,6 @@
 import { productToItem, trackCta, trackSelectItem, trackViewItem } from "./analytics";
 import type { VioAttribution } from "./vio-helpers";
+import { inAppBrowser } from "./kondomeriet-perf";
 import { submitHurtigkasse, type HurtigkasseTarget, type KondomerietOption } from "./kondomeriet-helpers";
 
 /**
@@ -38,7 +39,8 @@ export function trackOpenInfo(
   cta: string = "open"
 ): void {
   const item = productToItem(option.product);
-  trackSelectItem(item, undefined, attribution);
+  // The in-app browser mark rides on the product click (props on the Vio collector).
+  trackSelectItem(item, undefined, { ...attribution, in_app_browser: inAppBrowser() ?? "no" } as any);
   trackViewItem(item, attribution);
   trackCta({ ...ctx(option, attribution, sponsorId), cta, location: "card", label });
 }
@@ -62,6 +64,7 @@ export function buyWithHurtigkasse(
     where,
     label,
     target,
+    inAppBrowser,
     editor,
   }: {
     attribution: VioAttribution;
@@ -69,13 +72,27 @@ export function buyWithHurtigkasse(
     where: Where;
     label?: string;
     target?: HurtigkasseTarget;
+    /** The app whose browser this is (`inAppBrowser()`), or null — marked on both events, to measure that traffic. */
+    inAppBrowser?: string | null;
     /** In the Vev editor nothing is posted (the canvas is not a shop). */
     editor?: boolean;
   }
 ): boolean {
   if (!option.slug) return false;
-  trackSelectItem(productToItem(option.product, { quantity: 1 }), HURTIGKASSE_LIST, attribution);
-  trackCta({ ...ctx(option, attribution, sponsorId), cta: HURTIGKASSE_CTA, location: where, label, variant: "hurtigkasse" });
+  const app = inAppBrowser ?? null;
+  trackSelectItem(productToItem(option.product, { quantity: 1 }), HURTIGKASSE_LIST, {
+    ...attribution,
+    in_app_browser: app ?? "no",
+    hurtigkasse_target: target ?? "_blank",
+  } as any);
+  // `variant` carries the in-app browser: «hurtigkasse» in a browser, «hurtigkasse_inapp_<app>» in an app's.
+  trackCta({
+    ...ctx(option, attribution, sponsorId),
+    cta: HURTIGKASSE_CTA,
+    location: where,
+    label,
+    variant: app ? `hurtigkasse_inapp_${app}` : "hurtigkasse",
+  });
   if (editor) {
     console.info("[Vio] Kondomeriet: Hurtigkasse not posted in the editor —", option.slug);
     return false;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox, SilkeButton, SilkeModal, SilkeText } from "@vev/silke";
 import { CatalogModal } from "./product-picker";
 import { resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
@@ -7,8 +7,10 @@ import {
   fetchKondomerietProducts,
   isValidSlug,
   loadFreshCatalog,
+  allGroupIds,
   parseGroups,
   serializeGroups,
+  snapshotOf,
   slugFromProductUrl,
   type GroupsValue,
   type KondomerietGroup,
@@ -88,7 +90,7 @@ function GroupDetailsModal({
     let cancelled = false;
     (async () => {
       const sponsor = sponsorForSlot(null, await resolveActiveSponsorId());
-      const list = await fetchKondomerietProducts(draft.ids, sponsor);
+      const list = await fetchKondomerietProducts(draft.ids, sponsor, null, { full: true });
       if (cancelled) return;
       const out: Record<string, string | null> = {};
       for (const id of draft.ids) {
@@ -236,6 +238,15 @@ function GroupDetailsModal({
           </div>
         </div>
         <div style={{ maxWidth: 360 }}>
+          <div style={labelStyle}>Offer ends (this card) — «Tilbudet gjelder til …» until then</div>
+          <input
+            type="datetime-local"
+            style={inputStyle}
+            value={draft.offerEnd ?? ""}
+            onChange={(e) => set({ offerEnd: e.target.value })}
+          />
+        </div>
+        <div style={{ maxWidth: 360 }}>
           <div style={labelStyle}>Buy on card (this card)</div>
           <select
             style={inputStyle}
@@ -280,9 +291,66 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
   const pickingGroup = picking != null ? groups[picking] : null;
   const selected = useMemo(() => new Set<number>(pickingGroup?.ids ?? []), [pickingGroup]);
 
+  // The snapshot the published card paints from at once (title, brand,
+  // price, compare-at, image, shop URL, stock, rating): taken when products
+  // are picked and again when it is a day old, from the live API with the
+  // shop URL. Written back only when something changed.
+  const snapKey = groups.map((g) => g.ids.join(",")).join("|");
+  const [snapState, setSnapState] = useState<"idle" | "working" | "done" | "failed">("idle");
+  const snapRun = useRef("");
+  useEffect(() => {
+    const ids = allGroupIds(groups);
+    if (ids.length === 0) return;
+    const stale = groups.some((g) =>
+      g.ids.some((id) => {
+        const s = g.snap?.[String(id)];
+        return !s || !s.at || Date.now() - s.at > 24 * 3600 * 1000;
+      })
+    );
+    if (!stale || snapRun.current === snapKey) return;
+    snapRun.current = snapKey;
+    let cancelled = false;
+    setSnapState("working");
+    (async () => {
+      const sponsor = sponsorForSlot(null, await resolveActiveSponsorId());
+      // The full product: the snapshot keeps the rating line of the description.
+      const list = await fetchKondomerietProducts(ids, sponsor, null, { full: true });
+      if (cancelled) return;
+      if (!list.length) {
+        setSnapState("failed");
+        return;
+      }
+      const byId = new Map(list.map((p) => [Number(p.id), p]));
+      const next = groups.map((g) => {
+        const snap: Record<string, any> = {};
+        for (const id of g.ids) {
+          const p = byId.get(id);
+          if (p) snap[String(id)] = snapshotOf(p);
+          else if (g.snap?.[String(id)]) snap[String(id)] = g.snap[String(id)];
+        }
+        return { ...g, snap };
+      });
+      setSnapState("done");
+      commit(next);
+    })().catch(() => !cancelled && setSnapState("failed"));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapKey]);
+  const snapped = groups.reduce((n, g) => n + g.ids.filter((id) => g.snap?.[String(id)]).length, 0);
+  const total = groups.reduce((n, g) => n + g.ids.length, 0);
+
   return (
     <SilkeBox column gap="s" style={{ width: "100%" }}>
       {multi && groups.length === 0 ? <SilkeText style={{ opacity: 0.6 }}>No cards yet</SilkeText> : null}
+      {total > 0 ? (
+        <SilkeText style={{ fontSize: 11, opacity: 0.6 }}>
+          {snapState === "working"
+            ? "Saving a snapshot for instant loading…"
+            : `Instant loading: ${snapped}/${total} products saved${snapState === "failed" ? " (could not refresh — connect the Config)" : ""}`}
+        </SilkeText>
+      ) : null}
       {groups.map((g, i) => (
         <SilkeBox key={i} column gap="xs" style={{ width: "100%", paddingBottom: 6, borderBottom: multi ? "1px solid rgba(127,127,127,0.25)" : undefined }}>
           <SilkeText overflow style={{ opacity: g.ids.length ? 1 : 0.6 }}>

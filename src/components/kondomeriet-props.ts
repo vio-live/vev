@@ -1,7 +1,7 @@
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS } from "./card-props";
 import { KondomerietGroupEditor, KondomerietGroupsEditor } from "./kondomeriet-group-editor";
 import type { KondomerietCardConfig } from "./kondomeriet-card-view";
-import { DEFAULT_DIRECT_BADGE, DEFAULT_PERKS, DEFAULT_STOCK_TEXT } from "./kondomeriet-helpers";
+import { DEFAULT_DIRECT_BADGE, DEFAULT_PERKS, DEFAULT_STOCK_TEXT, DEFAULT_VIPPS_NOTE } from "./kondomeriet-helpers";
 
 /**
  * Props of the Kondomeriet card / carousel / grid. The look-and-feel fields
@@ -160,6 +160,38 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     },
   },
   { name: "moreLabel", title: "«Se mer» label", type: "string", initialValue: "Se mer" },
+  // Conversion: what makes a reader trust and click.
+  { name: "showRating", title: "Show rating (★ 5/5 (792))", type: "boolean", initialValue: true },
+  { name: "showTrustLine", title: "Show promises line", type: "boolean", initialValue: true },
+  {
+    name: "trustLine",
+    title: "Promises line (own text)",
+    type: "string",
+    description: "Empty: the brand's promises (short titles), else «Diskret pakket · Anonym levering · Frakt fra 59,-».",
+    hidden: (ctx: any) => ctx?.value?.showTrustLine === false,
+  },
+  {
+    name: "vippsNote",
+    title: "Under Vipps (new tab)",
+    type: "string",
+    initialValue: DEFAULT_VIPPS_NOTE,
+    description: "Under the Vipps button when the Hurtigkasse opens in a new tab. Empty: none.",
+  },
+  {
+    name: "vippsNoteSameWindow",
+    title: "Under Vipps (same window)",
+    type: "string",
+    initialValue: "",
+    description: "When it opens in the same window — always the case in an app's browser (VG, Facebook, Instagram…). Empty: none.",
+  },
+  {
+    name: "offerEnd",
+    title: "Offer ends",
+    type: "string",
+    initialValue: "",
+    description: "Optional, «2026-11-30 23:59». Shows the line below until then; a card's own date (Details) wins.",
+  },
+  { name: "offerEndText", title: "Offer end text", type: "string", initialValue: "Tilbudet gjelder til {dato}", description: "{dato} = «mandag 30. november»." },
   {
     name: "imageClickAction",
     title: "Image click",
@@ -253,6 +285,10 @@ export const KONDOMERIET_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .knd-subtitle", title: "Subtitle", properties: ["color", "font-size", "font-weight", "line-height"] },
   { selector: ".vio-native-card .knd-tag", title: "Label on the photo", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .knd-footer", title: "Footer", properties: ["color", "font-size", "line-height"] },
+  { selector: ".vio-native-card .knd-rating", title: "Rating", properties: ["color", "font-size"] },
+  { selector: ".vio-native-card .knd-trust", title: "Promises line", properties: ["color", "font-size", "letter-spacing"] },
+  { selector: ".vio-native-card .knd-vipps-note", title: "Under Vipps", properties: ["color", "font-size", "text-align"] },
+  { selector: ".vio-native-card .knd-offer-end", title: "Offer end", properties: ["color", "font-size", "font-weight"] },
   { selector: ".vio-native-card .knd-more", title: "«Se mer» button", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
   { selector: ".vio-native-card .knd-seller", title: "Seller line", properties: ["color", "font-size", "letter-spacing", "gap"] },
   { selector: ".vio-native-card .knd-seller-logo", title: "Seller logo", properties: ["height", "max-width", "opacity"] },
@@ -279,7 +315,8 @@ const CONFIG_KEYS = [
   "layout", "accentColor", "showBrand", "showName", "showPrice", "showRetailer", "showSeller", "showDescription", "descriptionText",
   "annonse", "annonseText", "optionTitle", "selectorStyle", "vippsLabel", "infoButton", "infoButtonStyle", "infoLabel",
   "hurtigkasseTarget", "directBadge", "directBadgeOnCard", "perks", "stockText", "infoImageOnly", "discountMode",
-  "discountText", "vippsButton", "buyOnCard", "moreLabel", "imageClickAction", "subtitle", "tagText", "footerText",
+  "discountText", "vippsButton", "buyOnCard", "moreLabel", "showRating", "showTrustLine", "trustLine", "vippsNote",
+  "vippsNoteSameWindow", "offerEnd", "offerEndText", "imageClickAction", "subtitle", "tagText", "footerText",
 ] as const;
 
 export function pickKondomerietConfig(props: Record<string, any>): KondomerietCardConfig {

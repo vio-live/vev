@@ -65,6 +65,15 @@ const KND_CSS = `
 .vio-native-card.l-overlay .knd-tag { bottom: auto; top: 42px; }
 .vio-native-card .knd-footer { margin-top: 10px; font-size: 12px; line-height: 1.45; color: var(--vio-color-text-secondary, #666); white-space: pre-line; }
 .vio-native-card .vnc-price { overflow-wrap: anywhere; }
+/* «★ 5/5 (792)» under the name. */
+.vio-native-card .knd-rating { font-size: 12px; line-height: 1.3; margin: -6px 0 8px; color: var(--vio-color-text-secondary, #666); }
+.vio-native-card .knd-rating-stars { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
+/* «Tilbudet gjelder til …», under the price. */
+.vio-native-card .knd-offer-end { font-size: 12px; font-weight: 600; line-height: 1.35; color: var(--knd-sale, #c8102e); margin: -10px 0 12px; }
+/* Under the Vipps button: «Du blir værende i artikkelen». */
+.vio-native-card .knd-vipps-note { font-size: 11px; line-height: 1.35; color: var(--vio-color-text-secondary, #666); text-align: center; margin: -6px 0 8px; }
+/* The shop's promises in one short line. */
+.vio-native-card .knd-trust { font-size: 11px; line-height: 1.4; color: var(--vio-color-text-secondary, #666); margin: 0 0 10px; }
 /* «Du handler direkte hos Kondomeriet» with the brand's logo, where the Vio card puts its retailer. */
 .vio-native-card .knd-seller {
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: auto; padding-top: 2px;

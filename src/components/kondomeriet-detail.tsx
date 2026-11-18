@@ -7,12 +7,15 @@ import {
   KONDOMERIET_DETAIL_EVENT,
   KONDOMERIET_NAME,
   brandIdentity,
+  brandIdentityOrCached,
+  fetchKondomerietProducts,
   type BrandIdentity,
   compareAtAmount,
   isSoldOut,
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
+import { directImage, inAppBrowser } from "./kondomeriet-perf";
 import { SellerLogo, badgeFor, classRef, detailPrice, plainText } from "./kondomeriet-ui";
 import { parseRichDescription, renderRich, splitPlainRating } from "./kondomeriet-description";
 
@@ -101,6 +104,8 @@ const EXTRA_CSS = `
 .description.rich strong { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
 details.description-block > .description { padding-top: 0; }
 /* The brand's logo beside the seller note: small, never distorted. */
+/* «Tilbudet gjelder til …», under the price. */
+.knd-offer-end { font-size: 13px; font-weight: 600; color: var(--knd-sale, #c8102e); margin-top: 2px; }
 .seller-note .knd-seller-logo { display: inline-block; height: 20px; width: auto; max-width: 110px; object-fit: contain; vertical-align: middle; margin: -2px 6px 0 0; }
 `;
 
@@ -182,7 +187,30 @@ export function KondomerietDetail({
   host: HTMLElement;
   onClose: () => void;
 }) {
-  const { group, attribution, sponsorId } = request;
+  const { attribution, sponsorId } = request;
+  // A card hands over what it painted — its snapshot, or the card shape (no
+  // description, one image size): the drawer reads the full products and
+  // swaps them in place.
+  const [group, setGroup] = useState(request.group);
+  useEffect(() => {
+    const g = request.group;
+    if (sponsorId == null || !g.options.some((o) => o.product?.__snap || o.product?.__light)) return;
+    let cancelled = false;
+    fetchKondomerietProducts(
+      g.options.map((o) => o.productId),
+      sponsorId,
+      attribution.campaignId ?? null,
+      { full: true }
+    ).then((list) => {
+      if (cancelled || !list.length) return;
+      const byId = new Map(list.map((p) => [Number(p.id), p]));
+      setGroup({ ...g, options: g.options.map((o) => ({ ...o, product: byId.get(o.productId) ?? o.product })) });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [index, setIndex] = useState(request.index);
   const [photo, setPhoto] = useState(0);
   const [vippsOfficial, setVippsOfficial] = useState(false);
@@ -250,7 +278,7 @@ export function KondomerietDetail({
   const directBadge = request.directBadge ?? "";
   // The brand's promises from Vio (brand profile → bootstrap), drawn as the
   // SDK detail draws them; the editable list only when the brand has none.
-  const identity = useMemo(() => brandIdentity(sponsorId), [sponsorId]);
+  const identity = useMemo(() => brandIdentityOrCached(sponsorId), [sponsorId]);
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const highlights = Array.isArray(identity?.highlights) ? identity!.highlights!.filter((h) => h && h.title) : [];
   const perks = highlights.length ? [] : request.perks ?? [];
@@ -312,7 +340,14 @@ export function KondomerietDetail({
 
   const buy = () => {
     if (!canBuy) return;
-    buyWithHurtigkasse(option, { attribution, sponsorId, where: "detail", label: `${vippsLabel} Vipps`, target: request.target });
+    buyWithHurtigkasse(option, {
+      attribution,
+      sponsorId,
+      where: "detail",
+      label: `${vippsLabel} Vipps`,
+      target: request.target,
+      inAppBrowser: inAppBrowser(),
+    });
   };
 
   const optionsBlock =
@@ -399,7 +434,18 @@ export function KondomerietDetail({
           <div className="gallery">
             <div className="gallery-main">
               {badge ? <span className="knd-badge">{badge}</span> : null}
-              {activeImage ? <img src={activeImage} alt={`${group.title} ${option.label}`} /> : null}
+              {activeImage ? (
+                <img
+                  src={directImage(activeImage, "large").src}
+                  alt={`${group.title} ${option.label}`}
+                  decoding="async"
+                  {...({ fetchpriority: "high" } as any)}
+                  onError={(e) => {
+                    const fb = directImage(activeImage, "large").fallback;
+                    if (e.currentTarget.src !== fb) e.currentTarget.src = fb;
+                  }}
+                />
+              ) : null}
             </div>
             {images.length > 1 ? (
               <div className="thumbs">
@@ -413,7 +459,16 @@ export function KondomerietDetail({
                       aria-current={i === photo ? "true" : "false"}
                       onClick={() => setPhoto(i)}
                     >
-                      <img src={src} alt="" loading="lazy" />
+                      <img
+                        src={directImage(src, "large").src}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        onError={(e) => {
+                          const fb = directImage(src, "large").fallback;
+                          if (e.currentTarget.src !== fb) e.currentTarget.src = fb;
+                        }}
+                      />
                     </button>
                   ))}
                 </div>
@@ -439,6 +494,7 @@ export function KondomerietDetail({
                   {was != null ? <span className="compare-at">{detailPrice(was, p)}</span> : null}
                 </div>
               ) : null}
+              {request.offerText ? <div className="knd-offer-end">{request.offerText}</div> : null}
             </div>
             <div className="purchase">
               <div className="buy">
@@ -446,7 +502,7 @@ export function KondomerietDetail({
                 {vippsEl}
                 <p className="vipps-note">
                   {option.slug
-                    ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.`
+                    ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.${canBuy && request.vippsNote ? ` ${request.vippsNote}.` : ""}`
                     : "Dette produktet kan ikke kjøpes direkte her."}
                 </p>
                 <ul className="knd-perks">

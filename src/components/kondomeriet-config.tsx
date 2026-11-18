@@ -1,8 +1,20 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { SilkeBox } from "@vev/silke";
+import { Vio } from "../../vio-sdk";
 import { registerVevComponent } from "@vev/react";
 import VioConfig, { VioApiKeyEditor, VioCampaignSelector, VioSponsorSelector } from "./vio-config";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
-import { DEFAULT_ENVIRONMENT } from "./vio-helpers";
+import {
+  DEFAULT_ENVIRONMENT,
+  ensureVioInit,
+  resolveActiveSponsorId,
+  resolveConfigApiKey,
+  sponsorForSlot,
+  vioAttribution,
+  type VioEnvironment,
+} from "./vio-helpers";
+import { prefetchWantedProducts, setFastChannel, type FastChannel } from "./kondomeriet-helpers";
+import { ensurePreconnect } from "./kondomeriet-perf";
 
 /**
  * Kondomeriet Config (SDK) — the Vio Config for Kondomeriet pages: the same
@@ -18,8 +30,103 @@ import { DEFAULT_ENVIRONMENT } from "./vio-helpers";
 
 type Props = Record<string, any>;
 
+// The hosts a card needs, as soon as the package loads (before any block mounts).
+ensurePreconnect();
+
 export default function KondomerietConfig(props: Props) {
+  // One round trip instead of two: the channel the editor resolved goes in
+  // before the blocks ask (this runs while the Config renders), so the
+  // products request leaves in parallel with the bootstrap. Only for the
+  // environment it was resolved in.
+  const env = props.environment || DEFAULT_ENVIRONMENT;
+  const fs = props.fastStart as FastChannel | undefined;
+  useMemo(() => {
+    setFastChannel(fs && fs.environment === env ? fs : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fs?.endpoint, fs?.apiKey, fs?.sponsorId, fs?.campaignId, fs?.environment, env]);
+  useEffect(() => {
+    if (fs && fs.environment === env) prefetchWantedProducts(Number(fs.sponsorId), fs.campaignId ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fs?.apiKey, env]);
+  // The page's head start: when the sponsor is known (the Config's bootstrap
+  // announces it), one request for every product the page's blocks show —
+  // the blocks' own requests then find it in flight.
+  useEffect(() => {
+    const onSponsor = (e: Event) => {
+      const id = Number((e as CustomEvent).detail);
+      if (!(id > 0)) return;
+      prefetchWantedProducts(id, vioAttribution(null, id).campaignId ?? null);
+    };
+    window.addEventListener("vio:sponsor-changed", onSponsor);
+    return () => window.removeEventListener("vio:sponsor-changed", onSponsor);
+  }, []);
   return <VioConfig {...props} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />;
+}
+
+/**
+ * Properties-panel field that keeps `fastStart` up to date: with the page's
+ * key connected (in this window, like the sponsor selector), the GraphQL
+ * endpoint and the channel key of the page's sponsor for its campaign — what
+ * the published page needs to ask for its products before its bootstrap
+ * answers. Written only when it changed (or is a day old). The key is the
+ * channel's public commerce key, the one the bootstrap hands every reader.
+ */
+export function KondomerietFastStartField({
+  value,
+  onChange,
+  context,
+}: {
+  value?: FastChannel;
+  onChange: (v: FastChannel | null) => void;
+  context?: { value?: { apiKey?: string; environment?: VioEnvironment; sponsorId?: number; campaignId?: number } };
+}) {
+  const v = context?.value;
+  const key = resolveConfigApiKey(v?.apiKey);
+  const env = v?.environment || DEFAULT_ENVIRONMENT;
+  const [state, setState] = useState<"idle" | "working" | "ready" | "failed">(value?.apiKey ? "ready" : "idle");
+  useEffect(() => {
+    if (!key) return;
+    let cancelled = false;
+    setState("working");
+    (async () => {
+      ensureVioInit(key, env);
+      await Vio.bootstrap();
+      const sid = sponsorForSlot(null, await resolveActiveSponsorId(v?.sponsorId));
+      if (sid == null) throw new Error("no sponsor");
+      const campaignId = vioAttribution(null, sid).campaignId ?? null;
+      const sponsor = (Vio as any).sponsorCommerce?.(sid, campaignId != null ? { campaignId } : {});
+      const apiKey = sponsor?.commerce?.apiKey;
+      const endpoint = (Vio as any).config?.graphQLBase;
+      if (typeof apiKey !== "string" || !apiKey || typeof endpoint !== "string") throw new Error("no channel");
+      const next: FastChannel = { endpoint, apiKey, sponsorId: sid, campaignId, environment: env, at: Date.now() };
+      if (cancelled) return;
+      const same =
+        value &&
+        value.endpoint === next.endpoint &&
+        value.apiKey === next.apiKey &&
+        Number(value.sponsorId) === next.sponsorId &&
+        (value.campaignId ?? null) === next.campaignId &&
+        value.environment === next.environment &&
+        Date.now() - Number(value.at ?? 0) < 24 * 3600 * 1000;
+      if (!same) onChange(next);
+      setState("ready");
+    })().catch(() => !cancelled && setState("failed"));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, env, v?.sponsorId, v?.campaignId]);
+  return (
+    <SilkeBox style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.4, padding: "2px 0" }}>
+      {state === "ready" && value?.apiKey
+        ? `Fast start ready: products load in parallel with the connection (sponsor #${value.sponsorId}${value.campaignId ? `, campaign #${value.campaignId}` : ""}).`
+        : state === "working"
+          ? "Preparing fast start…"
+          : state === "failed"
+            ? "Fast start unavailable — the page still loads, one step slower."
+            : "Connect the API key for fast start."}
+    </SilkeBox>
+  );
 }
 
 registerVevComponent(KondomerietConfig, {
@@ -29,6 +136,20 @@ registerVevComponent(KondomerietConfig, {
     { name: "apiKey", title: "Vio API Key", type: "string", initialValue: "", component: VioApiKeyEditor as any },
     { name: "sponsorId", title: "Active Sponsor", type: "number", component: VioSponsorSelector as any },
     { name: "campaignId", title: "Campaign", type: "number", component: VioCampaignSelector as any },
+    {
+      name: "fastStart",
+      title: "Fast start",
+      type: "object",
+      component: KondomerietFastStartField as any,
+      fields: [
+        { name: "endpoint", type: "string" },
+        { name: "apiKey", type: "string" },
+        { name: "sponsorId", type: "number" },
+        { name: "campaignId", type: "number" },
+        { name: "environment", type: "string" },
+        { name: "at", type: "number" },
+      ],
+    },
     {
       name: "environment",
       title: "Environment",

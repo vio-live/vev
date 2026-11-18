@@ -4,8 +4,12 @@ import { ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../..
 import { COMPONENT_TEMPLATE_ID, getProductPriceAmount, vioAttribution, type VioAttribution } from "./vio-helpers";
 import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit";
 import {
+  DEFAULT_VIPPS_NOTE,
   KONDOMERIET_NAME,
-  brandIdentity,
+  brandIdentityOrCached,
+  cardRating,
+  trustLineFor,
+  offerEndText,
   resolveBuyOnCard,
   compareAtAmount,
   directBadgeFrom,
@@ -17,6 +21,10 @@ import {
   type HurtigkasseTarget,
   type ResolvedGroup,
 } from "./kondomeriet-helpers";
+import { directImage, ensurePreconnect, inAppBrowser } from "./kondomeriet-perf";
+
+// The hosts a card needs, as soon as the package loads.
+ensurePreconnect();
 import { SEE_MORE_CTA, buyWithHurtigkasse, trackOpenInfo, trackOptionSelect } from "./kondomeriet-track";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
 import { OptionSelector, SellerLogo, badgeFor, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
@@ -63,6 +71,17 @@ export type KondomerietCardConfig = {
   infoButtonStyle?: string;
   infoLabel?: string;
   hurtigkasseTarget?: HurtigkasseTarget;
+  /** A short line of the shop's promises; undefined = the brand's promises (short titles), else the default. */
+  trustLine?: string;
+  showTrustLine?: boolean;
+  /** «★ 5/5 (792)» from the rating line of the description. */
+  showRating?: boolean;
+  /** Under the Vipps button, when the Hurtigkasse opens in a new tab / in the same window. */
+  vippsNote?: string;
+  vippsNoteSameWindow?: string;
+  /** «Tilbudet gjelder til …»: the block's offer end (`datetime-local`) and its text (`{dato}`). */
+  offerEnd?: string;
+  offerEndText?: string;
   /** «Kjøp direkte fra artikkelen» in the product info (and on the card with directBadgeOnCard); '' = off. */
   directBadge?: string;
   directBadgeOnCard?: boolean;
@@ -102,6 +121,8 @@ type CardViewProps = {
   rootRef?: React.Ref<HTMLDivElement>;
   /** The editor's picture for this card (Vev image prop), in place of the product's. */
   imageOverride?: string;
+  /** One of the first cards on screen: its image loads eagerly, with high priority. */
+  priority?: boolean;
 };
 
 export function KondomerietCardView({
@@ -115,6 +136,7 @@ export function KondomerietCardView({
   standalone = false,
   rootRef,
   imageOverride,
+  priority = false,
 }: CardViewProps) {
   const { disabled: editor } = useEditorState();
   const {
@@ -146,12 +168,16 @@ export function KondomerietCardView({
     subtitle = "",
     tagText = "",
     footerText = "",
+    showTrustLine = true,
+    showRating = true,
+    vippsNote = DEFAULT_VIPPS_NOTE,
+    vippsNoteSameWindow = "",
   } = config;
   const directBadge = directBadgeFrom(config.directBadge);
 
-  useEffect(() => {
-    injectKondomerietStyles();
-  }, []);
+  // The styles go in while rendering, not in an effect: a card must never
+  // paint before its CSS (the snapshot paints at once).
+  injectKondomerietStyles();
 
   // The option on screen: the first in stock when the group (re)loads.
   const groupKey = group?.key ?? "";
@@ -161,7 +187,7 @@ export function KondomerietCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupKey]);
 
-  const hasDates = !!(group?.group.discountStart || group?.group.discountEnd);
+  const hasDates = !!(group?.group.discountStart || group?.group.discountEnd || group?.group.offerEnd || config.offerEnd);
   const now = useMinuteClock(hasDates);
 
   const localRef = useRef<HTMLDivElement | null>(null);
@@ -227,7 +253,9 @@ export function KondomerietCardView({
   const safeIndex = Math.min(Math.max(0, index), group.options.length - 1);
   const option = group.options[safeIndex];
   const p = option.product;
-  const img = imageOverride || primaryImageUrl(p) || "";
+  // The CDN's sized file directly (no redirects); the editor's own picture as it is.
+  const image = imageOverride ? { src: imageOverride, fallback: imageOverride } : directImage(primaryImageUrl(p), "large");
+  const img = image.src;
   const soldOut = isSoldOut(p);
   const canBuy = !!option.slug && !soldOut;
   // Buy here, or send to the product info (Angelo's conversion default).
@@ -246,7 +274,14 @@ export function KondomerietCardView({
   const badge = badgeFor(discountMode, discountText, group.group, p, now);
   const brand = group.brand;
   // The seller (the bootstrap's sponsor): its logo and name, as the SDK detail names it.
-  const identity = brandIdentity(sponsorId);
+  const identity = brandIdentityOrCached(sponsorId);
+  // In an app's browser the Hurtigkasse opens in the same window (a new tab fails or opens badly there).
+  const browser = inAppBrowser();
+  const target: HurtigkasseTarget = browser ? "_top" : hurtigkasseTarget;
+  const note = (target === "_blank" ? vippsNote : vippsNoteSameWindow).trim();
+  const trust = showTrustLine ? trustLineFor(config.trustLine, identity) : "";
+  const rating = showRating ? cardRating(p?.description) : null;
+  const offer = offerEndText(group.group.offerEnd || config.offerEnd, config.offerEndText, now);
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
@@ -267,7 +302,9 @@ export function KondomerietCardView({
       index: safeIndex,
       optionTitle,
       vippsLabel,
-      target: hurtigkasseTarget,
+      target,
+      vippsNote: note,
+      offerText: offer,
       badge,
       discountMode,
       discountText,
@@ -291,7 +328,8 @@ export function KondomerietCardView({
       sponsorId,
       where: "card",
       label: `${vippsLabel} Vipps`,
-      target: hurtigkasseTarget,
+      target,
+      inAppBrowser: browser,
       editor,
     });
   };
@@ -307,7 +345,7 @@ export function KondomerietCardView({
   // «Image click»: the product info (default), or Kjøp med Vipps when the option can be bought.
   const onImage = () => {
     if (imageClickAction === "vipps" && canBuy && buyHere) {
-      buyWithHurtigkasse(option, { attribution: attribution(), sponsorId, where: "card", label: "image", target: hurtigkasseTarget, editor });
+      buyWithHurtigkasse(option, { attribution: attribution(), sponsorId, where: "card", label: "image", target, inAppBrowser: browser, editor });
       return;
     }
     openInfo();
@@ -368,11 +406,20 @@ export function KondomerietCardView({
       {inBody && directBadgeOnCard && directBadge ? <span className="knd-direct-badge">{directBadge}</span> : null}
       {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || " "}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
+      {rating ? (
+        <div className="knd-rating" aria-label={`Vurdering ${rating.score}${rating.count ? `, ${rating.count} anmeldelser` : ""}`}>
+          <span className="knd-rating-stars">★ {rating.score}</span>
+          {rating.count ? <span className="knd-rating-count"> ({rating.count})</span> : null}
+        </div>
+      ) : null}
       {subtitle.trim() ? <div className="knd-subtitle">{subtitle.trim()}</div> : null}
       {inBody && description ? <p className="vnc-description">{description}</p> : null}
       {inBody && buyHere ? selector : null}
       {priceEl}
+      {offer ? <div className="knd-offer-end">{offer}</div> : null}
       {inBody ? vippsEl : null}
+      {inBody && buyHere && canBuy && note ? <div className="knd-vipps-note">{note}</div> : null}
+      {inBody && trust ? <div className="knd-trust">{trust}</div> : null}
       {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
       {showSeller ? (
         <div className="knd-seller">
@@ -401,7 +448,22 @@ export function KondomerietCardView({
           }
         }}
       >
-        {img ? <img src={img} alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()} loading="lazy" /> : null}
+        {img ? (
+          <img
+            src={img}
+            alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()}
+            // The box is square (.vnc-image, aspect-ratio 1/1): the size only states the ratio — no layout shift.
+            width={500}
+            height={500}
+            decoding="async"
+            loading={priority ? "eager" : "lazy"}
+            {...({ fetchpriority: priority ? "high" : "auto" } as any)}
+            onError={(e) => {
+              const el = e.currentTarget;
+              if (image.fallback && el.src !== image.fallback) el.src = image.fallback;
+            }}
+          />
+        ) : null}
         {badge ? <span className="vnc-badge">{badge}</span> : null}
         {annonse ? <span className="vnc-annonse">{annonseText}</span> : null}
         {tagText.trim() ? <span className="knd-tag">{tagText.trim()}</span> : null}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Vio } from "../../vio-sdk";
+import { readCachedIdentity, writeCachedIdentity, writeCachedProducts } from "./kondomeriet-perf";
 import {
   ensureVioInit,
   fetchVioProducts,
@@ -51,7 +52,131 @@ export type KondomerietGroup = {
   discountEnd?: string;
   /** This card's «Buy on card», overriding the block's; absent = the block's. */
   buyOnCard?: BuyOnCard;
+  /** «Tilbudet gjelder til …»: this card's offer end (`datetime-local`), overriding the block's. */
+  offerEnd?: string;
+  /**
+   * What the editor saw when the products were picked, per product id — the
+   * published card paints from it at once and refreshes price and stock from
+   * the API in the background (see `SnapProduct`).
+   */
+  snap?: Record<string, SnapProduct>;
 };
+
+/**
+ * A product as the card needs it to paint before any request: title, brand,
+ * price, compare-at, currency, main image, shop URL (the Hurtigkasse slug),
+ * stock, and the rating line of the description. Short keys: it lives in the
+ * block's props, for every product of every card.
+ */
+export type SnapProduct = {
+  t: string;
+  b?: string;
+  p?: number;
+  c?: number | null;
+  cur?: string;
+  img?: string;
+  u?: string | null;
+  q?: number | null;
+  r?: string;
+  /** When it was taken (ms) — the editor refreshes snapshots older than a day. */
+  at?: number;
+};
+
+function cleanSnap(value: unknown): Record<string, SnapProduct> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const out: Record<string, SnapProduct> = {};
+  for (const [k, v] of Object.entries(value as Record<string, any>)) {
+    if (!v || typeof v !== "object" || typeof v.t !== "string") continue;
+    const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+    const s: SnapProduct = { t: v.t };
+    if (typeof v.b === "string") s.b = v.b;
+    if (num(v.p) != null) s.p = v.p;
+    if (num(v.c) != null) s.c = v.c;
+    if (typeof v.cur === "string") s.cur = v.cur;
+    if (typeof v.img === "string") s.img = v.img;
+    if (typeof v.u === "string") s.u = v.u;
+    if (num(v.q) != null) s.q = v.q;
+    if (typeof v.r === "string") s.r = v.r;
+    if (num(v.at) != null) s.at = v.at;
+    out[k] = s;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The snapshot of a product the API returned (`KONDOMERIET_PRODUCTS_QUERY`). */
+export function snapshotOf(p: any): SnapProduct {
+  const images: any[] = Array.isArray(p?.images) ? [...p.images].sort((a, b) => Number(a?.order ?? 0) - Number(b?.order ?? 0)) : [];
+  const rating = ratingLineOf(p?.description);
+  const s: SnapProduct = { t: String(p?.title ?? ""), at: Date.now() };
+  if (p?.brand) s.b = String(p.brand);
+  const amount = getProductPriceAmount(p);
+  if (amount != null) s.p = amount;
+  const was = compareAtAmount(p);
+  if (was != null) s.c = was;
+  if (p?.price?.currency_code) s.cur = String(p.price.currency_code);
+  if (images[0]?.url) s.img = String(images[0].url);
+  if (typeof p?.origin_url === "string") s.u = p.origin_url;
+  if (p?.quantity != null && Number.isFinite(Number(p.quantity))) s.q = Number(p.quantity);
+  if (rating) s.r = rating;
+  return s;
+}
+
+const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** A product-shaped object from a snapshot (`__snap: true`), for the card's first paint. */
+export function productFromSnap(id: number, s: SnapProduct): any {
+  return {
+    id,
+    __snap: true,
+    title: s.t,
+    brand: s.b ?? "",
+    price: { amount_incl_taxes: s.p, amount: s.p, compare_at_incl_taxes: s.c ?? null, currency_code: s.cur ?? "NOK" },
+    images: s.img ? [{ url: s.img, order: 0 }] : [],
+    origin_url: s.u ?? null,
+    quantity: s.q ?? null,
+    description: s.r ? `<p>${escapeHtml(s.r)}</p>` : "",
+  };
+}
+
+/** «★ 5/5 · 792 anmeldelser hos Kondomeriet» — the first line of Vio's descriptions, when it is the rating. */
+export function ratingLineOf(description: unknown): string | null {
+  if (typeof description !== "string") return null;
+  const text = description
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+  const first = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return first.startsWith("★") ? first : null;
+}
+
+/** «★ 5/5 (792)» for the card, from the rating line; null without one. */
+export function cardRating(description: unknown): { score: string; count: string | null } | null {
+  const line = ratingLineOf(description);
+  if (!line) return null;
+  const m = line.match(/★\s*([\d.,]+)\s*\/\s*(\d+)(?:\s*[·•-]\s*([\d\s\u00a0.]+)\s*anmeldelse)?/i);
+  if (!m) return null;
+  return { score: `${m[1]}/${m[2]}`, count: m[3] ? m[3].replace(/[\s\u00a0.]/g, "") : null };
+}
+
+/**
+ * «Tilbudet gjelder til mandag 30. november» while `end` is ahead; null once it
+ * has passed (or without one). `{dato}` in the template is the weekday, day
+ * and month in Norwegian.
+ */
+export function offerEndText(end: string | undefined, template: string | undefined, now = Date.now()): string | null {
+  if (!end) return null;
+  const t = new Date(end.trim().replace(" ", "T")).getTime();
+  if (!Number.isFinite(t) || now >= t) return null;
+  let date: string;
+  try {
+    date = new Date(t).toLocaleDateString("nb-NO", { weekday: "long", day: "numeric", month: "long" });
+  } catch {
+    date = new Date(t).toISOString().slice(0, 10);
+  }
+  const tpl = template?.trim() || "Tilbudet gjelder til {dato}";
+  return tpl.includes("{dato}") ? tpl.replace("{dato}", date) : `${tpl} ${date}`;
+}
 
 /**
  * Where a card sells (Angelo, conversion default): `auto` — a single product
@@ -125,6 +250,8 @@ export function parseGroups(value?: GroupsValue | null): KondomerietGroup[] {
       discountStart: cleanText(src.discountStart),
       discountEnd: cleanText(src.discountEnd),
       buyOnCard: cleanBuyOnCard(src.buyOnCard),
+      offerEnd: cleanText(src.offerEnd),
+      snap: cleanSnap(src.snap),
     });
   }
   return groups;
@@ -149,6 +276,14 @@ function normalizeGroup(g: KondomerietGroup): KondomerietGroup {
   if (slugs) out.slugs = slugs;
   const buy = cleanBuyOnCard(g.buyOnCard);
   if (buy) out.buyOnCard = buy;
+  const end = cleanText(g.offerEnd);
+  if (end) out.offerEnd = end;
+  // The snapshot of the products still in the group.
+  const snap = cleanSnap(g.snap);
+  if (snap) {
+    for (const k of Object.keys(snap)) if (!out.ids.includes(Number(k))) delete snap[k];
+    if (Object.keys(snap).length) out.snap = snap;
+  }
   for (const k of ["title", "discount", "discountStart", "discountEnd"] as const) {
     const v = cleanText(g[k]);
     if (v) out[k] = v;
@@ -454,55 +589,281 @@ const KONDOMERIET_PRODUCTS_QUERY = `
   }
 `;
 
-const fetchCache = new Map<string, Promise<any[]>>();
+/**
+ * What a card paints, and nothing else: no description (the card's rating
+ * comes from the snapshot; the product info reads the full product), no
+ * image sizes. Asked only for the page's ids — never the whole catalog.
+ */
+const KONDOMERIET_CARD_QUERY = `
+  query KondomerietCards(
+    $currency: String
+    $imageSize: ImageSize
+    $productIds: [Int!]
+    $useCache: Boolean!
+    $shippingCountryCode: String
+  ) {
+    Channel {
+      GetProductsByIds(
+        currency: $currency
+        image_size: $imageSize
+        product_ids: $productIds
+        useCache: $useCache
+        shipping_country_code: $shippingCountryCode
+      ) {
+        id
+        brand
+        title
+        quantity
+        origin_url
+        price {
+          amount
+          currency_code
+          compare_at
+          amount_incl_taxes
+          compare_at_incl_taxes
+        }
+        images {
+          url
+          order
+        }
+      }
+    }
+  }
+`;
+
+/** Currency | country — what a product's price depends on besides its channel. */
+export function marketKey(): string {
+  return `${getActiveCurrency()}|${getActiveCountryCode()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Fast start: the products request without waiting for the bootstrap
+// ---------------------------------------------------------------------------
+
+/**
+ * The channel the Kondomeriet Config resolved in the editor (its `fastStart`
+ * prop): the GraphQL endpoint and the sponsor's channel key for the page's
+ * campaign. With it the published page asks for its products IN PARALLEL with
+ * the bootstrap — one round trip instead of two. Once the bootstrap is there,
+ * its own key and endpoint (`Vio.commerceFor`) serve every later request.
+ */
+export type FastChannel = {
+  endpoint: string;
+  apiKey: string;
+  sponsorId: number;
+  campaignId?: number | null;
+  environment?: string;
+  at?: number;
+};
+
+const FAST_EVENT = "kondomeriet:fast-channel";
+
+export function fastChannel(): FastChannel | null {
+  return (globalThis as { __KND_FAST__?: FastChannel | null }).__KND_FAST__ ?? null;
+}
+
+/** Set by the Kondomeriet Config while it renders (before the blocks' effects, when it is above them). */
+export function setFastChannel(fc: FastChannel | null): void {
+  const valid =
+    fc && typeof fc.endpoint === "string" && /^https:\/\//.test(fc.endpoint) && typeof fc.apiKey === "string" && fc.apiKey && Number(fc.sponsorId) > 0
+      ? { ...fc, sponsorId: Number(fc.sponsorId), campaignId: fc.campaignId != null && Number(fc.campaignId) > 0 ? Number(fc.campaignId) : null }
+      : null;
+  const g = globalThis as { __KND_FAST__?: FastChannel | null };
+  if (JSON.stringify(g.__KND_FAST__ ?? null) === JSON.stringify(valid)) return;
+  g.__KND_FAST__ = valid;
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(FAST_EVENT));
+}
+
+/** The fast channel, live (a Config that mounts after a block still reaches it). */
+export function useFastChannel(): FastChannel | null {
+  const [fc, setFc] = useState<FastChannel | null>(() => fastChannel());
+  useEffect(() => {
+    const on = () => setFc(fastChannel());
+    on();
+    window.addEventListener(FAST_EVENT, on);
+    return () => window.removeEventListener(FAST_EVENT, on);
+  }, []);
+  return fc;
+}
+
+/**
+ * GraphQL as a GET with the key in the query string, cacheable by the CDN —
+ * for when the gateway supports it (being prepared). Off by default: an
+ * internal switch, `globalThis.__VIO_KND_GQL_GET__ = true`. Any failure falls
+ * back to the POST.
+ */
+function gqlGetEnabled(): boolean {
+  return (globalThis as { __VIO_KND_GQL_GET__?: boolean }).__VIO_KND_GQL_GET__ === true;
+}
+
+/** One GraphQL query straight to an endpoint with a channel key (no SDK client, no bootstrap). */
+export async function directGraphQL(endpoint: string, apiKey: string, query: string, variables: Record<string, unknown>): Promise<any> {
+  const compact = query.replace(/\s+/g, " ").trim();
+  if (gqlGetEnabled()) {
+    try {
+      const url =
+        `${endpoint}?query=${encodeURIComponent(compact)}` +
+        `&variables=${encodeURIComponent(JSON.stringify(variables))}` +
+        `&apiKey=${encodeURIComponent(apiKey)}`;
+      const res = await fetch(url, { method: "GET" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data && !json?.errors?.length) return json.data;
+      }
+    } catch {
+      /* the POST below */
+    }
+  }
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: apiKey },
+    body: JSON.stringify({ query: compact, variables }),
+  });
+  if (!res.ok) throw new Error(`[Vio] GraphQL ${res.status}`);
+  const json = await res.json();
+  if (json?.errors?.length) throw new Error(`[Vio] GraphQL: ${json.errors[0]?.message ?? "error"}`);
+  return json?.data;
+}
+
+type Batch = { ids: Set<number>; waiters: Map<number, { resolve: (p: any) => void; reject: (e: unknown) => void }[]>; timer: any };
+const productPromises = new Map<string, Promise<any | null>>();
+const batches = new Map<string, Batch>();
+
+/** One product query for every id asked in the same tick, per sponsor + campaign + market + shape. */
+function batchedProduct(id: number, sponsorId: number, campaignId: number | null | undefined, full: boolean): Promise<any | null> {
+  const scope = [full ? "full" : "card", sponsorId, campaignId ?? "", marketKey()].join("|");
+  const key = `${scope}|${id}`;
+  const known = productPromises.get(key);
+  if (known) return known;
+  let batch = batches.get(scope);
+  if (!batch) {
+    batch = { ids: new Set(), waiters: new Map(), timer: null };
+    batches.set(scope, batch);
+  }
+  const b = batch;
+  const promise = new Promise<any | null>((resolve, reject) => {
+    b.ids.add(id);
+    const list = b.waiters.get(id) ?? [];
+    list.push({ resolve, reject });
+    b.waiters.set(id, list);
+  });
+  productPromises.set(key, promise);
+  // A failed or missing product is not remembered: the next block asks again.
+  promise.then(
+    (p) => {
+      if (!p) productPromises.delete(key);
+    },
+    () => productPromises.delete(key)
+  );
+  if (!b.timer) {
+    b.timer = setTimeout(() => {
+      batches.delete(scope);
+      const ids = [...b.ids];
+      queryProducts(ids, sponsorId, campaignId, full).then(
+        (list) => {
+          const byId = new Map(list.map((p) => [Number(p?.id), p]));
+          for (const [pid, ws] of b.waiters) for (const w of ws) w.resolve(byId.get(pid) ?? null);
+          if (!full) writeCachedProducts(list, marketKey());
+        },
+        (err) => {
+          for (const ws of b.waiters.values()) for (const w of ws) w.reject(err);
+        }
+      );
+    }, 0);
+  }
+  return promise;
+}
+
+function productVariables(ids: number[]) {
+  return {
+    productIds: ids,
+    currency: getActiveCurrency(),
+    shippingCountryCode: getActiveCountryCode(),
+    imageSize: "large",
+    useCache: true,
+  };
+}
+
+function inOrder(ids: number[], list: any[], light: boolean): any[] {
+  return ids
+    .map((id) => list.find((x) => Number(x?.id) === id))
+    .filter(Boolean)
+    .map((p) => (light ? { ...p, __light: true } : p));
+}
+
+async function queryProducts(ids: number[], sponsorId: number, campaignId: number | null | undefined, full: boolean): Promise<any[]> {
+  const query = full ? KONDOMERIET_PRODUCTS_QUERY : KONDOMERIET_CARD_QUERY;
+  // Before the bootstrap: straight to the channel the editor resolved, in
+  // parallel with the bootstrap — if it is the channel asked for.
+  const fc = fastChannel();
+  if (fc && fc.sponsorId === sponsorId && (fc.campaignId ?? null) === (campaignId ?? null) && !(Vio as any).bootstrapCache) {
+    try {
+      const data = await directGraphQL(fc.endpoint, fc.apiKey, query, productVariables(ids));
+      const list: any[] = Array.isArray(data?.Channel?.GetProductsByIds) ? data.Channel.GetProductsByIds : [];
+      if (list.length) return inOrder(ids, list, !full);
+    } catch (err: any) {
+      console.warn("[Vio] Kondomeriet fast start failed, waiting for the bootstrap", err?.message ?? err);
+    }
+  }
+  try {
+    return await withRetry(
+      async () => {
+        ensureVioInit();
+        await Vio.bootstrap();
+        const sid = sponsorForCommerce(sponsorId);
+        if (sid == null) throw new Error("[Vio] no sponsor in the connected key's configuration yet");
+        const commerce = campaignId != null ? Vio.commerceFor(sid, { campaignId }) : Vio.commerceFor(sid);
+        const data = await commerce.raw.request(query, productVariables(ids));
+        const list: any[] = Array.isArray(data?.Channel?.GetProductsByIds) ? data.Channel.GetProductsByIds : [];
+        return inOrder(ids, list, !full);
+      },
+      { attempts: 4, delay: 300, label: "kondomeriet products" }
+    );
+  } catch (err: any) {
+    console.warn("[Vio] Kondomeriet product query failed, using the standard one (no shop URL)", err?.message ?? err);
+    return (await fetchVioProducts(ids, sponsorId, campaignId)) as any[];
+  }
+}
 
 /**
  * Products by id on the block's channel, in the requested order, each with
- * `origin_url`. A failure of that query (an API without the field) falls back
- * to the SDK's own product query — the cards then show, but "Kjøp med Vipps"
- * needs a slug override. Deduped per ids + sponsor + campaign + market.
+ * `origin_url`. Every block of the page asking in the same tick shares ONE
+ * request (and the Kondomeriet Config starts it as early as it can); each
+ * product's answer is kept for the page, and the card shape in the browser
+ * for 5 minutes (`kondomeriet-perf.ts`). `full`: with the description and
+ * every image size (the product info, the editor) — the card shape
+ * (`__light`) otherwise. A failure falls back to the SDK's own product query.
  */
 export function fetchKondomerietProducts(
   productIds: number[],
   sponsorId: number | null,
-  campaignId?: number | null
+  campaignId?: number | null,
+  { full = false }: { full?: boolean } = {}
 ): Promise<any[]> {
   const ids = productIds.filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0 || sponsorId == null) return Promise.resolve([]);
-  const key = [ids.join(","), sponsorId, campaignId ?? "", getActiveCurrency(), getActiveCountryCode()].join("|");
-  const cached = fetchCache.get(key);
-  if (cached) return cached;
-  const pending = withRetry(
-    async () => {
-      ensureVioInit();
-      await Vio.bootstrap();
-      const sid = sponsorForCommerce(sponsorId);
-      if (sid == null) throw new Error("[Vio] no sponsor in the connected key's configuration yet");
-      const commerce = campaignId != null ? Vio.commerceFor(sid, { campaignId }) : Vio.commerceFor(sid);
-      const data = await commerce.raw.request(KONDOMERIET_PRODUCTS_QUERY, {
-        productIds: ids,
-        currency: getActiveCurrency(),
-        shippingCountryCode: getActiveCountryCode(),
-        imageSize: "large",
-        useCache: true,
-      });
-      const list: any[] = Array.isArray(data?.Channel?.GetProductsByIds) ? data.Channel.GetProductsByIds : [];
-      return ids.map((id) => list.find((x) => Number(x?.id) === id)).filter(Boolean);
-    },
-    { attempts: 4, delay: 300, label: "kondomeriet products" }
-  ).catch((err) => {
-    console.warn("[Vio] Kondomeriet product query failed, using the standard one (no shop URL)", err?.message ?? err);
-    return fetchVioProducts(ids, sponsorId, campaignId) as Promise<any[]>;
-  });
-  fetchCache.set(key, pending);
-  // An empty answer is not remembered: the next block asks again.
-  pending.then(
-    (list) => {
-      if (list.length === 0) fetchCache.delete(key);
-    },
-    () => fetchCache.delete(key)
+  return Promise.all(ids.map((id) => batchedProduct(id, sponsorId, campaignId, full).catch(() => null))).then(
+    (list) => list.filter(Boolean)
   );
-  return pending;
+}
+
+/** The product ids the page's Kondomeriet blocks show — registered as they render. */
+function wantedIds(): Set<number> {
+  const g = globalThis as { __KND_WANTED__?: Set<number> };
+  return g.__KND_WANTED__ ?? (g.__KND_WANTED__ = new Set());
+}
+
+export function registerWantedProducts(ids: number[]): void {
+  const set = wantedIds();
+  for (const id of ids) set.add(id);
+}
+
+/** The Config's head start: one request for every product of the page as soon as the sponsor is known. */
+export function prefetchWantedProducts(sponsorId: number | null, campaignId?: number | null): void {
+  // (The card shape: what the blocks ask for.)
+  const ids = [...wantedIds()];
+  if (sponsorId == null || ids.length === 0) return;
+  void fetchKondomerietProducts(ids, sponsorId, campaignId);
 }
 
 // ---------------------------------------------------------------------------
@@ -594,6 +955,10 @@ export type KondomerietDetailRequest = {
   stockText?: string;
   attribution: VioAttribution;
   sponsorId: number | null;
+  /** Under the Vipps button (the card's microcopy for its target); '' = none. */
+  vippsNote?: string;
+  /** «Tilbudet gjelder til …», already worded; null = none. */
+  offerText?: string | null;
   /** The card follows a choice made in the drawer. */
   onSelect?: (index: number) => void;
 };
@@ -620,6 +985,31 @@ export function brandIdentity(sponsorId: number | null): BrandIdentity | null {
   } catch {
     return null;
   }
+}
+
+/** The brand's identity, else the last one this browser saw (a card painted before the bootstrap); keeps that copy fresh. */
+export function brandIdentityOrCached(sponsorId: number | null): BrandIdentity | null {
+  const live = brandIdentity(sponsorId);
+  if (live && sponsorId != null) {
+    writeCachedIdentity(sponsorId, live);
+    return live;
+  }
+  const cached = readCachedIdentity();
+  return cached && (sponsorId == null || cached.sponsorId === sponsorId) ? (cached.identity as BrandIdentity) : null;
+}
+
+/** Under the card's Vipps button, when the Hurtigkasse opens in a new tab. */
+export const DEFAULT_VIPPS_NOTE = "Du blir værende i artikkelen";
+export const DEFAULT_TRUST_LINE = "Diskret pakket · Anonym levering · Frakt fra 59,-";
+
+/**
+ * The card's line of promises: the editor's text; else the brand's promises
+ * (their titles, when short); else the default. Hidden with `showTrustLine`.
+ */
+export function trustLineFor(own: unknown, identity: BrandIdentity | null): string {
+  if (typeof own === "string" && own.trim()) return own.trim();
+  const titles = (identity?.highlights ?? []).map((h) => String(h?.title ?? "").trim()).filter((t) => t && t.length <= 28);
+  return titles.length >= 2 ? titles.slice(0, 3).join(" · ") : DEFAULT_TRUST_LINE;
 }
 
 /** Defaults of the editable trust texts (props of the Kondomeriet card / carousel / grid). */

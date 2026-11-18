@@ -40,7 +40,7 @@ export default function KondomerietProductCard(props: Props) {
   // assigned to this card's slot — the same rule as the Vio card.
   const sponsorId = useActiveSponsorId(undefined, slotId);
   const campaignId = sponsorId != null ? vioAttribution(slotId, sponsorId).campaignId ?? null : null;
-  const { products, resolved, ids } = useKondomerietGroups({
+  const { products, resolved, ids, live } = useKondomerietGroups({
     groups,
     groupsKey,
     sponsorId,
@@ -55,7 +55,9 @@ export default function KondomerietProductCard(props: Props) {
   // Real impression (≥50 % visible ≥1 s), with every product the card offers.
   const rootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!card || !products) return;
+    // Counted on live data only: a card painted from its snapshot before the
+    // sponsor is known would otherwise count twice (once without a sponsor).
+    if (!card || !products || !live) return;
     return observeVioImpression(
       rootRef.current,
       {
@@ -67,7 +69,7 @@ export default function KondomerietProductCard(props: Props) {
       card.options.map((o) => productToItem(o.product))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card?.key, products, sponsorId, slotId]);
+  }, [card?.key, products, live, sponsorId, slotId]);
 
   return (
     <KondomerietCardView
@@ -79,6 +81,7 @@ export default function KondomerietProductCard(props: Props) {
       slot={slotId}
       componentTemplateId={COMPONENT_TEMPLATE_ID.card}
       standalone
+      priority
       rootRef={rootRef}
       imageOverride={imageUrlOf(props.image)}
     />
