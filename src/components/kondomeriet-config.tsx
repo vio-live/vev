@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox } from "@vev/silke";
 import { Vio } from "../../vio-sdk";
-import { registerVevComponent, useEditorState } from "@vev/react";
+import { registerVevComponent, useEditorState, useModel } from "@vev/react";
 import VioConfig, { VioApiKeyEditor, VioCampaignSelector, VioSponsorSelector } from "./vio-config";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
+import { imposeOwnerConnection, isDuplicateConfig, writeConfigRole } from "./kondomeriet-owner";
 import {
   DEFAULT_ENVIRONMENT,
   ensureVioInit,
@@ -103,6 +104,15 @@ export default function KondomerietConfig(props: Props) {
       window.dispatchEvent(new Event(CONFIGS_CHANGED));
     };
   }, []);
+  // In the editor: this Config's role, for its properties panel (another
+  // window): a duplicate's panel touches nothing global (kondomeriet-owner.ts).
+  const model: any = useModel();
+  const modelKey = String(model?.key ?? "");
+  useEffect(() => {
+    if (!inEditor || !modelKey) return;
+    writeConfigRole(modelKey, owner);
+    return () => writeConfigRole(modelKey, null);
+  }, [inEditor, modelKey, owner]);
   if (!owner) {
     return inEditor ? (
       <div
@@ -119,7 +129,7 @@ export default function KondomerietConfig(props: Props) {
       </div>
     ) : null;
   }
-  return <KondomerietConfigOwner {...props} inEditor={inEditor} />;
+  return <KondomerietConfigOwner {...props} inEditor={inEditor} modelKey={modelKey} />;
 }
 
 function KondomerietConfigOwner(props: Props) {
@@ -142,6 +152,18 @@ function KondomerietConfigOwner(props: Props) {
   useEffect(() => {
     if (cwOn) preconnectCirclewise();
   }, [cwOn]);
+  // In the editor, the owner imposes its key and environment on the canvas
+  // and records them for the panel — again whenever the page's Configs change
+  // (a duplicate added or deleted), even if they did not change.
+  const ownKey = resolveConfigApiKey(props.apiKey);
+  useEffect(() => {
+    if (!props.inEditor || !ownKey) return;
+    const impose = () => imposeOwnerConnection(String(props.modelKey ?? ""), ownKey, env);
+    impose();
+    window.addEventListener(CONFIGS_CHANGED, impose);
+    return () => window.removeEventListener(CONFIGS_CHANGED, impose);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.inEditor, ownKey, env, props.modelKey]);
   useEffect(() => {
     if (fs && fs.environment === env) prefetchWantedProducts(Number(fs.sponsorId), fs.campaignId ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,7 +180,7 @@ function KondomerietConfigOwner(props: Props) {
     window.addEventListener("vio:sponsor-changed", onSponsor);
     return () => window.removeEventListener("vio:sponsor-changed", onSponsor);
   }, []);
-  const { inEditor, ...configProps } = props;
+  const { inEditor, modelKey: _modelKey, ...configProps } = props;
   return (
     <>
       {inEditor && env !== "production" ? (
@@ -211,14 +233,16 @@ export function KondomerietFastStartField({
 }: {
   value?: FastChannel;
   onChange: (v: FastChannel | null) => void;
-  context?: { value?: { apiKey?: string; environment?: VioEnvironment; sponsorId?: number; campaignId?: number } };
+  context?: { key?: string; value?: { apiKey?: string; environment?: VioEnvironment; sponsorId?: number; campaignId?: number } };
 }) {
   const v = context?.value;
   const key = resolveConfigApiKey(v?.apiKey);
   const env = v?.environment || DEFAULT_ENVIRONMENT;
+  // A duplicate Config's panel connects nothing in this window (kondomeriet-owner.ts).
+  const duplicate = isDuplicateConfig(context?.key);
   const [state, setState] = useState<"idle" | "working" | "ready" | "failed">(value?.apiKey ? "ready" : "idle");
   useEffect(() => {
-    if (!key) return;
+    if (!key || duplicate) return;
     let cancelled = false;
     setState("working");
     (async () => {
@@ -249,7 +273,14 @@ export function KondomerietFastStartField({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, env, v?.sponsorId, v?.campaignId]);
+  }, [key, env, v?.sponsorId, v?.campaignId, duplicate]);
+  if (duplicate) {
+    return (
+      <SilkeBox style={{ fontSize: 11, lineHeight: 1.4, padding: "2px 0", color: "#a50e0e" }}>
+        This Config is a duplicate — delete it. Its settings are ignored.
+      </SilkeBox>
+    );
+  }
   return (
     <SilkeBox style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.4, padding: "2px 0" }}>
       {state === "ready" && value?.apiKey
@@ -263,11 +294,44 @@ export function KondomerietFastStartField({
   );
 }
 
+/**
+ * The API key field of the Kondomeriet Config: Vio Config's own, except that
+ * a duplicate Config's panel saves nothing (no key or environment persisted,
+ * no SDK init in this window), and the owner's Save imposes its key and
+ * environment on this window every time, even unchanged.
+ */
+export function KondomerietApiKeyEditor({
+  value,
+  onChange,
+  context,
+}: {
+  value?: string;
+  onChange: (v: string) => void;
+  context?: { key?: string; value?: { environment?: VioEnvironment } };
+}) {
+  if (isDuplicateConfig(context?.key)) {
+    return (
+      <SilkeBox style={{ fontSize: 12, lineHeight: 1.4, padding: "4px 0", color: "#a50e0e" }}>
+        This Config is a duplicate — delete it. Nothing here is saved.
+      </SilkeBox>
+    );
+  }
+  return (
+    <VioApiKeyEditor
+      value={value}
+      onChange={(next: string) => {
+        onChange(next);
+        if (next) imposeOwnerConnection(String(context?.key ?? ""), next, context?.value?.environment || DEFAULT_ENVIRONMENT);
+      }}
+    />
+  );
+}
+
 registerVevComponent(KondomerietConfig, {
   name: "Kondomeriet Config (SDK)",
   size: { width: 320, height: "auto" },
   props: [
-    { name: "apiKey", title: "Vio API Key", type: "string", initialValue: "", component: VioApiKeyEditor as any },
+    { name: "apiKey", title: "Vio API Key", type: "string", initialValue: "", component: KondomerietApiKeyEditor as any },
     { name: "sponsorId", title: "Active Sponsor", type: "number", component: VioSponsorSelector as any },
     { name: "campaignId", title: "Campaign", type: "number", component: VioCampaignSelector as any },
     {

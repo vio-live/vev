@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox, SilkeButton, SilkeModal, SilkeText } from "@vev/silke";
 import { CatalogModal, type PickerFacts } from "./product-picker";
+import { ensureOwnerConnection } from "./kondomeriet-owner";
 import { resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
 import {
   deriveLabels,
@@ -103,6 +104,7 @@ function GroupDetailsModal({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      ensureOwnerConnection();
       const sponsor = sponsorForSlot(null, await resolveActiveSponsorId());
       const list = await fetchKondomerietProducts(draft.ids, sponsor, null, { full: true });
       if (cancelled) return;
@@ -399,6 +401,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
     let cancelled = false;
     setSnapState("working");
     (async () => {
+      ensureOwnerConnection();
       const sponsor = sponsorForSlot(null, await resolveActiveSponsorId());
       // The full product: the snapshot keeps the rating line of the description.
       const list = await fetchKondomerietProducts(ids, sponsor, null, { full: true });
