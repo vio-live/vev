@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Vio } from "../../vio-sdk";
+import { ensureOwnerConnection } from "./kondomeriet-owner";
 import { readCachedIdentity, simpleConfigRequest, writeCachedIdentity, writeCachedProducts } from "./kondomeriet-perf";
 import {
   ensureVioInit,
@@ -1337,7 +1338,9 @@ export function loadFreshCatalog(): Promise<CatalogProduct[]> {
     async () => {
       if (!resolveApiKey()) throw new Error("Connect a Vio API key in the Config block to list its products");
       simpleConfigRequest();
-      ensureVioInit();
+      // On the page's owner Config's key and environment, whatever another
+      // Config's panel left in this window (kondomeriet-owner.ts).
+      ensureOwnerConnection();
       await Vio.bootstrap();
       const sponsorId = sponsorForSlot(null, getActiveSponsorId());
       if (sponsorId == null) throw new Error("Connect a Vio API key in the Config block to list its products");
