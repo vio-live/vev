@@ -79,6 +79,7 @@ export function CatalogModal({
   load = loadCatalog,
   title,
   describe,
+  errorHint,
 }: {
   multi: boolean;
   selectedIds: Set<number>;
@@ -90,6 +91,8 @@ export function CatalogModal({
   title?: string;
   /** What the block knows about a product beyond the catalog (shown next to its price). */
   describe?: (p: CatalogProduct) => PickerFacts | undefined;
+  /** Shown under a loading error: what the editor should check. */
+  errorHint?: string;
 }) {
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,9 +106,18 @@ export function CatalogModal({
     } catch {}
   };
 
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    load()
+    setLoading(true);
+    setError(null);
+    // The SDK refuses a bootstrap for 5 s after a failed one («backing off»):
+    // one quiet retry after that, so the real answer (or a working list) shows.
+    const run = () => load();
+    run()
+      .catch((e: any) =>
+        /backing off/i.test(String(e?.message ?? "")) ? new Promise<CatalogProduct[]>((r) => setTimeout(r, 5200)).then(run) : Promise.reject(e)
+      )
       .then((list) => {
         if (!cancelled) {
           setProducts(list);
@@ -121,7 +133,8 @@ export function CatalogModal({
     return () => {
       cancelled = true;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -185,7 +198,13 @@ export function CatalogModal({
             <SilkeLoader />
           </SilkeBox>
         ) : error ? (
-          <SilkeText style={{ color: "#e5484d", padding: 20 }}>{error}</SilkeText>
+          <SilkeBox column gap="s" style={{ padding: 20 }}>
+            <SilkeText style={{ color: "#e5484d" }}>{error.replace(/^\[Vio\]\s*/, "Could not load the catalog: ")}</SilkeText>
+            {errorHint ? <SilkeText style={{ opacity: 0.75 }}>{errorHint}</SilkeText> : null}
+            <SilkeBox>
+              <SilkeButton label="Try again" size="s" kind="secondary" onClick={() => setAttempt((n) => n + 1)} />
+            </SilkeBox>
+          </SilkeBox>
         ) : filtered.length === 0 ? (
           <SilkeText style={{ opacity: 0.6, padding: 20 }}>No products found</SilkeText>
         ) : view === "list" ? (
