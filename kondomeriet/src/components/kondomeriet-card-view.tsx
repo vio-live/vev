@@ -287,14 +287,18 @@ export function KondomerietCardView({
       </>
     );
     return (
-      // Its own key: the card that replaces it is mounted afresh, so no node of
-      // the skeleton is reused as another element of the card (counted as a shift).
-      <div key="knd-skeleton" ref={setRoot} className={rootClass} style={accentStyle} aria-busy="true">
+      // The SAME root element as the card's (no key of its own): Vev's editor
+      // follows the block's first element from its mount to size an «H auto»
+      // frame, and a root swapped when the products arrive left it measuring a
+      // detached node — a 0 px frame (seen on the Kondomeriet package). Only the
+      // children are keyed apart, so no node of the skeleton is reused as
+      // another element of the card (that counted as a layout shift).
+      <div ref={setRoot} className={rootClass} style={accentStyle} aria-busy="true">
         <EditorNotices notices={editorNotices} />
-        <div className="vnc-image">
+        <div key="skel-image" className="vnc-image">
           <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
         </div>
-        <div className="vnc-body">
+        <div key="skel-body" className="vnc-body">
           {showMeta ? <div className="vnc-meta">{pMeta}</div> : pButton}
           {pBuy && infoButton && infoButtonStyle === "bar" ? (
             <div className="vnc-btn-text vnc-btn-bar knd-skel-block" aria-hidden="true">
@@ -566,6 +570,7 @@ export function KondomerietCardView({
     <div ref={setRoot} className={rootClass} style={accentStyle}>
       <EditorNotices notices={cutByFrame ? [CUT_BY_FRAME_NOTICE, ...editorNotices] : editorNotices} />
       <div
+        key="image"
         className="vnc-image"
         role="button"
         tabIndex={0}
@@ -590,7 +595,7 @@ export function KondomerietCardView({
         {isOverlay ? <div className="vnc-overlay-meta">{metaBlock(false)}</div> : null}
       </div>
 
-      <div className="vnc-body">
+      <div key="body" className="vnc-body">
         {showMeta ? (
           <div className="vnc-meta">{metaBlock(true)}</div>
         ) : (
