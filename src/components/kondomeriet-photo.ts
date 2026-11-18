@@ -2,25 +2,30 @@ import { useEffect, useState } from "react";
 
 /**
  * The «photo» of a surface on the CDN: what `/v2/mobile/config` answers for
- * its key and the Kondomeriet products it shows, regenerated every ~90 s and
- * served by Cloudflare (a HIT in ~0.15 s):
+ * its key (platform vev) and the products of its catalogs, regenerated every
+ * ~90 s behind Cloudflare. The blob has no CORS headers, so it is not fetched:
+ * the backend also publishes it as a script,
  *
- *   https://container.vio.live/reachu-uploads-production/snapshots/<sha256(surfaceKey), hex, first 32>.json
- *   { config, products: [<the card / product shape>], generatedAt }
+ *   https://container.vio.live/reachu-uploads-production/snapshots/<sha256(surfaceKey), hex, first 32>.js
+ *   → (window.__vioSnapshots ||= {})["<hash>"] = { version, generatedAt, market, config, catalogs, products }
+ *     and window.dispatchEvent(new CustomEvent("vio:snapshot", { detail: "<hash>" }))
  *
- * The Kondomeriet Config asks for it the moment it renders, in parallel with
- * everything else. Fresh (`generatedAt` under 10 minutes), its products paint
- * the cards at once and its config answers the SDK's bootstrap; the API is
- * still asked in the background and replaces both in place, as with the
- * snapshot in the block's props. A 404, an error or an old photo: nothing
- * changes, the page works as without it.
+ * which the page loads with a `<script async>` the moment the package runs
+ * (with the key this browser saw last) or the Kondomeriet Config renders.
+ * Fresh (`generatedAt` under 10 minutes), its products paint the cards at once
+ * and its config answers the SDK's bootstrap; the API is still asked in the
+ * background and replaces both in place, as with the snapshot in the block's
+ * props. A load error, a timeout or an old photo: nothing changes.
  */
 
 const PHOTO_BASE = "https://container.vio.live/reachu-uploads-production/snapshots/";
 const PHOTO_MAX_AGE_MS = 10 * 60 * 1000;
+const PHOTO_TIMEOUT_MS = 4000;
 const PHOTO_EVENT = "kondomeriet:photo";
+const SNAPSHOT_EVENT = "vio:snapshot";
+const LAST_KEY = "knd.photoKey.v1";
 
-export type SurfacePhoto = { config: any | null; products: any[]; generatedAt: number };
+export type SurfacePhoto = { config: any | null; products: any[]; generatedAt: number; currency: string };
 
 type PhotoState = { key: string; promise: Promise<SurfacePhoto | null>; photo: SurfacePhoto | null };
 
@@ -49,40 +54,102 @@ function isFresh(photo: SurfacePhoto | null, now = Date.now()): photo is Surface
   return !!photo && photo.generatedAt > 0 && now - photo.generatedAt < PHOTO_MAX_AGE_MS;
 }
 
+function snapshots(): Record<string, any> | null {
+  return typeof window !== "undefined" ? ((window as any).__vioSnapshots ?? null) : null;
+}
+
+/** The snapshot script's data for `hash`: already there, or when its event says so (null on error or timeout). */
+function loadSnapshot(hash: string): Promise<any | null> {
+  const ready = snapshots()?.[hash];
+  if (ready) return Promise.resolve(ready);
+  if (typeof document === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: any | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      window.removeEventListener(SNAPSHOT_EVENT, onEvent);
+      resolve(v);
+    };
+    let script: HTMLScriptElement | null = null;
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent).detail === hash) finish(snapshots()?.[hash] ?? null);
+    };
+    const timer = setTimeout(() => {
+      // Given up: the element goes, so a script that never answers does not hold the page's load event.
+      try {
+        script?.remove();
+      } catch {
+        /* already gone */
+      }
+      finish(snapshots()?.[hash] ?? null);
+    }, PHOTO_TIMEOUT_MS);
+    window.addEventListener(SNAPSHOT_EVENT, onEvent);
+    const src = `${PHOTO_BASE}${hash}.js`;
+    script = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
+      script.async = true;
+      script.src = src;
+      (document.head || document.documentElement).appendChild(script);
+    }
+    script.addEventListener("error", () => finish(null));
+    // A script that ran without the event (an older format): read what it left.
+    script.addEventListener("load", () => setTimeout(() => finish(snapshots()?.[hash] ?? null), 0));
+  });
+}
+
 /**
  * Starts reading the photo of `surfaceKey` (once per key and page) and
- * returns it — null when there is none, it failed or it is old. Never throws.
- * A plain GET with no header of ours: no preflight.
+ * returns it — null when there is none, it failed, timed out or is old.
+ * Never throws.
  */
 export function startPhoto(surfaceKey: string | null | undefined): Promise<SurfacePhoto | null> {
   const key = typeof surfaceKey === "string" ? surfaceKey.trim() : "";
-  if (!key || typeof fetch === "undefined") return Promise.resolve(null);
-  const g = globalThis as { __KND_PHOTO__?: PhotoState | null };
+  if (!key || typeof window === "undefined") return Promise.resolve(null);
   const known = photoState();
   if (known && known.key === key) return known.promise;
+  try {
+    // Per page: on the same origin, another page (Vio blocks only) must not load this one's photo.
+    localStorage.setItem(LAST_KEY, JSON.stringify({ key, path: location.pathname }));
+  } catch {
+    /* no storage: the next visit starts at the Config */
+  }
   const state: PhotoState = { key, photo: null, promise: Promise.resolve(null) };
   state.promise = (async () => {
     try {
       const hash = await sha256Hex(key);
       if (!hash) return null;
-      const res = await fetch(`${PHOTO_BASE}${hash.slice(0, 32)}.json`);
-      if (!res.ok) return null;
-      const json = await res.json();
+      const json = await loadSnapshot(hash.slice(0, 32));
+      if (!json || typeof json !== "object") return null;
       const photo: SurfacePhoto = {
-        config: json?.config && typeof json.config === "object" ? json.config : null,
-        products: Array.isArray(json?.products) ? json.products.filter((p: any) => Number.isInteger(Number(p?.id))) : [],
-        generatedAt: generatedAtOf(json?.generatedAt),
+        config: json.config && typeof json.config === "object" ? json.config : null,
+        products: Array.isArray(json.products) ? json.products.filter((p: any) => Number.isInteger(Number(p?.id))) : [],
+        generatedAt: generatedAtOf(json.generatedAt),
+        currency: String(json.market?.currency ?? ""),
       };
       if (!isFresh(photo)) return null;
       state.photo = photo;
-      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(PHOTO_EVENT));
+      window.dispatchEvent(new CustomEvent(PHOTO_EVENT));
       return photo;
     } catch {
       return null;
     }
   })();
-  g.__KND_PHOTO__ = state;
+  (globalThis as { __KND_PHOTO__?: PhotoState | null }).__KND_PHOTO__ = state;
   return state.promise;
+}
+
+/** As soon as the package runs: the photo of the key this page had last time in this browser (the Config confirms or replaces it). */
+export function startRememberedPhoto(): void {
+  try {
+    if (typeof window === "undefined") return;
+    const last = JSON.parse(localStorage.getItem(LAST_KEY) || "null");
+    if (last && last.path === location.pathname) startPhoto(String(last.key ?? ""));
+  } catch {
+    /* nothing remembered */
+  }
 }
 
 /** The photo now, if it has arrived and is still fresh. */
@@ -102,7 +169,7 @@ export function photoConfigFor(surfaceKey: string): Promise<any | null> {
 export function photoProduct(id: number, currency: string): any | null {
   const p = photoNow()?.products.find((x) => Number(x?.id) === id) ?? null;
   if (!p) return null;
-  const cur = String(p?.price?.currency_code ?? "").toUpperCase();
+  const cur = String(p?.price?.currency_code ?? photoNow()?.currency ?? "").toUpperCase();
   return !cur || cur === String(currency || "").toUpperCase() ? p : null;
 }
 

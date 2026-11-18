@@ -23,7 +23,7 @@ import {
   FAST_START_MISSING_NOTICE,
 } from "./kondomeriet-helpers";
 import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest } from "./kondomeriet-perf";
-import { startPhoto } from "./kondomeriet-photo";
+import { startPhoto, startRememberedPhoto } from "./kondomeriet-photo";
 
 /**
  * Kondomeriet Config (SDK) — the Vio Config for Kondomeriet pages: the same
@@ -41,6 +41,8 @@ type Props = Record<string, any>;
 
 // The hosts a card needs, as soon as the package loads (before any block mounts).
 ensurePreconnect();
+// The CDN's photo of the surface this browser saw last, before any block mounts.
+startRememberedPhoto();
 
 const CONFIGS_KEY = "__KND_CONFIGS__";
 const ALIVE_KEY = "__KND_CONFIGS_ALIVE__";
