@@ -347,6 +347,7 @@ export function KondomerietDetail({
       label: `${vippsLabel} Vipps`,
       target: request.target,
       inAppBrowser: inAppBrowser(),
+      tracking: request.tracking ?? null,
     });
   };
 

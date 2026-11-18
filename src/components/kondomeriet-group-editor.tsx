@@ -7,6 +7,7 @@ import {
   fetchKondomerietProducts,
   isValidSlug,
   loadFreshCatalog,
+  parseCirclewiseLink,
   allGroupIds,
   parseGroups,
   serializeGroups,
@@ -236,6 +237,24 @@ function GroupDetailsModal({
               onChange={(e) => set({ discountEnd: e.target.value })}
             />
           </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Tracking link (Circlewise) — this card; empty: the block's, else direct</div>
+          <input
+            style={{ ...inputStyle, borderColor: parseCirclewiseLink(draft.tracking).error ? "#e5484d" : "#ddd" }}
+            value={draft.tracking ?? ""}
+            placeholder="https://c.trackmytarget.com/?a=…&i=…&ref1=…"
+            onChange={(e) => set({ tracking: e.target.value })}
+          />
+          {parseCirclewiseLink(draft.tracking).error ? (
+            <div style={{ fontSize: 10, color: "#e5484d", marginTop: 2 }}>
+              {parseCirclewiseLink(draft.tracking).error} — needs c.trackmytarget.com with a, i and ref1. Until then «Kjøp med Vipps» goes direct.
+            </div>
+          ) : parseCirclewiseLink(draft.tracking).link ? (
+            <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>
+              ref1 = {parseCirclewiseLink(draft.tracking).link!.ref1} · goes through Circlewise to the Hurtigkasse.
+            </div>
+          ) : null}
         </div>
         <div style={{ maxWidth: 360 }}>
           <div style={labelStyle}>Offer ends (this card) — «Tilbudet gjelder til …» until then</div>

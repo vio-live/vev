@@ -1,6 +1,7 @@
 import { productToItem, trackCta, trackSelectItem, trackViewItem } from "./analytics";
 import type { VioAttribution } from "./vio-helpers";
 import { inAppBrowser } from "./kondomeriet-perf";
+import { circlewiseUrl, openInTarget, type CirclewiseLink } from "./kondomeriet-helpers";
 import { submitHurtigkasse, type HurtigkasseTarget, type KondomerietOption } from "./kondomeriet-helpers";
 
 /**
@@ -65,6 +66,7 @@ export function buyWithHurtigkasse(
     label,
     target,
     inAppBrowser,
+    tracking,
     editor,
   }: {
     attribution: VioAttribution;
@@ -74,28 +76,37 @@ export function buyWithHurtigkasse(
     target?: HurtigkasseTarget;
     /** The app whose browser this is (`inAppBrowser()`), or null — marked on both events, to measure that traffic. */
     inAppBrowser?: string | null;
+    /**
+     * A Circlewise link: after our events, the purchase goes through its
+     * tracker → Vio's bridge → the Hurtigkasse POST, in the same target.
+     * Without one, the direct POST.
+     */
+    tracking?: CirclewiseLink | null;
     /** In the Vev editor nothing is posted (the canvas is not a shop). */
     editor?: boolean;
   }
 ): boolean {
   if (!option.slug) return false;
   const app = inAppBrowser ?? null;
+  const via = tracking ? "circlewise" : "direct";
   trackSelectItem(productToItem(option.product, { quantity: 1 }), HURTIGKASSE_LIST, {
     ...attribution,
     in_app_browser: app ?? "no",
     hurtigkasse_target: target ?? "_blank",
+    tracking: via,
   } as any);
-  // `variant` carries the in-app browser: «hurtigkasse» in a browser, «hurtigkasse_inapp_<app>» in an app's.
+  // `variant`: «hurtigkasse», + «_inapp_<app>» in an app's browser, + «_circlewise» through the tracker.
   trackCta({
     ...ctx(option, attribution, sponsorId),
     cta: HURTIGKASSE_CTA,
     location: where,
     label,
-    variant: app ? `hurtigkasse_inapp_${app}` : "hurtigkasse",
+    variant: `hurtigkasse${app ? `_inapp_${app}` : ""}${tracking ? "_circlewise" : ""}`,
   });
   if (editor) {
-    console.info("[Vio] Kondomeriet: Hurtigkasse not posted in the editor —", option.slug);
+    console.info("[Vio] Kondomeriet: Hurtigkasse not posted in the editor —", option.slug, via);
     return false;
   }
+  if (tracking) return openInTarget(circlewiseUrl(tracking, option.slug), target);
   return submitHurtigkasse(option.slug, target);
 }
