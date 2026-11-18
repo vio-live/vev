@@ -412,6 +412,16 @@ bar, pill or icon, and three own texts — *Subtitle* (under the name), *Label o
 editable CSS. **Card image** (Vev image): replaces the product's photo on the card and goes first in the product
 info (or alone, *Product info: only this image*); the carousel / grid take *Card images*, one per card number.
 
+**Buy on card (conversion default).** *Buy on card* — Auto (default) / Always / Never, per block and per card
+(group *Details*, «As the block» by default). **Auto:** a card of one product buys in place («Kjøp med Vipps» +
+«Se produktinfo»); a card with options (colours, sizes, models) has no selector and no Vipps — its main CTA is «Se mer»
+(*«Se mer» label*), the Vio card's bar in the Vipps button's place, which opens the product info to choose and buy;
+its price is the default option's, or «Fra <lowest>» when the options cost differently. **Always** is the earlier
+card (selector + Vipps); **Never** leaves only «Se mer». It replaces the old *Vipps Hurtigkasse button*: blocks placed
+before stay in Auto, except one placed with that button off, which reads as Never. «Se mer» reports `select_item` +
+`view_item` + `cta_click see_more` (the product-info button and the image keep `open`), so a card that buys in place
+can be compared with one that sends to the product info.
+
 **The seller, as in Replit.** The card shows, where the Vio card puts its retailer, the brand's logo (20 px high,
 its own width) and «Du handler direkte hos **Kondomeriet**» — the SDK detail's seller note — from
 `Vio.sponsorIdentity` (name and logo of the bootstrap's sponsor); *Show seller* turns it off, *Seller line* /

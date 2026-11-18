@@ -74,6 +74,10 @@ const KND_CSS = `
 .vio-native-card .knd-seller .knd-seller-logo { display: block; flex: 0 0 auto; height: 20px; width: auto; max-width: 110px; object-fit: contain; }
 .vio-native-card.l-overlay .vnc-overlay-meta .knd-seller, .vio-native-card.l-overlay .vnc-overlay-meta .knd-seller strong { color: #fff; }
 .vio-native-card .vnc-meta .vnc-btn-vipps + .knd-seller, .vio-native-card .vnc-meta .vnc-btn-vipps-official + .knd-seller { margin-top: 0; }
+/* «Se mer» in the Vipps button's place: the same spot under the price, the Vio card's bar. */
+.vio-native-card .vnc-meta .knd-more { margin: -4px 0 12px; }
+.vio-native-card .vnc-meta .knd-more + .knd-seller { margin-top: 0; }
+.vio-native-card .vnc-body > .knd-more:first-child { margin-top: 12px; }
 .vio-native-card .vnc-price .knd-was {
   margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
 }

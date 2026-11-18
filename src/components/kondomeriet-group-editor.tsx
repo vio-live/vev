@@ -235,6 +235,19 @@ function GroupDetailsModal({
             />
           </div>
         </div>
+        <div style={{ maxWidth: 360 }}>
+          <div style={labelStyle}>Buy on card (this card)</div>
+          <select
+            style={inputStyle}
+            value={draft.buyOnCard ?? ""}
+            onChange={(e) => set({ buyOnCard: (e.target.value || undefined) as KondomerietGroup["buyOnCard"] })}
+          >
+            <option value="">As the block (default)</option>
+            <option value="auto">Auto — Vipps on the card for one product, «Se mer» for options</option>
+            <option value="always">Always — selector and Vipps on the card</option>
+            <option value="never">Never — only «Se mer»</option>
+          </select>
+        </div>
         <SilkeText style={{ fontSize: 11, opacity: 0.6 }}>
           A real sale price from the feed (compare-at) always shows as a struck-through old price, with or without a badge.
         </SilkeText>
