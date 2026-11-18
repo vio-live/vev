@@ -65,6 +65,15 @@ const KND_CSS = `
 .vio-native-card.l-overlay .knd-tag { bottom: auto; top: 42px; }
 .vio-native-card .knd-footer { margin-top: 10px; font-size: 12px; line-height: 1.45; color: var(--vio-color-text-secondary, #666); white-space: pre-line; }
 .vio-native-card .vnc-price { overflow-wrap: anywhere; }
+/* «Du handler direkte hos Kondomeriet» with the brand's logo, where the Vio card puts its retailer. */
+.vio-native-card .knd-seller {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: auto; padding-top: 2px;
+  font-size: 12px; line-height: 1.35; color: var(--vio-color-text-secondary, #666);
+}
+.vio-native-card .knd-seller strong { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
+.vio-native-card .knd-seller .knd-seller-logo { display: block; flex: 0 0 auto; height: 20px; width: auto; max-width: 110px; object-fit: contain; }
+.vio-native-card.l-overlay .vnc-overlay-meta .knd-seller, .vio-native-card.l-overlay .vnc-overlay-meta .knd-seller strong { color: #fff; }
+.vio-native-card .vnc-meta .vnc-btn-vipps + .knd-seller, .vio-native-card .vnc-meta .vnc-btn-vipps-official + .knd-seller { margin-top: 0; }
 .vio-native-card .vnc-price .knd-was {
   margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
 }
@@ -150,6 +159,14 @@ export function salePercent(product: any): string | null {
  */
 export function cardBadge(group: KondomerietGroup, product: any, now = Date.now()): string | null {
   return activeDiscount(group, now) ?? salePercent(product);
+}
+
+/** The brand's logo in a seller line: a fixed height, its own width, and gone if it does not load. */
+export function SellerLogo({ src, name, className }: { src: string; name: string; className: string }) {
+  const [failed, setFailed] = React.useState(false);
+  if (failed) return null;
+  // Not lazy: a zero-width image until it loads is never "in view" for the browser.
+  return <img className={className} src={src} alt={name} onError={() => setFailed(true)} />;
 }
 
 /** The badge under the card's «Discount badge» choice — the card and the drawer use the same rule. */

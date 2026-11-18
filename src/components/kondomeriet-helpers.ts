@@ -571,6 +571,30 @@ export type KondomerietDetailRequest = {
   onSelect?: (index: number) => void;
 };
 
+export type BrandHighlight = { icon: string; title: string; text?: string };
+export type BrandIdentity = {
+  name?: string;
+  logoUrl?: string | null;
+  termsUrl?: string;
+  refundPolicyUrl?: string;
+  highlights?: BrandHighlight[];
+};
+
+/**
+ * Who the brand is to the SDK — `Vio.sponsorIdentity` (the bootstrap's sponsor:
+ * name, logo, terms and returns pages, promises), the rule every SDK element
+ * uses. Null before the bootstrap or for an unknown sponsor.
+ */
+export function brandIdentity(sponsorId: number | null): BrandIdentity | null {
+  if (sponsorId == null) return null;
+  try {
+    const id = (Vio as any).sponsorIdentity?.(sponsorId);
+    return id && typeof id === "object" ? (id as BrandIdentity) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Defaults of the editable trust texts (props of the Kondomeriet card / carousel / grid). */
 export const DEFAULT_DIRECT_BADGE = "Kjøp direkte fra artikkelen";
 export const DEFAULT_PERKS = ["Anonym levering", "Miljørabatt", "Orgasmegaranti", "Frakt fra kun 59,-"];
