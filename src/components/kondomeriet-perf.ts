@@ -54,6 +54,32 @@ function addLinks(): void {
   }
 }
 
+/**
+ * Warm the connection to Circlewise's tracker: its TLS handshake is most of
+ * the extra hop (0.6–1.7 s cold, measured). Once when the Config says
+ * Circlewise is on, and again on the first touch of «Kjøp med Vipps»
+ * (`refresh`), when the first one's connection may have been closed.
+ */
+export function preconnectCirclewise(refresh = false): void {
+  try {
+    if (typeof document === "undefined" || !document.head) return;
+    const g = globalThis as { __KND_CW_PRE__?: number };
+    if (!refresh && g.__KND_CW_PRE__) return;
+    if (refresh && (g.__KND_CW_PRE__ ?? 0) >= 2) return; // the touch re-warms once per page
+    g.__KND_CW_PRE__ = (g.__KND_CW_PRE__ ?? 0) + 1;
+    const href = "https://c.trackmytarget.com";
+    for (const rel of ["preconnect", "dns-prefetch"]) {
+      document.head.querySelector(`link[rel="${rel}"][href="${href}"]`)?.remove();
+      const link = document.createElement("link");
+      link.rel = rel;
+      link.href = href;
+      document.head.appendChild(link);
+    }
+  } catch {
+    /* never in the way of the click */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Images
 // ---------------------------------------------------------------------------

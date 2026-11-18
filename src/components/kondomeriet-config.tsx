@@ -13,8 +13,15 @@ import {
   vioAttribution,
   type VioEnvironment,
 } from "./vio-helpers";
-import { prefetchWantedProducts, setFastChannel, type FastChannel } from "./kondomeriet-helpers";
-import { ensurePreconnect } from "./kondomeriet-perf";
+import {
+  CIRCLEWISE_DEFAULT_A,
+  CIRCLEWISE_DEFAULT_I,
+  prefetchWantedProducts,
+  setCirclewiseSettings,
+  setFastChannel,
+  type FastChannel,
+} from "./kondomeriet-helpers";
+import { ensurePreconnect, preconnectCirclewise } from "./kondomeriet-perf";
 
 /**
  * Kondomeriet Config (SDK) — the Vio Config for Kondomeriet pages: the same
@@ -44,6 +51,15 @@ export default function KondomerietConfig(props: Props) {
     setFastChannel(fs && fs.environment === env ? fs : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fs?.endpoint, fs?.apiKey, fs?.sponsorId, fs?.campaignId, fs?.environment, env]);
+  // Circlewise on by default for every Kondomeriet block (its a / i here, in
+  // the advanced fields), set while rendering like the fast start.
+  const cwOn = props.circlewiseEnabled !== false;
+  useMemo(() => {
+    setCirclewiseSettings({ enabled: cwOn, a: props.circlewiseA, i: props.circlewiseI });
+  }, [cwOn, props.circlewiseA, props.circlewiseI]);
+  useEffect(() => {
+    if (cwOn) preconnectCirclewise();
+  }, [cwOn]);
   useEffect(() => {
     if (fs && fs.environment === env) prefetchWantedProducts(Number(fs.sponsorId), fs.campaignId ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,5 +206,22 @@ registerVevComponent(KondomerietConfig, {
     { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
     { name: "sendToVio", title: "Send to Vio Analytics", type: "boolean", initialValue: true },
     { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
+    // Advanced — Circlewise (TargetCircle): every «Kjøp med Vipps» goes through
+    // its tracker to the same bridge and Hurtigkasse, so their side registers it.
+    { name: "circlewiseEnabled", title: "Advanced · Circlewise tracking", type: "boolean", initialValue: true },
+    {
+      name: "circlewiseA",
+      title: "Advanced · Circlewise a",
+      type: "string",
+      initialValue: CIRCLEWISE_DEFAULT_A,
+      hidden: (ctx: any) => ctx?.value?.circlewiseEnabled === false,
+    },
+    {
+      name: "circlewiseI",
+      title: "Advanced · Circlewise i",
+      type: "string",
+      initialValue: CIRCLEWISE_DEFAULT_I,
+      hidden: (ctx: any) => ctx?.value?.circlewiseEnabled === false,
+    },
   ],
 });

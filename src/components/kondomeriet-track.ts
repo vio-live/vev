@@ -1,6 +1,7 @@
 import { productToItem, trackCta, trackSelectItem, trackViewItem } from "./analytics";
 import type { VioAttribution } from "./vio-helpers";
 import { inAppBrowser } from "./kondomeriet-perf";
+import { Vio } from "../../vio-sdk";
 import { circlewiseUrl, openInTarget, type CirclewiseLink } from "./kondomeriet-helpers";
 import { submitHurtigkasse, type HurtigkasseTarget, type KondomerietOption } from "./kondomeriet-helpers";
 
@@ -107,6 +108,16 @@ export function buyWithHurtigkasse(
     console.info("[Vio] Kondomeriet: Hurtigkasse not posted in the editor —", option.slug, via);
     return false;
   }
-  if (tracking) return openInTarget(circlewiseUrl(tracking, option.slug), target);
+  if (tracking) {
+    // ref2 = our SDK session, ref3 = the campaign: Circlewise's postback brings them back.
+    const session = (() => {
+      try {
+        return (Vio as any).analytics?.sessionId ?? null;
+      } catch {
+        return null;
+      }
+    })();
+    return openInTarget(circlewiseUrl(tracking, option.slug, { ref2: session, ref3: attribution.campaignId ?? null }), target);
+  }
   return submitHurtigkasse(option.slug, target);
 }

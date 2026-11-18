@@ -239,7 +239,7 @@ function GroupDetailsModal({
           </div>
         </div>
         <div>
-          <div style={labelStyle}>Tracking link (Circlewise) — this card; empty: the block's, else direct</div>
+          <div style={labelStyle}>Tracking link (Circlewise) — optional override for this card; empty: the block's, else the default (Config, ref1 from the sheet)</div>
           <input
             style={{ ...inputStyle, borderColor: parseCirclewiseLink(draft.tracking).error ? "#e5484d" : "#ddd" }}
             value={draft.tracking ?? ""}
@@ -248,7 +248,7 @@ function GroupDetailsModal({
           />
           {parseCirclewiseLink(draft.tracking).error ? (
             <div style={{ fontSize: 10, color: "#e5484d", marginTop: 2 }}>
-              {parseCirclewiseLink(draft.tracking).error} — needs c.trackmytarget.com with a, i and ref1. Until then «Kjøp med Vipps» goes direct.
+              {parseCirclewiseLink(draft.tracking).error} — needs c.trackmytarget.com with a, i and ref1. Until then the default Circlewise link is used.
             </div>
           ) : parseCirclewiseLink(draft.tracking).link ? (
             <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>

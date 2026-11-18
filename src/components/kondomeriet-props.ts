@@ -197,7 +197,7 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     type: "string",
     initialValue: "",
     description:
-      "Optional: the sheet's link (https://c.trackmytarget.com/?a=…&i=…&ref1=…). «Kjøp med Vipps» then goes through Circlewise to the Hurtigkasse. A card's own link (Details) wins. Empty or invalid: direct.",
+      "Optional: the sheet's link (https://c.trackmytarget.com/?a=…&i=…&ref1=…). «Kjøp med Vipps» then goes through Circlewise to the Hurtigkasse. A card's own link (Details) wins. Empty or invalid: the Config's default (Circlewise on, ref1 from the sheet).",
   },
   { name: "offerEndText", title: "Offer end text", type: "string", initialValue: "Tilbudet gjelder til {dato}", description: "{dato} = «mandag 30. november»." },
   {
