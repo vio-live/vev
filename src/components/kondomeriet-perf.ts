@@ -17,6 +17,7 @@
 
 import { useEffect, useState, type RefObject } from "react";
 import { Vio, ensureVippsButton } from "../../vio-sdk";
+import { photoConfigFor } from "./kondomeriet-photo";
 
 // ---------------------------------------------------------------------------
 // The config as a simple request
@@ -62,20 +63,58 @@ export function simpleConfigRequest(): void {
   }
 }
 
+/** The first of these that answers something (not null); null when none does. */
+function firstAnswer<T>(promises: Promise<T | null>[]): Promise<T | null> {
+  return new Promise((resolve) => {
+    let pending = promises.length;
+    if (pending === 0) resolve(null);
+    for (const p of promises) {
+      p.then(
+        (v) => {
+          if (v != null) resolve(v);
+          else if (--pending === 0) resolve(null);
+        },
+        () => {
+          if (--pending === 0) resolve(null);
+        }
+      );
+    }
+  });
+}
+
 function wrapBootstrap(api: any): void {
   const sdkBootstrap = api.bootstrap;
   api.__kndSimpleConfig = true;
   api.bootstrap = async function (platform?: string) {
     if (typeof api.apiBase === "string" && typeof api.apiKey === "string" && api.apiKey) {
-      try {
-        const url =
-          `${api.apiBase}/v2/mobile/config?apiKey=${encodeURIComponent(api.apiKey)}` +
-          (platform ? `&platform=${encodeURIComponent(platform)}` : "");
-        const res = await fetch(url, { headers: { Accept: "application/json" } });
-        if (res.ok) return await res.json();
-      } catch {
-        /* the SDK's request below */
+      const fromApi: Promise<any | null> = (async () => {
+        try {
+          const url =
+            `${api.apiBase}/v2/mobile/config?apiKey=${encodeURIComponent(api.apiKey)}` +
+            (platform ? `&platform=${encodeURIComponent(platform)}` : "");
+          const res = await fetch(url, { headers: { Accept: "application/json" } });
+          return res.ok ? await res.json() : null;
+        } catch {
+          return null;
+        }
+      })();
+      // The CDN's photo of the surface (kondomeriet-photo.ts), when it comes
+      // first and is fresh: the API's answer then replaces it in place.
+      const fromPhoto = photoConfigFor(api.apiKey).then((c) => (c ? { photo: true, c } : null));
+      const first = await firstAnswer<{ photo: boolean; c: any }>([
+        fromPhoto,
+        fromApi.then((c) => (c ? { photo: false, c } : null)),
+      ]);
+      if (first?.photo) {
+        void fromApi.then((res) => {
+          try {
+            if (res && typeof res === "object") (Vio as any).adoptBootstrap?.(res);
+          } catch {
+            /* the photo's config stays until the next refresh */
+          }
+        });
       }
+      if (first) return first.c;
     }
     return sdkBootstrap.call(api, platform);
   };
