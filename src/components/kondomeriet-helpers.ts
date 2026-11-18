@@ -552,6 +552,12 @@ export type KondomerietDetailRequest = {
   vippsLabel?: string;
   target?: HurtigkasseTarget;
   badge?: string | null;
+  /** The card's «Discount badge» choice, so the drawer badges each option the same way. */
+  discountMode?: string;
+  discountText?: string;
+  /** The editor's picture: first in the gallery, or alone with leadImageOnly. */
+  leadImage?: string;
+  leadImageOnly?: boolean;
   accentColor?: string;
   /** «Kjøp direkte fra artikkelen» — the card's text; '' = no badge. */
   directBadge?: string;

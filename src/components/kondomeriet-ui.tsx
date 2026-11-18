@@ -55,6 +55,16 @@ const KND_CSS = `
   background: var(--vnc-accent, #0a0a0a); color: #fff;
   font-size: 11px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
 }
+.vio-native-card .knd-subtitle { font-size: 13px; line-height: 1.4; color: var(--vio-color-text-secondary, #666); margin: -6px 0 10px; }
+.vio-native-card .knd-tag {
+  position: absolute; left: 10px; bottom: 10px; z-index: 3; max-width: calc(100% - 70px);
+  background: rgba(255, 255, 255, 0.92); color: var(--vio-color-text, #0a0a0a);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; line-height: 1.2; padding: 5px 8px;
+  border-radius: var(--vio-card-badge-radius, 4px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vio-native-card.l-overlay .knd-tag { bottom: auto; top: 42px; }
+.vio-native-card .knd-footer { margin-top: 10px; font-size: 12px; line-height: 1.45; color: var(--vio-color-text-secondary, #666); white-space: pre-line; }
+.vio-native-card .vnc-price { overflow-wrap: anywhere; }
 .vio-native-card .vnc-price .knd-was {
   margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
 }
@@ -140,6 +150,19 @@ export function salePercent(product: any): string | null {
  */
 export function cardBadge(group: KondomerietGroup, product: any, now = Date.now()): string | null {
   return activeDiscount(group, now) ?? salePercent(product);
+}
+
+/** The badge under the card's «Discount badge» choice — the card and the drawer use the same rule. */
+export function badgeFor(
+  mode: string | undefined,
+  manualText: string | undefined,
+  group: KondomerietGroup,
+  product: any,
+  now = Date.now()
+): string | null {
+  if (mode === "off") return null;
+  if (mode === "manual") return manualText?.trim() || null;
+  return cardBadge(group, product, now);
 }
 
 /** Selector of a group's options — the card's (light DOM, `knd-` classes). */
