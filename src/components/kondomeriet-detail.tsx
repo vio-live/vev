@@ -69,7 +69,6 @@ const DETAIL_CSS = `
 .knd-detail-vipps:disabled { opacity: 0.5; cursor: not-allowed; }
 .knd-detail-vipps .vnc-vipps-badge { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
 .knd-detail-note { font-size: 12px; color: var(--vio-color-text-secondary, #666); line-height: 1.45; margin: 10px 0 0; text-align: center; }
-.knd-detail-shop { display: block; text-align: center; margin: 12px 0 0; font-size: 13px; color: inherit; }
 .knd-detail-desc-title { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; margin: 26px 0 8px; color: var(--vio-color-text-secondary, #666); }
 .knd-detail-desc p { font-size: 15px; line-height: 1.55; margin: 0 0 10px; color: var(--vio-color-text, #222); }
 @keyframes knd-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -130,7 +129,6 @@ export function KondomerietDetail({ request, onClose }: { request: KondomerietDe
   const canBuy = !!option.slug && !soldOut;
   const paragraphs = plainText(p?.description).split("\n").filter(Boolean);
   const vippsLabel = request.vippsLabel || "Kjøp med";
-  const shopUrl = typeof p?.origin_url === "string" && /^https?:\/\//i.test(p.origin_url) ? p.origin_url : null;
   const accentStyle = request.accentColor ? ({ ["--vnc-accent" as any]: request.accentColor } as React.CSSProperties) : undefined;
 
   // Another option: its own photos, from the first.
@@ -214,11 +212,6 @@ export function KondomerietDetail({ request, onClose }: { request: KondomerietDe
                 ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.`
                 : `Dette produktet kan ikke kjøpes direkte her.`}
             </p>
-            {shopUrl ? (
-              <a className="knd-detail-shop" href={shopUrl} target="_blank" rel="noopener">
-                Se produktet hos {KONDOMERIET_NAME}
-              </a>
-            ) : null}
             {paragraphs.length ? (
               <>
                 <div className="knd-detail-desc-title">Beskrivelse</div>
