@@ -64,9 +64,10 @@ function PriceLine({ p, facts, size }: { p: CatalogProduct; facts?: PickerFacts;
 const VIEW_KEY = "vio.picker.view";
 function readView(): "grid" | "list" {
   try {
-    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "grid";
+    // List by default (Angelo): the grid of big cards only when the editor chose it.
+    return localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
   } catch {
-    return "grid";
+    return "list";
   }
 }
 
