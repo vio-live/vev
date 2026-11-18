@@ -95,7 +95,12 @@ export function CatalogModal({
             width: "100%",
             padding: "9px 12px",
             fontSize: 13,
-            border: "1px solid #ddd",
+            // Explicit colours: the editor's dark theme left the text white
+            // on the browser's white input (Alan, #491).
+            color: "#fff",
+            caretColor: "#fff",
+            background: "#2b2b2b",
+            border: "1px solid #4a4a4a",
             borderRadius: 8,
             outline: "none",
             boxSizing: "border-box",
