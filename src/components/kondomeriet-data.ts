@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { productToItem, trackViewItemList } from "./analytics";
-import { vioAttribution } from "./vio-helpers";
+import { getActiveCurrency, vioAttribution } from "./vio-helpers";
+import { photoProduct, usePhotoArrival } from "./kondomeriet-photo";
 import {
   allGroupIds,
   fetchKondomerietProducts,
@@ -52,7 +53,8 @@ export function useKondomerietGroups({
   // The page's Config asks for every block's products in one request.
   useMemo(() => registerWantedProducts(ids), [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // First paint: cache, else snapshot — per product, in the block's order.
+  // First paint: cache, else snapshot, else the CDN's photo of the surface — per product, in the block's order.
+  const photoTick = usePhotoArrival();
   const initial = useMemo(() => {
     if (ids.length === 0) return [];
     const cached = readCachedProducts(ids, marketKey()).products;
@@ -60,13 +62,14 @@ export function useKondomerietGroups({
     for (const g of groups) for (const [k, s] of Object.entries(g.snap ?? {})) snaps.set(Number(k), s);
     const list: any[] = [];
     for (const id of ids) {
-      const p = cached.get(id) ?? (snaps.has(id) ? productFromSnap(id, snaps.get(id)) : null);
+      const p =
+        cached.get(id) ?? (snaps.has(id) ? productFromSnap(id, snaps.get(id)) : null) ?? photoProduct(id, getActiveCurrency());
       if (!p) return null; // a product with neither: wait for the API
       list.push(p);
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupsKey]);
+  }, [groupsKey, photoTick]);
 
   // Before the bootstrap names the sponsor, the channel the Config resolved
   // in the editor (`fastStart`): the request leaves in parallel with the bootstrap.

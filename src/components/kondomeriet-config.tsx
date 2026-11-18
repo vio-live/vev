@@ -23,6 +23,7 @@ import {
   FAST_START_MISSING_NOTICE,
 } from "./kondomeriet-helpers";
 import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest } from "./kondomeriet-perf";
+import { startPhoto } from "./kondomeriet-photo";
 
 /**
  * Kondomeriet Config (SDK) — the Vio Config for Kondomeriet pages: the same
@@ -71,6 +72,9 @@ export default function KondomerietConfig(props: Props) {
   // The config as a simple GET (no preflight) from the first request on: set
   // while rendering, before the Vio Config inside starts the bootstrap.
   simpleConfigRequest();
+  // The CDN's photo of the surface (config + products), asked for at once, in
+  // parallel with everything (kondomeriet-photo.ts). Production only: it is prod's bucket.
+  startPhoto((props.environment || DEFAULT_ENVIRONMENT) === "production" ? resolveConfigApiKey(props.apiKey) : null);
   // ONE Config per page. A second one (a common editor slip, Alan in #491)
   // must not touch the page: its fast start, Circlewise settings and
   // environment would overwrite the first one's (whichever rendered last
