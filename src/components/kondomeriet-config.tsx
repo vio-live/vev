@@ -40,14 +40,30 @@ type Props = Record<string, any>;
 // The hosts a card needs, as soon as the package loads (before any block mounts).
 ensurePreconnect();
 
-const OWNER_KEY = "__KND_CONFIG_OWNER__";
-const OWNER_FREED = "knd:config-owner-freed";
+const CONFIGS_KEY = "__KND_CONFIGS__";
+const ALIVE_KEY = "__KND_CONFIGS_ALIVE__";
+const CONFIGS_CHANGED = "knd:configs-changed";
 
-/** Claims the page for this Config if no other Kondomeriet Config has it. */
-function claimOwner(id: string): boolean {
+/** Ids whose effect ran (mounted for real); a render React threw away never gets here. */
+function aliveConfigs(): Set<string> {
   const g = globalThis as any;
-  if (!g[OWNER_KEY]) g[OWNER_KEY] = id;
-  return g[OWNER_KEY] === id;
+  if (!(g[ALIVE_KEY] instanceof Set)) g[ALIVE_KEY] = new Set<string>();
+  return g[ALIVE_KEY];
+}
+
+/** Drops ids of renders that never mounted, keeping the mount order. */
+function pruneConfigs(): string[] {
+  const list = mountedConfigs();
+  const alive = aliveConfigs();
+  for (let i = list.length - 1; i >= 0; i--) if (!alive.has(list[i])) list.splice(i, 1);
+  return list;
+}
+
+/** The page's mounted Kondomeriet Configs, in mount order: the first one owns the page. */
+function mountedConfigs(): string[] {
+  const g = globalThis as any;
+  if (!Array.isArray(g[CONFIGS_KEY])) g[CONFIGS_KEY] = [];
+  return g[CONFIGS_KEY];
 }
 
 export default function KondomerietConfig(props: Props) {
@@ -55,21 +71,32 @@ export default function KondomerietConfig(props: Props) {
   // must not touch the page: its fast start, Circlewise settings and
   // environment would overwrite the first one's (whichever rendered last
   // won). The first one mounted owns the page; the others render only an
-  // editor warning, and take over if the owner is deleted.
+  // editor warning. Ownership is the head of the list of mounted Configs, so
+  // deleting the owner, or Vev remounting it, hands the page to the next one
+  // without depending on event order.
   const { disabled: inEditor } = useEditorState();
   const idRef = useRef("knd-cfg-" + Math.random().toString(36).slice(2));
-  const [owner, setOwner] = useState(() => claimOwner(idRef.current));
+  const [owner, setOwner] = useState(() => {
+    const list = mountedConfigs();
+    if (list.length === 0) list.push(idRef.current); // the first one claims while rendering (fast start before the blocks ask)
+    return list[0] === idRef.current;
+  });
   useEffect(() => {
     const id = idRef.current;
-    const retry = () => setOwner(claimOwner(id));
-    window.addEventListener(OWNER_FREED, retry);
+    aliveConfigs().add(id);
+    const list = mountedConfigs();
+    if (!list.includes(id)) list.push(id);
+    const sync = () => setOwner(pruneConfigs()[0] === id);
+    sync();
+    window.addEventListener(CONFIGS_CHANGED, sync);
+    window.dispatchEvent(new Event(CONFIGS_CHANGED));
     return () => {
-      window.removeEventListener(OWNER_FREED, retry);
-      const g = globalThis as any;
-      if (g[OWNER_KEY] === id) {
-        g[OWNER_KEY] = null;
-        window.dispatchEvent(new Event(OWNER_FREED));
-      }
+      window.removeEventListener(CONFIGS_CHANGED, sync);
+      aliveConfigs().delete(id);
+      const l = mountedConfigs();
+      const i = l.indexOf(id);
+      if (i >= 0) l.splice(i, 1);
+      window.dispatchEvent(new Event(CONFIGS_CHANGED));
     };
   }, []);
   if (!owner) {
