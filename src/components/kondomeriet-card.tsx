@@ -94,7 +94,7 @@ export default function KondomerietProductCard(props: Props) {
 }
 
 registerVevComponent(KondomerietProductCard, {
-  name: "Kondomeriet Product Card",
+  name: "Kondomeriet Product Card (old)",
   size: { height: "auto", width: 300 },
   editableCSS: KONDOMERIET_EDITABLE_CSS,
   props: [copySettingsProp("card"), GROUP_PROP, ...KONDOMERIET_CARD_IMAGE_PROPS, ...SLOT_PROPS, ...KONDOMERIET_CARD_PROPS],
