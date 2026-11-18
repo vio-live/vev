@@ -335,7 +335,7 @@ export function KondomerietApiKeyEditor({
 }
 
 registerVevComponent(KondomerietConfig, {
-  name: "Kondomeriet Config (SDK)",
+  name: "Kondomeriet Config (old)",
   size: { width: 320, height: "auto" },
   props: [
     copySettingsProp("config"),

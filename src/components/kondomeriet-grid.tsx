@@ -14,7 +14,7 @@ export default function KondomerietProductGrid(props: KondomerietListProps) {
 }
 
 registerVevComponent(KondomerietProductGrid, {
-  name: "Kondomeriet Product Grid",
+  name: "Kondomeriet Product Grid (old)",
   // Vev takes "100%" here (the Vio carousel / grid do too); its type says number | "auto".
   size: { width: "100%" as any, height: "auto" },
   editableCSS: KONDOMERIET_EDITABLE_CSS,
