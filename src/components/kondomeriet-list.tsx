@@ -3,7 +3,8 @@ import { KondomerietCardView } from "./kondomeriet-card-view";
 import { simpleConfigRequest } from "./kondomeriet-perf";
 import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
-import { parseGroups, type GroupsValue } from "./kondomeriet-helpers";
+import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
+import { EditorNotices } from "./editor-fit";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem } from "./analytics";
 
@@ -200,11 +201,20 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   }
 
   const cardConfig = pickKondomerietConfig(props);
+  // In the editor: picked products without a snapshot (see SNAPSHOT_MISSING_NOTICE).
+  const notices = groupsMissingSnapshot(filled) ? [SNAPSHOT_MISSING_NOTICE] : [];
   const loading = products == null;
   // While loading: one skeleton per group, in the layout the cards will take.
   const cells: React.ReactNode[] = loading
     ? filled.map((g, i) => (
-        <KondomerietCardView key={`skel-${i}`} group={null} loading config={cardConfig} sponsorId={sponsorId} />
+        <KondomerietCardView
+          key={`skel-${i}`}
+          group={null}
+          loading
+          config={cardConfig}
+          sponsorId={sponsorId}
+          pending={{ options: g.ids.length, buyOnCard: g.buyOnCard, offerEnd: g.offerEnd }}
+        />
       ))
     : resolved.map((g, i) => {
         // The card's number in the panel (resolveGroup keys it `<index>:<ids>`).
@@ -243,6 +253,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   if (!loading && resolved.length === 0) {
     return (
       <div ref={setRoot} className="knd-list">
+        <EditorNotices notices={notices} />
         {head}
         <div className="knd-list-empty">None of these products are available on this channel.</div>
       </div>
@@ -254,6 +265,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     const cols = fit(130, Math.max(1, Number(columns) || 3));
     return (
       <div ref={setRoot} className="knd-list">
+        <EditorNotices notices={notices} />
         {head}
         <div className="knd-list-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: effGap }}>
           {cells}
@@ -268,6 +280,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   const itemWidth = `calc((100% - ${effGap * (perView - (peek ? 0 : 1))}px) / ${perView + peek})`;
   return (
     <div ref={setRoot} className="knd-list">
+      <EditorNotices notices={notices} />
       {head}
       <div className="knd-list-viewport">
         {arrows && overflows ? (

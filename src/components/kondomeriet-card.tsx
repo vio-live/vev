@@ -12,7 +12,7 @@ import {
 } from "./kondomeriet-props";
 import { SLOT_PROPS } from "./slot-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
-import { parseGroups, type GroupsValue } from "./kondomeriet-helpers";
+import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, useVioSlotId, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem } from "./analytics";
 
@@ -86,6 +86,8 @@ export default function KondomerietProductCard(props: Props) {
       priority
       rootRef={rootRef}
       imageOverride={imageUrlOf(props.image)}
+      pending={groups[0] ? { options: groups[0].ids.length, buyOnCard: groups[0].buyOnCard, offerEnd: groups[0].offerEnd } : undefined}
+      editorNotices={groupsMissingSnapshot(groups) ? [SNAPSHOT_MISSING_NOTICE] : []}
     />
   );
 }

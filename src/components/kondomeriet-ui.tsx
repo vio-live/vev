@@ -104,6 +104,11 @@ const KND_CSS = `
 .vio-native-card .vnc-meta .knd-more { margin: -4px 0 12px; }
 .vio-native-card .vnc-meta .knd-more + .knd-seller { margin-top: 0; }
 .vio-native-card .vnc-body > .knd-more:first-child { margin-top: 12px; }
+/* The skeleton (a card while its products load): grey lines inside the real
+   elements, and the buttons as grey blocks of their real size. */
+.vio-native-card .knd-skel-line { display: inline-block; height: 0.85em; vertical-align: middle; }
+.vio-native-card .knd-seller .knd-skel-logo { display: block; flex: 0 0 auto; width: 64px; height: 20px; }
+.vio-native-card .knd-skel-block { box-sizing: border-box; background: #ececec !important; color: transparent !important; border-color: transparent !important; pointer-events: none; animation: vio-skel 1.2s ease-in-out infinite; }
 /* On sale (a real compare-at in the feed): the sale price in the sale colour, the old one struck through beside it. */
 .vio-native-card .vnc-price.knd-on-sale .knd-now { color: var(--knd-sale, #c8102e); }
 .vio-native-card .vnc-price .knd-was {
