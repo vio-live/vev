@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { KondomerietCardView } from "./kondomeriet-card-view";
 import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
@@ -71,6 +71,9 @@ const Arrow = ({ dir }: { dir: "prev" | "next" }) => (
   </svg>
 );
 
+/** Cards whose image loads eagerly with high priority; the rest load lazily. */
+const PRIORITY_CARDS = 4;
+
 export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; props: KondomerietListProps }) {
   const { kicker, heading, disclaimer = "annonselenker", visible = 4, columns = 3, arrows = true, slot: slotProp, slotName } = props;
   const gap = Number(props.gap ?? (kind === "carousel" ? 16 : 20)) || 0;
@@ -86,7 +89,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   const slot = useVioSlot({ slot: slotProp, slotName, kind, title: heading || kicker, hostRef: props.hostRef });
   const sponsorId = useActiveSponsorId(undefined, slot);
   const campaignId = sponsorId != null ? vioAttribution(slot, sponsorId).campaignId ?? null : null;
-  const { products, resolved, ids } = useKondomerietGroups({
+  const { products, resolved, ids, live } = useKondomerietGroups({
     groups,
     groupsKey,
     sponsorId,
@@ -96,9 +99,8 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     listName,
   });
 
-  useEffect(() => {
-    injectListStyles();
-  }, []);
+  // While rendering, not in an effect (see kondomeriet-card-view.tsx): no unstyled first paint.
+  injectListStyles();
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   // The block's own width, not the window's: Vev sizes a frame per breakpoint,
@@ -110,7 +112,10 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     setRootEl(el);
   };
   const [width, setWidth] = useState(0);
-  useEffect(() => {
+  // Measured before the browser paints (layout effect): measured after, the
+  // grid painted with the editor's columns and then reflowed to the block's
+  // width — measured CLS 0.58 on a phone (3 columns → 2).
+  useLayoutEffect(() => {
     if (!rootEl) return;
     const measure = () => setWidth(Math.round(rootEl.getBoundingClientRect().width));
     measure();
@@ -123,7 +128,8 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     return () => ro.disconnect();
   }, [rootEl]);
   useEffect(() => {
-    if (!products || products.length === 0) return;
+    // On live data only (see kondomeriet-card.tsx).
+    if (!products || products.length === 0 || !live) return;
     return observeVioImpression(
       rootRef.current,
       { sponsorId: sponsorId ?? undefined, componentTemplateId: template, locationId: listName, ...vioAttribution(slot, sponsorId, template) },
@@ -131,7 +137,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
       products.map((p) => productToItem(p))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, sponsorId, slot, listName]);
+  }, [products, live, sponsorId, slot, listName]);
 
   // Carousel: arrows only while the track overflows; card-by-card steps with
   // the snap paused while a programmatic scroll runs (iPhone Safari blanks a
@@ -198,7 +204,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     ? filled.map((g, i) => (
         <KondomerietCardView key={`skel-${i}`} group={null} loading config={cardConfig} sponsorId={sponsorId} />
       ))
-    : resolved.map((g) => {
+    : resolved.map((g, i) => {
         // The card's number in the panel (resolveGroup keys it `<index>:<ids>`).
         const img = images.get(parseInt(g.key, 10));
         return (
@@ -210,6 +216,8 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
           sponsorId={sponsorId}
           slot={slot}
           componentTemplateId={template}
+          // The first cards (two rows on a phone, the first row on a desktop) load their image first.
+          priority={i < PRIORITY_CARDS}
         />
         );
       });

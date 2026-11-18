@@ -412,6 +412,44 @@ bar, pill or icon, and three own texts — *Subtitle* (under the name), *Label o
 editable CSS. **Card image** (Vev image): replaces the product's photo on the card and goes first in the product
 info (or alone, *Product info: only this image*); the carousel / grid take *Card images*, one per card number.
 
+**Trust on the card.** Under the name, «★ 5/5 (792)» from the rating line of the description (*Show rating*); under
+the CTA a short line of promises (*Show promises line*, *Promises line*: empty = the brand's promises from Vio when
+their titles are short, else «Diskret pakket · Anonym levering · Frakt fra 59,-»); under the Vipps button «Du blir
+værende i artikkelen» when the Hurtigkasse opens in a new tab (*Under Vipps (new tab)* / *(same window)*, empty =
+none; the product info adds it to its Hurtigkasse note); and «Tilbudet gjelder til mandag 30. november» while an
+*Offer ends* date (block, or a card's own in *Details*) is ahead.
+
+**In-app browsers.** In the browser of an app — Facebook / Messenger, Instagram, VG, Dagbladet, Snapchat, LinkedIn,
+TikTok, an Android WebView or an iOS web view (`inAppBrowser()` in `kondomeriet-perf.ts`, by user agent) — the
+Hurtigkasse opens in the same window whatever the block says (a form posted to a new tab fails or opens badly there),
+with the same-window note. The product list, the product click and «Kjøp med Vipps» carry the mark
+(`in_app_browser` on `view_item_list` / `select_item`, `variant: hurtigkasse_inapp_<app>` on `cta_click`).
+
+**Loading (measured with the real collection, Fast 3G + 4× CPU — see the PR).**
+- *Snapshot:* when products are picked, the panel stores a small snapshot of each (title, brand, price, compare-at,
+  main image, shop URL, stock, rating line — ~12 KB for 31 products) in the block's props, and refreshes it when it
+  is a day old. The published card paints from it at once, before any request, and the API refreshes price and stock
+  in the background in the same card; the product info swaps in the full product (description, photos).
+- *One round trip instead of two (fast start):* the Kondomeriet Config's panel stores, in its `fastStart` prop, the
+  GraphQL endpoint and the channel key of the page's sponsor for its campaign (resolved in the editor; the channel's
+  public commerce key, the one the bootstrap hands every reader). On the published page the products request leaves
+  straight to that channel IN PARALLEL with the bootstrap; once the bootstrap is there, its own key and endpoint serve
+  every later request (and a failed fast request just waits for it).
+- *One request, minimal payload:* every Kondomeriet block's ids in one batched request per channel (blocks register
+  their ids as they render; the Config asks as soon as it can), with only what a card paints — no description, no
+  image sizes (`KONDOMERIET_CARD_QUERY`); the product info and the editor ask for the full product.
+- *GET for the CDN (off):* `directGraphQL` can send the query as a GET with the key in the query string
+  (`?query=&variables=&apiKey=`) for when the gateway accepts it — behind `globalThis.__VIO_KND_GQL_GET__ = true`,
+  off by default, falling back to the POST on any failure.
+- *No unstyled first paint:* the card and list styles are injected while rendering, not in an effect (a card painted
+  before its CSS jumped: CLS 0.42 measured).
+- *Browser cache:* products read in the last 5 minutes paint from `localStorage` (stale-while-revalidate), as does
+  the brand's identity (logo, name, promises) before the bootstrap; every access in try/catch.
+- `preconnect` / `dns-prefetch` to api.vio.live, graph-ql.vio.live and container.vio.live when the package loads.
+- *Images:* the CDN's `<name>large.jpg` directly — the `?size=large` URL Commerce returns redirects twice
+  (container → api-ecom → container) — with the redirecting URL as fallback; `width`/`height` on a square box (no
+  layout shift); the first four cards eager with `fetchpriority=high`, the rest lazy.
+
 **Buy on card (conversion default).** *Buy on card* — Auto (default) / Always / Never, per block and per card
 (group *Details*, «As the block» by default). **Auto:** a card of one product buys in place («Kjøp med Vipps» +
 «Se produktinfo»); a card with options (colours, sizes, models) has no selector and no Vipps — its main CTA is «Se mer»
