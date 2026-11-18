@@ -322,6 +322,62 @@ The vendored SDK is **0.40.1**, built from `vio-web-sdk` `main` `6c8fa29` (the 0
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
+## Kondomeriet blocks (Vipps Hurtigkasse)
+
+A Kondomeriet-only variant of the blocks, for the Black Week article Kondomeriet writes for VG. Products come
+from Vio Commerce (Kondomeriet's brand account, synced from their Google Merchant feed); **payment is always
+Kondomeriet's own Vipps Hurtigkasse on kondomeriet.no — never Vio's cart or checkout.** Nothing in these blocks
+touches `Vio.cart` or `Vio.checkout`.
+
+| Block | What it does |
+|---|---|
+| **Kondomeriet Config (SDK)** | Once per page, instead of Vio Config. Same connection (API key, sponsor, campaign, environment), page identity, slots, theme and analytics, but no Vio cart, checkout, SDK detail or cart button — it mounts only the Kondomeriet detail drawer. It *is* `VioConfig` with an internal `overlaysOverride` prop (not in the panel), so the connection flow is not copied. |
+| **Kondomeriet Product Card** | One card for a product **group**. |
+| **Kondomeriet Product Carousel** / **Grid** | One card per group; same layout options as the Vio carousel / grid. |
+
+**Groups.** The feed creates one Vio product per colour / model / size, so a card unifies several products behind
+a selector (pills, photo thumbnails or a dropdown); each option is its own Vio product with its own photo, price,
+stock and shop URL. A single product is a group of one. In the panel: *Products* opens the Vio catalog picker for
+the group, *Details* sets the option order, label overrides, Hurtigkasse slug overrides, the card title and the
+discount badge (the carousel / grid add, reorder and remove cards). Stored as JSON in a string field
+(`{ data: "[{ ids, labels?, slugs?, title?, discount?, discountStart?, discountEnd? }]" }`).
+
+- **Labels** come from the titles: the words every title starts with are the card title, the rest of each is its
+  label (`Womanizer Premium 2 blåbær` → title `Womanizer Premium 2`, label `blåbær`). Shared trailing words go too,
+  unless they start with a unit (`Easyglide vannbasert 150 ml` → `150 ml`). Empty or repeated labels fall back to
+  the full title. An override in *Details* wins.
+- **Stock**: quantity 0 is sold out (the feed sweep sets it) — the option is struck through and the button says
+  «Utsolgt». The card starts on the first option in stock.
+- **Price**: the selected option's price incl. taxes; a real sale from the feed (`compare_at` above the price)
+  shows the old price struck through and the new one in red.
+- **Discount badge**: per card, manual text (e.g. `−60 %`) with optional start / end (`datetime-local`, read in
+  the reader's time zone — Norway for VG readers), so it only shows during Black Week.
+
+**«Kjøp med Vipps» → Hurtigkasse.** kondomeriet.no's product page buys through a POST form
+(`<form id=purchaseform method=post action=https://www.kondomeriet.no/k/<slug>/kjop/>` with `qty-<slug>=1` and the
+Vipps submit button `cbtn=vps`). The block builds that same form, hidden, for the **selected option** and submits it
+synchronously inside the click (a link cannot: it is a POST). `form.submit()` does not send a submit button's
+name, so `cbtn=vps` goes as a hidden field. `<slug>` is the second path segment of the product's shop URL — Vio's
+`origin_url` (`/klitorisvibrator/we-vibe-melt-2-purple/til-henne/` → `we-vibe-melt-2-purple`), read with the
+SDK's product query plus `origin_url` (graphql, on master since 2026-09), or the slug override. An option without
+one cannot be bought directly: the button is off and the editor shows a note.
+Target: **new tab** by default (`_blank`, `rel=noopener`) — the article stays open, it works from inside an iframe
+that allows popups, and the Vipps app handoff happens in the shop's own tab; *Same window* (`_top`) is a card
+option for pages that prefer it (it needs a frame that allows top navigation). In the editor nothing is posted.
+
+**«Se produktinfo»** (and the image) opens the Kondomeriet detail drawer — laid out like the SDK's product detail
+(bottom sheet on phones, side panel on wider screens: gallery, brand, name, option pills, price, description) but
+with «Kjøp med Vipps» for the chosen option instead of «Legg i handlekurv», and a link to the product on
+kondomeriet.no. It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
+on the same page never opens its detail or cart for these cards. Mounted once per page by the Config or by the
+first card (whichever mounts first).
+
+**Analytics** (same module and attribution as the Vio blocks): `view_item_list` on load and `component_impression`
+per block with every product it offers; the info button / image sends `select_item` + `view_item` + `cta_click
+open`; an option sends `cta_click size` with the label; «Kjøp med Vipps» sends `select_item` (list «Vipps
+Hurtigkasse») and `cta_click vipps_hurtigkasse` (location `card` or `detail`). No `add_to_cart`, `begin_checkout`
+or `purchase`: the payment leaves Vio.
+
 ## Development
 
 ### Install (developers)
@@ -388,6 +444,10 @@ src/components/
   vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag),
                           # slots: useVioSlot / sponsorForSlot / vioAttribution,
                           # page identity: useVevPage / declareVevPage
+  kondomeriet-*.tsx/.ts   # Kondomeriet blocks (see above): config, card, carousel, grid
+                          # (registered); helpers (groups, labels, Hurtigkasse,
+                          # fetch with origin_url), detail drawer, group editor,
+                          # shared UI, props, analytics
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
 ```
