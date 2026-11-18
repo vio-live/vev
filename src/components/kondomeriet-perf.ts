@@ -15,7 +15,8 @@
  * Every storage access is wrapped: a browser that refuses it just loses the cache.
  */
 
-import { Vio } from "../../vio-sdk";
+import { useEffect, useState, type RefObject } from "react";
+import { Vio, ensureVippsButton } from "../../vio-sdk";
 
 // ---------------------------------------------------------------------------
 // The config as a simple request
@@ -276,4 +277,120 @@ export function inAppBrowser(ua: string = typeof navigator !== "undefined" ? nav
   for (const [name, re] of tests) if (re.test(ua)) return name;
   if (/iPhone|iPad|iPod/.test(ua) && /AppleWebKit/.test(ua) && !/Safari\//.test(ua)) return "ios-webview";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Vipps' button script, when it is needed
+// ---------------------------------------------------------------------------
+
+const VIPPS_TAG = "vipps-mobilepay-button";
+const VIPPS_LOADING = "kondomeriet:vipps-loading";
+let vippsLoad: Promise<boolean> | null = null;
+
+/** Vipps' element is defined on this page (by us or anyone else). */
+export function vippsButtonDefined(): boolean {
+  try {
+    return typeof customElements !== "undefined" && !!customElements.get(VIPPS_TAG);
+  } catch {
+    return false;
+  }
+}
+
+/** Loads `button.js` (once per page; again after a failure) and tells every card waiting for it. */
+export function loadVippsButton(): Promise<boolean> {
+  if (!vippsLoad) {
+    vippsLoad = ensureVippsButton().then((ok: boolean) => {
+      if (!ok) vippsLoad = null;
+      return ok;
+    });
+    try {
+      window.dispatchEvent(new Event(VIPPS_LOADING));
+    } catch {
+      /* no window */
+    }
+  }
+  return vippsLoad;
+}
+
+/** After the page's own load, when the browser is idle: off the cards' and images' critical path. */
+function whenSettled(run: () => void): () => void {
+  let idle: any = null;
+  let timer: any = null;
+  const start = () => {
+    const ric = (window as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => any) | undefined;
+    if (ric) idle = ric(run, { timeout: 2000 });
+    else timer = setTimeout(run, 300);
+  };
+  if (document.readyState === "complete") start();
+  else window.addEventListener("load", start, { once: true });
+  return () => {
+    window.removeEventListener("load", start);
+    if (idle != null) (window as any).cancelIdleCallback?.(idle);
+    if (timer != null) clearTimeout(timer);
+  };
+}
+
+/**
+ * Whether a card can show Vipps' own button — loading `button.js` only when
+ * one is wanted: the first card with a Vipps button near the screen
+ * (IntersectionObserver, 400 px ahead, then once the page has loaded and the
+ * browser is idle) or the reader's first touch anywhere (at once). Until then,
+ * and if the script fails, the card shows its own Vipps bar, of the same size
+ * (`.knd-card` rules in kondomeriet-ui.ts), so the swap moves nothing.
+ */
+export function useVippsButton(ref: RefObject<HTMLElement | null>, wanted: boolean): boolean {
+  const [ready, setReady] = useState(vippsButtonDefined);
+  useEffect(() => {
+    if (!wanted || ready || typeof window === "undefined") return;
+    // Read here, after the commit: the card's root is in the DOM.
+    const el = ref.current;
+    let cancelled = false;
+    let io: IntersectionObserver | null = null;
+    let unsettle: (() => void) | null = null;
+    const stop = () => {
+      io?.disconnect();
+      io = null;
+      unsettle?.();
+      document.removeEventListener("pointerdown", now, true);
+      window.removeEventListener(VIPPS_LOADING, follow);
+    };
+    const follow = () => {
+      stop();
+      loadVippsButton().then((ok) => {
+        if (!cancelled && ok) setReady(true);
+      });
+    };
+    function now() {
+      follow();
+    }
+    // Another card (or the product info) started it: wait for the same load.
+    if (vippsLoad) {
+      follow();
+      return () => {
+        cancelled = true;
+      };
+    }
+    window.addEventListener(VIPPS_LOADING, follow);
+    document.addEventListener("pointerdown", now, { capture: true, passive: true });
+    if (el && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting) || unsettle) return;
+          io?.disconnect();
+          io = null;
+          unsettle = whenSettled(follow);
+        },
+        { rootMargin: "400px 0px" }
+      );
+      io.observe(el);
+    } else {
+      unsettle = whenSettled(follow);
+    }
+    return () => {
+      cancelled = true;
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, ready]);
+  return ready;
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Vio, ensureVippsButton } from "../../vio-sdk";
+import { Vio } from "../../vio-sdk";
 import { getProductPriceAmount } from "./vio-helpers";
 import {
   DEFAULT_STOCK_TEXT,
@@ -17,7 +17,7 @@ import {
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
-import { directImage, inAppBrowser, preconnectCirclewise } from "./kondomeriet-perf";
+import { directImage, inAppBrowser, loadVippsButton, preconnectCirclewise, vippsButtonDefined } from "./kondomeriet-perf";
 import { SellerLogo, badgeFor, classRef, detailPrice, plainText } from "./kondomeriet-ui";
 import { parseRichDescription, renderRich, splitPlainRating } from "./kondomeriet-description";
 
@@ -215,7 +215,7 @@ export function KondomerietDetail({
   }, []);
   const [index, setIndex] = useState(request.index);
   const [photo, setPhoto] = useState(0);
-  const [vippsOfficial, setVippsOfficial] = useState(false);
+  const [vippsOfficial, setVippsOfficial] = useState(vippsButtonDefined);
   const [descOpen, setDescOpen] = useState(false);
   const [descClipped, setDescClipped] = useState(false);
   const descRef = useRef<HTMLDivElement | null>(null);
@@ -244,7 +244,8 @@ export function KondomerietDetail({
     };
     document.addEventListener("keydown", onKey);
     let cancelled = false;
-    ensureVippsButton().then((ok: boolean) => {
+    // Opened by a tap: the cards' lazy load has usually started already (same promise).
+    loadVippsButton().then((ok: boolean) => {
       if (!cancelled) setVippsOfficial(ok);
     });
     return () => {

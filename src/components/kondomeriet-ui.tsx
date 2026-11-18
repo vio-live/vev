@@ -83,6 +83,23 @@ const KND_CSS = `
 .vio-native-card .knd-seller .knd-seller-logo { display: block; flex: 0 0 auto; height: 20px; width: auto; max-width: 110px; object-fit: contain; }
 .vio-native-card.l-overlay .vnc-overlay-meta .knd-seller, .vio-native-card.l-overlay .vnc-overlay-meta .knd-seller strong { color: #fff; }
 .vio-native-card .vnc-meta .vnc-btn-vipps + .knd-seller, .vio-native-card .vnc-meta .vnc-btn-vipps-official + .knd-seller { margin-top: 0; }
+/* The card's Vipps bar takes the height Vipps' own button will have, so the
+   swap when button.js arrives (lazily, see useVippsButton) moves nothing.
+   Vipps' button, measured: 46 px at 218 px wide or more; compact (the card
+   view's «narrow», a card under 220 px) 46.4 px down to 132 px, 64.4 px
+   below (the smile goes over the verb). In these layouts the button is as
+   wide as the card (the container); the horizontal and overlay layouts keep
+   their own sizes. */
+.vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps,
+.vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps-official { box-sizing: border-box; height: 46px; }
+@container (max-width: 219.98px) {
+  .vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps,
+  .vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps-official { height: 46.4px; }
+}
+@container (max-width: 131.98px) {
+  .vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps,
+  .vio-native-card.knd-card:not(.l-horizontal):not(.l-overlay) .vnc-btn-vipps-official { height: 64.4px; }
+}
 /* «Se mer» in the Vipps button's place: the same spot under the price, the Vio card's bar. */
 .vio-native-card .vnc-meta .knd-more { margin: -4px 0 12px; }
 .vio-native-card .vnc-meta .knd-more + .knd-seller { margin-top: 0; }
