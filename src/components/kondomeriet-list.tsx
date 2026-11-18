@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { KondomerietCardView } from "./kondomeriet-card-view";
+import { simpleConfigRequest } from "./kondomeriet-perf";
 import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { parseGroups, type GroupsValue } from "./kondomeriet-helpers";
@@ -75,6 +76,7 @@ const Arrow = ({ dir }: { dir: "prev" | "next" }) => (
 const PRIORITY_CARDS = 4;
 
 export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; props: KondomerietListProps }) {
+  simpleConfigRequest();
   const { kicker, heading, disclaimer = "annonselenker", visible = 4, columns = 3, arrows = true, slot: slotProp, slotName } = props;
   const gap = Number(props.gap ?? (kind === "carousel" ? 16 : 20)) || 0;
   const groupsKey = props.groups?.data ?? "";

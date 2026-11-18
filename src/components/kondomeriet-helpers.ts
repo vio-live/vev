@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Vio } from "../../vio-sdk";
-import { readCachedIdentity, writeCachedIdentity, writeCachedProducts } from "./kondomeriet-perf";
+import { readCachedIdentity, simpleConfigRequest, writeCachedIdentity, writeCachedProducts } from "./kondomeriet-perf";
 import {
   ensureVioInit,
   fetchVioProducts,
@@ -988,31 +988,38 @@ export function useFastChannel(): FastChannel | null {
 }
 
 /**
- * GraphQL as a GET with the key in the query string, cacheable by the CDN —
- * for when the gateway supports it (being prepared). Off by default: an
- * internal switch, `globalThis.__VIO_KND_GQL_GET__ = true`. Any failure falls
- * back to the POST.
+ * Catalog reads as a simple request (handoff 2026-11-18-cdn-edge-cache-sdk §5):
+ * `GET ?query&variables&operationName&apiKey`, with no header of our own — no
+ * `Authorization`, no `Content-Type` — so the browser sends it without a CORS
+ * preflight (one round trip less per reader) and the CDN can answer it. The
+ * variables are built in one fixed order (`productVariables`); the same set of
+ * products is the same URL on every page. Anything but a clean answer (network,
+ * 4xx/5xx, GraphQL errors) falls back to the POST, and an endpoint whose GET
+ * failed is not asked by GET again on this page. Mutations never come here.
  */
-function gqlGetEnabled(): boolean {
-  return (globalThis as { __VIO_KND_GQL_GET__?: boolean }).__VIO_KND_GQL_GET__ === true;
+const getRefused = new Set<string>();
+
+function operationNameOf(query: string): string | null {
+  return /^\s*query\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? null;
 }
 
-/** One GraphQL query straight to an endpoint with a channel key (no SDK client, no bootstrap). */
+/** One GraphQL read straight to an endpoint with a channel key (no SDK client, no bootstrap). */
 export async function directGraphQL(endpoint: string, apiKey: string, query: string, variables: Record<string, unknown>): Promise<any> {
   const compact = query.replace(/\s+/g, " ").trim();
-  if (gqlGetEnabled()) {
+  if (!getRefused.has(endpoint)) {
     try {
+      const op = operationNameOf(compact);
       const url =
         `${endpoint}?query=${encodeURIComponent(compact)}` +
         `&variables=${encodeURIComponent(JSON.stringify(variables))}` +
+        (op ? `&operationName=${encodeURIComponent(op)}` : "") +
         `&apiKey=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url, { method: "GET" });
-      if (res.ok) {
-        const json = await res.json();
-        if (json?.data && !json?.errors?.length) return json.data;
-      }
+      const res = await fetch(url);
+      const json = res.ok ? await res.json() : null;
+      if (json?.data && !json?.errors?.length) return json.data;
+      getRefused.add(endpoint);
     } catch {
-      /* the POST below */
+      getRefused.add(endpoint);
     }
   }
   const res = await fetch(endpoint, {
@@ -1024,6 +1031,18 @@ export async function directGraphQL(endpoint: string, apiKey: string, query: str
   const json = await res.json();
   if (json?.errors?.length) throw new Error(`[Vio] GraphQL: ${json.errors[0]?.message ?? "error"}`);
   return json?.data;
+}
+
+/** The GraphQL endpoint and channel key the SDK would use for a sponsor (after the bootstrap), or null. */
+function channelOf(sponsorId: number, campaignId: number | null | undefined): { endpoint: string; apiKey: string } | null {
+  try {
+    const sponsor = (Vio as any).sponsorCommerce?.(sponsorId, campaignId != null ? { campaignId } : {});
+    const apiKey = sponsor?.commerce?.apiKey;
+    const endpoint = (Vio as any).config?.graphQLBase;
+    return typeof apiKey === "string" && apiKey && typeof endpoint === "string" && endpoint ? { endpoint, apiKey } : null;
+  } catch {
+    return null;
+  }
 }
 
 type Batch = { ids: Set<number>; waiters: Map<number, { resolve: (p: any) => void; reject: (e: unknown) => void }[]>; timer: any };
@@ -1075,9 +1094,10 @@ function batchedProduct(id: number, sponsorId: number, campaignId: number | null
   return promise;
 }
 
+/** Always the same keys in the same order, the ids sorted: one URL (one CDN entry) per set of products. */
 function productVariables(ids: number[]) {
   return {
-    productIds: ids,
+    productIds: [...ids].sort((a, b) => a - b),
     currency: getActiveCurrency(),
     shippingCountryCode: getActiveCountryCode(),
     imageSize: "large",
@@ -1113,8 +1133,10 @@ async function queryProducts(ids: number[], sponsorId: number, campaignId: numbe
         await Vio.bootstrap();
         const sid = sponsorForCommerce(sponsorId);
         if (sid == null) throw new Error("[Vio] no sponsor in the connected key's configuration yet");
-        const commerce = campaignId != null ? Vio.commerceFor(sid, { campaignId }) : Vio.commerceFor(sid);
-        const data = await commerce.raw.request(query, productVariables(ids));
+        const channel = channelOf(sid, campaignId);
+        const data = channel
+          ? await directGraphQL(channel.endpoint, channel.apiKey, query, productVariables(ids))
+          : await (campaignId != null ? Vio.commerceFor(sid, { campaignId }) : Vio.commerceFor(sid)).raw.request(query, productVariables(ids));
         const list: any[] = Array.isArray(data?.Channel?.GetProductsByIds) ? data.Channel.GetProductsByIds : [];
         return inOrder(ids, list, !full);
       },
@@ -1123,6 +1145,80 @@ async function queryProducts(ids: number[], sponsorId: number, campaignId: numbe
   } catch (err: any) {
     console.warn("[Vio] Kondomeriet product query failed, using the standard one (no shop URL)", err?.message ?? err);
     return (await fetchVioProducts(ids, sponsorId, campaignId)) as any[];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shipping rates for the product info, as a simple GET
+// ---------------------------------------------------------------------------
+
+/** The SDK's GET_PRODUCT_SHIPPING_WITH_LOGO (ChannelProduct.getShippingRates), under our own name. */
+const KONDOMERIET_SHIPPING_QUERY = `
+  query KondomerietShipping($productIds: [Int!], $useCache: Boolean!, $currency: String, $shippingCountryCode: String) {
+    Channel {
+      GetProductsByIds(product_ids: $productIds, useCache: $useCache, currency: $currency, shipping_country_code: $shippingCountryCode) {
+        id
+        product_shipping {
+          id
+          name
+          description
+          logo_url
+          default
+          shipping_country {
+            country
+            price { amount amount_incl_taxes currency_code }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export type KondomerietShippingRate = { name: string; price: number; currency: string; description: string; logoUrl: string };
+
+const FILLER_SHIPPING = ["by outshifter", "default shipping method"];
+
+/**
+ * A product's shipping rates for the page's market, cheapest first — what the
+ * SDK's `getShippingRates` answers (same rows, same filler descriptions
+ * dropped), read with `directGraphQL` so it is a simple GET. `null` when it
+ * cannot be read this way (no bootstrap yet, an error): the caller asks the SDK.
+ */
+export async function kondomerietShippingRates(
+  productId: number,
+  sponsorId: number,
+  campaignId: number | null | undefined,
+  currency: string
+): Promise<KondomerietShippingRate[] | null> {
+  const channel = channelOf(sponsorId, campaignId);
+  if (!channel) return null;
+  const country = getActiveCountryCode();
+  try {
+    const data = await directGraphQL(channel.endpoint, channel.apiKey, KONDOMERIET_SHIPPING_QUERY, {
+      productIds: [productId],
+      useCache: false,
+      currency,
+      shippingCountryCode: country,
+    });
+    const product = data?.Channel?.GetProductsByIds?.[0];
+    if (!product) return null;
+    const want = String(country || "").trim().toUpperCase();
+    const out: KondomerietShippingRate[] = [];
+    for (const s of Array.isArray(product.product_shipping) ? product.product_shipping : []) {
+      const row = (Array.isArray(s?.shipping_country) ? s.shipping_country : []).find(
+        (c: any) => String(c?.country ?? "").trim().toUpperCase() === want
+      );
+      const amount = typeof row?.price?.amount_incl_taxes === "number" ? row.price.amount_incl_taxes : row?.price?.amount;
+      if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) continue;
+      const name = String(s.name ?? "");
+      const text = typeof s.description === "string" ? s.description.trim() : "";
+      const filler = !text || FILLER_SHIPPING.includes(text.toLowerCase()) || text.toLowerCase() === name.trim().toLowerCase();
+      const logo = typeof s.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(s.logo_url.trim()) ? s.logo_url.trim() : "";
+      out.push({ name, price: amount, currency: String(row?.price?.currency_code ?? "") || currency, description: filler ? "" : text, logoUrl: logo });
+    }
+    return out.sort((a, b) => a.price - b.price);
+  } catch {
+    return null;
   }
 }
 
@@ -1141,6 +1237,7 @@ export function fetchKondomerietProducts(
   campaignId?: number | null,
   { full = false }: { full?: boolean } = {}
 ): Promise<any[]> {
+  simpleConfigRequest();
   const ids = productIds.filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0 || sponsorId == null) return Promise.resolve([]);
   return Promise.all(ids.map((id) => batchedProduct(id, sponsorId, campaignId, full).catch(() => null))).then(
@@ -1211,6 +1308,7 @@ export function loadFreshCatalog(): Promise<CatalogProduct[]> {
   return withRetry(
     async () => {
       if (!resolveApiKey()) throw new Error("Connect a Vio API key in the Config block to list its products");
+      simpleConfigRequest();
       ensureVioInit();
       await Vio.bootstrap();
       const sponsorId = sponsorForSlot(null, getActiveSponsorId());
