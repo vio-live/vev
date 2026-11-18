@@ -132,7 +132,7 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
       display: "dropdown",
       items: [
         { value: "off", label: "Off" },
-        { value: "auto", label: "Auto (card's badge in its dates, else sale %)" },
+        { value: "auto", label: "Auto (feed's sale %, else card's badge in its dates)" },
         { value: "manual", label: "Manual (text)" },
       ],
     },
