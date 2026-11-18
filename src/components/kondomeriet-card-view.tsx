@@ -288,7 +288,7 @@ export function KondomerietCardView({
   // Circlewise: the card's own link, else the block's; an invalid one is said in the editor and ignored.
   // Circlewise: the card's own link, else the block's, else (on by default)
   // the Config's a / i with this card's ref1 from the sheet.
-  const cw = circlewiseFor(group, group.group.tracking || config.trackingLink);
+  const cw = circlewiseFor(group, group.group.tracking || config.trackingLink, option);
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
@@ -313,6 +313,7 @@ export function KondomerietCardView({
       vippsNote: note,
       offerText: offer,
       tracking: cw.link,
+      trackingAuto: cw.source === "auto",
       badge,
       discountMode,
       discountText,

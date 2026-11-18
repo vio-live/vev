@@ -9,6 +9,7 @@ import {
   brandIdentity,
   brandIdentityOrCached,
   fetchKondomerietProducts,
+  ref1ForOption,
   type BrandIdentity,
   compareAtAmount,
   isSoldOut,
@@ -351,7 +352,8 @@ export function KondomerietDetail({
       label: `${vippsLabel} Vipps`,
       target: request.target,
       inAppBrowser: inAppBrowser(),
-      tracking: request.tracking ?? null,
+      // The default link's ref1 follows the option chosen here (the sheet tracks some models apart).
+      tracking: request.tracking && request.trackingAuto ? { ...request.tracking, ref1: ref1ForOption(group, option) } : request.tracking ?? null,
     });
   };
 

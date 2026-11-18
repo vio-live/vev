@@ -573,11 +573,18 @@ function commonSlug(slugs: string[]): string {
  * The ref1 of a card: the sheet's for its products (the first option that
  * matches), else `blackweek_<the group's slug, or the product's>`.
  */
+/** The sheet's ref1 suffix for one shop slug («blowcastpro»), or null. */
+export function blackWeekRef1(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  const hit = BLACK_WEEK_REF1.find(([re]) => re.test(slug));
+  return hit ? hit[1] : null;
+}
+
 export function ref1ForGroup(group: ResolvedGroup): string {
   const slugs = group.options.map((o) => o.slug).filter((s): s is string => !!s);
   for (const s of slugs) {
-    const hit = BLACK_WEEK_REF1.find(([re]) => re.test(s));
-    if (hit) return `blackweek_${hit[1]}`;
+    const hit = blackWeekRef1(s);
+    if (hit) return `blackweek_${hit}`;
   }
   const base = (slugs.length > 1 ? commonSlug(slugs) : slugs[0] ?? "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 70);
   return `blackweek_${base || "kondomeriet"}`;
@@ -588,12 +595,123 @@ export function ref1ForGroup(group: ResolvedGroup): string {
  * link (card / block) when valid; else, Circlewise on, the Config's `a` / `i`
  * with the card's ref1; else none (the direct POST).
  */
-export function circlewiseFor(group: ResolvedGroup, ownLink: unknown): { link: CirclewiseLink | null; error: string | null; source: "own" | "auto" | "off" } {
+export function circlewiseFor(
+  group: ResolvedGroup,
+  ownLink: unknown,
+  option?: KondomerietOption | null
+): { link: CirclewiseLink | null; error: string | null; source: "own" | "auto" | "off" } {
   const own = parseCirclewiseLink(ownLink);
   if (own.link) return { link: own.link, error: null, source: "own" };
   const s = circlewiseSettings();
   if (!s.enabled) return { link: null, error: own.error, source: "off" };
-  return { link: { a: s.a, i: s.i, ref1: ref1ForGroup(group) }, error: own.error, source: "auto" };
+  return { link: { a: s.a, i: s.i, ref1: ref1ForOption(group, option) }, error: own.error, source: "auto" };
+}
+
+/**
+ * The ref1 of a purchase: the chosen option's own row in the sheet when it
+ * has one (a card can hold several models the sheet tracks apart — Wingman
+ * pro / plus / lite), else the card's (`ref1ForGroup`).
+ */
+export function ref1ForOption(group: ResolvedGroup, option?: KondomerietOption | null): string {
+  const own = blackWeekRef1(option?.slug);
+  return own ? `blackweek_${own}` : ref1ForGroup(group);
+}
+
+// ---------------------------------------------------------------------------
+// Families: which picked products are one card
+// ---------------------------------------------------------------------------
+
+/**
+ * A card's picker closed with `ids` picked (in the order they were picked):
+ * one family stays the card (with its Details); more than one splits — the
+ * first family stays, every other one becomes a new card right after it.
+ */
+export function applyCardPick(
+  groups: KondomerietGroup[],
+  index: number,
+  ids: number[],
+  info: Map<number, FamilyItem>
+): { groups: KondomerietGroup[]; created: number } {
+  const current = groups[index] ?? { ids: [] };
+  const fams = familiesOf(ids.map((id) => info.get(id) ?? { id }));
+  if (fams.length <= 1) {
+    const next = [...groups];
+    next[index] = { ...current, ids };
+    return { groups: next, created: 0 };
+  }
+  const [first, ...rest] = fams;
+  return {
+    groups: [...groups.slice(0, index), { ...current, ids: first }, ...rest.map((f) => ({ ids: f })), ...groups.slice(index + 1)],
+    created: rest.length,
+  };
+}
+
+/**
+ * «+ Add products» closed with `ids` picked: one new card per family, in the
+ * order they were picked, at the end of the list. Cards that exist are left
+ * as they are; a product already in one of them is skipped.
+ */
+export function addProductsAsCards(
+  groups: KondomerietGroup[],
+  ids: number[],
+  info: Map<number, FamilyItem>
+): { groups: KondomerietGroup[]; created: number; skipped: number } {
+  const taken = new Set(allGroupIds(groups));
+  const fresh = ids.filter((id) => !taken.has(id));
+  const fams = familiesOf(fresh.map((id) => info.get(id) ?? { id }));
+  return { groups: [...groups, ...fams.map((f) => ({ ids: f }))], created: fams.length, skipped: ids.length - fresh.length };
+}
+
+/** What the editor knows about a picked product (the catalog row). */
+export type FamilyItem = { id: number; title?: string; brand?: string; slug?: string | null };
+
+function words(t: string | undefined): string[] {
+  return String(t ?? "").trim().split(/\s+/).filter(Boolean);
+}
+
+/** The words two titles start with in common (case-insensitive). */
+function commonLeadingWords(a: string | undefined, b: string | undefined): number {
+  const x = words(a), y = words(b);
+  let n = 0;
+  while (n < x.length && n < y.length && x[n].localeCompare(y[n], "nb", { sensitivity: "accent" }) === 0) n++;
+  return n;
+}
+
+function sameBrand(a?: string, b?: string): boolean {
+  const x = String(a ?? "").trim().toLowerCase(), y = String(b ?? "").trim().toLowerCase();
+  return !x || !y || x === y;
+}
+
+/**
+ * Picked products grouped into families — the same product in another
+ * colour, size or model, which one card shows behind its selector. Two
+ * products are one family when the Black Week sheet puts them in one row
+ * (same ref1: Premium 2's colours, Spinner's models, EasyGlide's sizes), or
+ * when they have the same brand and their titles start with at least two
+ * words in common («Blowcast Wingman …», «TENGA Spinner …» — what
+ * `deriveLabels` turns into the card title and the option labels). One word
+ * is not enough: «EasyToys …» or «Womanizer …» name a brand, not a product.
+ * Families come in the order of their first product; products keep the
+ * order they were picked in.
+ */
+export function familiesOf(items: FamilyItem[]): number[][] {
+  const parent = items.map((_, k) => k);
+  const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k])));
+  for (let a = 0; a < items.length; a++) {
+    for (let b = a + 1; b < items.length; b++) {
+      const ra = blackWeekRef1(items[a].slug);
+      const rb = blackWeekRef1(items[b].slug);
+      const sheet = !!ra && ra === rb;
+      const title = sameBrand(items[a].brand, items[b].brand) && commonLeadingWords(items[a].title, items[b].title) >= 2;
+      if (sheet || title) parent[find(b)] = find(a);
+    }
+  }
+  const out = new Map<number, number[]>();
+  items.forEach((it, k) => {
+    const root = find(k);
+    out.set(root, [...(out.get(root) ?? []), it.id]);
+  });
+  return [...out.values()];
 }
 
 /** Opens a URL the way the Hurtigkasse opens (new tab, or the same window), from inside the click. */
@@ -1075,6 +1193,7 @@ const FRESH_CATALOG_QUERY = `
         variants { id title }
         price { amount amount_incl_taxes currency_code }
         images { url }
+        origin_url
       }
     }
   }
@@ -1144,6 +1263,8 @@ export type KondomerietDetailRequest = {
   offerText?: string | null;
   /** The card's Circlewise link (valid), so the drawer's Vipps goes through it too. */
   tracking?: CirclewiseLink | null;
+  /** The link is the default one: its ref1 follows the option chosen in the drawer. */
+  trackingAuto?: boolean;
   /** The card follows a choice made in the drawer. */
   onSelect?: (index: number) => void;
 };

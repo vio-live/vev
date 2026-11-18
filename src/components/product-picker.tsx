@@ -36,6 +36,7 @@ export function CatalogModal({
   onToggle,
   onClose,
   load = loadCatalog,
+  title,
 }: {
   multi: boolean;
   selectedIds: Set<number>;
@@ -43,6 +44,8 @@ export function CatalogModal({
   onClose: () => void;
   /** Where the list comes from. Default: the shared, cached `loadCatalog` (every Vio block's picker). */
   load?: () => Promise<CatalogProduct[]>;
+  /** The modal's title. Default: «Select products» / «Select a product» (every Vio block's picker). */
+  title?: string;
 }) {
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +82,7 @@ export function CatalogModal({
 
   return (
     <SilkeModal
-      title={multi ? "Select products" : "Select a product"}
+      title={title ?? (multi ? "Select products" : "Select a product")}
       size="large"
       onClose={onClose}
     >

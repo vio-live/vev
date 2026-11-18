@@ -342,6 +342,17 @@ layouts (standard, image only, info over image, horizontal), accent colour, badg
 card's full-width bar or pill. Only three things are Kondomeriet's own: the option selector (drawn with the values of
 the SDK detail's option pills), «Kjøp med Vipps» instead of adding to a cart, and the Hurtigkasse note.
 
+**Several products at once (carousel / grid).** *+ Add products* (next to *+ Add card*) opens the catalog picker
+(«Select products»); on Done it adds one card per **family**, in the order picked, at the end of the list — existing
+cards are left alone and products already in a card are skipped. A family is one product in several colours, sizes
+or models: the same row of the Black Week sheet (same ref1), or the same brand with titles that start with at least
+two words in common («Blowcast Wingman …», «TENGA Spinner …»; one word — «EasyToys», «Womanizer» — is a brand, not a
+product). A card's own *Products* picker («Select colors, sizes or models of one product») splits on Done when the
+pick holds several families: the first stays on that card with its Details, the others become new cards right after
+it, and the panel says how many. On the single *Kondomeriet Product Card* a mixed pick is kept as options of one card,
+with a note pointing to the grid / carousel. With several models of a sheet's rows on one card (Wingman pro / plus /
+lite), Circlewise's ref1 follows the option bought.
+
 **Groups.** The feed creates one Vio product per colour / model / size, so a card unifies several products behind
 a selector (pills, photo thumbnails or a dropdown); each option is its own Vio product with its own photo, price,
 stock and shop URL. A single product is a group of one. In the panel: *Products* opens the Vio catalog picker for
