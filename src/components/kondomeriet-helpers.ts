@@ -482,14 +482,118 @@ export function parseCirclewiseLink(raw: unknown): { link: CirclewiseLink | null
  * bridge for the chosen option's slug, tagged for VG's Black Week
  * (`utm_content` = the link's `ref1`).
  */
-export function circlewiseUrl(link: CirclewiseLink, slug: string): string {
+export function circlewiseUrl(
+  link: CirclewiseLink,
+  slug: string,
+  extra: { ref2?: string | null; ref3?: string | number | null } = {}
+): string {
   const bridge =
     `${HURTIGKASSE_BRIDGE}?slug=${encodeURIComponent(slug)}` +
     `&utm_source=vg&utm_medium=content&utm_campaign=blackweek&utm_content=${encodeURIComponent(link.ref1)}`;
+  // ref2 / ref3 (our SDK session and campaign) go only when they are clean values.
+  const ref = (name: string, v: unknown) => {
+    const t = v == null ? "" : String(v).trim();
+    return t && CW_PARAM.test(t) ? `&${name}=${encodeURIComponent(t)}` : "";
+  };
   return (
     `https://${CIRCLEWISE_HOST}/?a=${encodeURIComponent(link.a)}&i=${encodeURIComponent(link.i)}` +
-    `&ref1=${encodeURIComponent(link.ref1)}&r=${encodeURIComponent(bridge)}`
+    `&ref1=${encodeURIComponent(link.ref1)}${ref("ref2", extra.ref2)}${ref("ref3", extra.ref3)}` +
+    `&r=${encodeURIComponent(bridge)}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Circlewise on by default (Angelo: «always our mode, but theirs registered»)
+// ---------------------------------------------------------------------------
+
+/** The affiliate (`a`) and offer (`i`) of Kondomeriet's Black Week in Circlewise — the Config can change them. */
+export const CIRCLEWISE_DEFAULT_A = "h9k6zq";
+export const CIRCLEWISE_DEFAULT_I = "3j26pb";
+
+export type CirclewiseSettings = { enabled: boolean; a: string; i: string };
+
+/** Set by the Kondomeriet Config while it renders; without a Config, the defaults (on). */
+export function setCirclewiseSettings(s: Partial<CirclewiseSettings> | null): void {
+  const a = typeof s?.a === "string" && CW_PARAM.test(s.a.trim()) ? s.a.trim() : CIRCLEWISE_DEFAULT_A;
+  const i = typeof s?.i === "string" && CW_PARAM.test(s.i.trim()) ? s.i.trim() : CIRCLEWISE_DEFAULT_I;
+  (globalThis as { __KND_CW__?: CirclewiseSettings }).__KND_CW__ = { enabled: s?.enabled !== false, a, i };
+}
+
+export function circlewiseSettings(): CirclewiseSettings {
+  return (
+    (globalThis as { __KND_CW__?: CirclewiseSettings }).__KND_CW__ ?? {
+      enabled: true,
+      a: CIRCLEWISE_DEFAULT_A,
+      i: CIRCLEWISE_DEFAULT_I,
+    }
+  );
+}
+
+/**
+ * The sheet's ref1 per Black Week product, by its shop slug (the second
+ * segment of the product URL): colours, sizes and models share their
+ * group's. First match wins, so the specific patterns come first. «kondomer»
+ * and «undertoy» are the sheet's two categories (no product of the
+ * collection matches them today).
+ */
+const BLACK_WEEK_REF1: [RegExp, string][] = [
+  [/^blowcast-wingman-pro/, "blowcastpro"],
+  [/^blowcast-wingman-plus/, "wingmanplus"],
+  [/^blowcast-wingman-lite/, "blowcastlite"],
+  [/julekalender/, "julekalender"],
+  [/^womanizer-snap/, "womanizersnap"],
+  [/^womanizer-premium/, "womanizerpremium"],
+  [/^womanizer-duo/, "womanizerduo"],
+  [/^easytoys-slikkemaskin-pleasure/, "pleasure"],
+  [/lyserosa-slikkemaskin/, "easytoys_slikk"],
+  [/^easytoys-penispumpe/, "easytoys"],
+  [/analplugg/, "analplugg"],
+  [/corrida/, "corrida"],
+  [/^tenga-spinner/, "tenga"],
+  [/easyglide/, "easyglide"],
+  [/alex-neo/, "alexneo"],
+  [/^we-vibe-melt/, "wevibemelt"],
+  [/petal/, "petal"],
+  [/kondom/, "kondomer"],
+  [/undertoy/, "undertoy"],
+];
+
+/** The words (dash-separated) every slug of a group starts with: «womanizer-premium-2». */
+function commonSlug(slugs: string[]): string {
+  const parts = slugs.map((x) => x.split("-").filter(Boolean));
+  const out: string[] = [];
+  for (let k = 0; k < (parts[0]?.length ?? 0); k++) {
+    if (parts.every((p) => p[k] === parts[0][k])) out.push(parts[0][k]);
+    else break;
+  }
+  return out.join("-") || slugs[0] || "";
+}
+
+/**
+ * The ref1 of a card: the sheet's for its products (the first option that
+ * matches), else `blackweek_<the group's slug, or the product's>`.
+ */
+export function ref1ForGroup(group: ResolvedGroup): string {
+  const slugs = group.options.map((o) => o.slug).filter((s): s is string => !!s);
+  for (const s of slugs) {
+    const hit = BLACK_WEEK_REF1.find(([re]) => re.test(s));
+    if (hit) return `blackweek_${hit[1]}`;
+  }
+  const base = (slugs.length > 1 ? commonSlug(slugs) : slugs[0] ?? "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 70);
+  return `blackweek_${base || "kondomeriet"}`;
+}
+
+/**
+ * The Circlewise link a card's «Kjøp med Vipps» goes through: its own pasted
+ * link (card / block) when valid; else, Circlewise on, the Config's `a` / `i`
+ * with the card's ref1; else none (the direct POST).
+ */
+export function circlewiseFor(group: ResolvedGroup, ownLink: unknown): { link: CirclewiseLink | null; error: string | null; source: "own" | "auto" | "off" } {
+  const own = parseCirclewiseLink(ownLink);
+  if (own.link) return { link: own.link, error: null, source: "own" };
+  const s = circlewiseSettings();
+  if (!s.enabled) return { link: null, error: own.error, source: "off" };
+  return { link: { a: s.a, i: s.i, ref1: ref1ForGroup(group) }, error: own.error, source: "auto" };
 }
 
 /** Opens a URL the way the Hurtigkasse opens (new tab, or the same window), from inside the click. */

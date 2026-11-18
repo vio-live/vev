@@ -419,15 +419,25 @@ værende i artikkelen» when the Hurtigkasse opens in a new tab (*Under Vipps (n
 none; the product info adds it to its Hurtigkasse note); and «Tilbudet gjelder til mandag 30. november» while an
 *Offer ends* date (block, or a card's own in *Details*) is ahead.
 
-**Circlewise (TargetCircle) tracking.** *Tracking link (Circlewise)* on the card / carousel / grid, and per card in
-*Details* (which wins): paste the sheet's link (`https://c.trackmytarget.com/?a=…&i=…&ref1=…&r=…`). With a valid one
-(host `c.trackmytarget.com`, `a`, `i` and `ref1`), «Kjøp med Vipps» first sends our events as always, then opens —
-in the same mode as the Hurtigkasse (new tab, same window, same window in an app's browser) —
-`https://c.trackmytarget.com/?a=<a>&i=<i>&ref1=<ref1>&r=<bridge>`, the bridge being
-`https://container.vio.live/reachu-uploads-production/bridge/kondomeriet-hurtigkasse.html?slug=<chosen option>&utm_source=vg&utm_medium=content&utm_campaign=blackweek&utm_content=<ref1>`,
-which validates the slug and posts the Hurtigkasse form (`qty-<slug>=1&cbtn=vps`) keeping `tmt_*` / `utm_*`. Without a
-link, the direct POST as before; an invalid link is said in the editor (canvas and *Details*) and ignored. The click
-carries `tracking: circlewise | direct` (`select_item`) and `_circlewise` on the `cta_click` variant.
+**Circlewise (TargetCircle) tracking — always on.** Every «Kjøp med Vipps» of every Kondomeriet block goes through
+Circlewise's tracker to Vio's bridge and the Hurtigkasse, with nothing for the editor to do (Angelo: «always our mode,
+but theirs registered»); the reader sees the same opening mode and the same bridge. The Kondomeriet Config's advanced
+fields hold `a` (`h9k6zq`) and `i` (`3j26pb`) and a switch to turn it off (then: the direct POST).
+- **ref1:** a link pasted on the card (*Details*) or the block (*Tracking link (Circlewise)*) is an optional override —
+  its `a`, `i` and `ref1` are used. Otherwise the sheet's ref1 by the products' shop slugs (`BLACK_WEEK_REF1` in
+  `kondomeriet-helpers.ts`: blowcastpro, wingmanplus, blowcastlite, julekalender, womanizersnap, pleasure,
+  womanizerpremium, corrida, tenga, womanizerduo, analplugg, easyglide, kondomer, undertoy, alexneo, easytoys,
+  easytoys_slikk, wevibemelt, petal — colours, sizes and models take their group's), else
+  `blackweek_<the group's common slug, or the product's>`. An invalid pasted link is said in the editor and the
+  default is used.
+- **ref2** = the SDK's analytics `session_id`, **ref3** = the campaign id, so Circlewise's postback can bring both back.
+  The tracker accepts them (200, then its usual redirect to the bridge with `tmt_data` / `tmt_ufp` /
+  `tmt_offer_sid`); like ref1, they are not echoed in that redirect — they live with the click on their side, so
+  whether the postback returns them is to be confirmed with Circlewise.
+- **Warm-up:** `preconnect` + `dns-prefetch` to `https://c.trackmytarget.com` when the Config has Circlewise on, and
+  again on the first `pointerdown` / `touchstart` on «Kjøp med Vipps». Measured click → bridge: no difference here
+  (see the PR) — browsers partition connections by top-level site, and the tracker opens as a top-level navigation.
+- The click carries `tracking: circlewise | direct` (`select_item`) and `_circlewise` on the `cta_click` variant.
 
 **In-app browsers.** In the browser of an app — Facebook / Messenger, Instagram, VG, Dagbladet, Snapchat, LinkedIn,
 TikTok, an Android WebView or an iOS web view (`inAppBrowser()` in `kondomeriet-perf.ts`, by user agent) — the

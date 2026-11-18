@@ -8,7 +8,7 @@ import {
   KONDOMERIET_NAME,
   brandIdentityOrCached,
   cardRating,
-  parseCirclewiseLink,
+  circlewiseFor,
   trustLineFor,
   offerEndText,
   resolveBuyOnCard,
@@ -22,7 +22,7 @@ import {
   type HurtigkasseTarget,
   type ResolvedGroup,
 } from "./kondomeriet-helpers";
-import { directImage, ensurePreconnect, inAppBrowser } from "./kondomeriet-perf";
+import { directImage, ensurePreconnect, inAppBrowser, preconnectCirclewise } from "./kondomeriet-perf";
 
 // The hosts a card needs, as soon as the package loads.
 ensurePreconnect();
@@ -286,7 +286,9 @@ export function KondomerietCardView({
   const rating = showRating ? cardRating(p?.description) : null;
   const offer = offerEndText(group.group.offerEnd || config.offerEnd, config.offerEndText, now);
   // Circlewise: the card's own link, else the block's; an invalid one is said in the editor and ignored.
-  const cw = parseCirclewiseLink(group.group.tracking || config.trackingLink);
+  // Circlewise: the card's own link, else the block's, else (on by default)
+  // the Config's a / i with this card's ref1 from the sheet.
+  const cw = circlewiseFor(group, group.group.tracking || config.trackingLink);
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
@@ -341,6 +343,11 @@ export function KondomerietCardView({
     });
   };
 
+  // The finger is on «Kjøp med Vipps»: re-warm the tracker's connection (its TLS may have expired).
+  const warmTracker = () => {
+    if (cw.link) preconnectCirclewise(true);
+  };
+
   const onInfoButton = (e: React.MouseEvent) => {
     e.stopPropagation();
     openInfo();
@@ -388,9 +395,18 @@ export function KondomerietCardView({
       role: "button",
       "aria-label": `${vippsLabel} Vipps`,
       onClick: buy,
+      onPointerDown: warmTracker,
+      onTouchStart: warmTracker,
     } as any)
   ) : (
-    <button type="button" className="vnc-btn-vipps" onClick={buy} aria-label={`${vippsLabel} Vipps`}>
+    <button
+      type="button"
+      className="vnc-btn-vipps"
+      onClick={buy}
+      onPointerDown={warmTracker}
+      onTouchStart={warmTracker}
+      aria-label={`${vippsLabel} Vipps`}
+    >
       {narrow ? null : <span>{vippsLabel}</span>}
       <span className="vnc-vipps-badge">vipps</span>
     </button>
@@ -498,7 +514,8 @@ export function KondomerietCardView({
         )}
         {editor && cw.error ? (
           <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
-            Editor: tracking link ignored — {cw.error}. «Kjøp med Vipps» goes direct to the Hurtigkasse.
+            Editor: tracking link ignored — {cw.error}.{" "}
+            {cw.link ? `Circlewise uses the default (ref1 ${cw.link.ref1}).` : "«Kjøp med Vipps» goes direct to the Hurtigkasse."}
           </div>
         ) : null}
         {editor && buyHere && !option.slug ? (

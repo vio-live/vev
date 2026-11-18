@@ -15,7 +15,7 @@ import {
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
-import { directImage, inAppBrowser } from "./kondomeriet-perf";
+import { directImage, inAppBrowser, preconnectCirclewise } from "./kondomeriet-perf";
 import { SellerLogo, badgeFor, classRef, detailPrice, plainText } from "./kondomeriet-ui";
 import { parseRichDescription, renderRich, splitPlainRating } from "./kondomeriet-description";
 
@@ -338,6 +338,10 @@ export function KondomerietDetail({
     trackOptionSelect(group.options[i], attribution, sponsorId, "detail");
   };
 
+  const warmTracker = () => {
+    if (request.tracking) preconnectCirclewise(true);
+  };
+
   const buy = () => {
     if (!canBuy) return;
     buyWithHurtigkasse(option, {
@@ -403,9 +407,11 @@ export function KondomerietDetail({
       role: "button",
       "aria-label": `${vippsLabel} Vipps`,
       onClick: buy,
+      onPointerDown: warmTracker,
+      onTouchStart: warmTracker,
     } as any)
   ) : (
-    <button type="button" className="buy-vipps" onClick={buy} aria-label={`${vippsLabel} Vipps`}>
+    <button type="button" className="buy-vipps" onClick={buy} onPointerDown={warmTracker} onTouchStart={warmTracker} aria-label={`${vippsLabel} Vipps`}>
       <span>{vippsLabel}</span>
       <span className="vipps-badge">vipps</span>
     </button>
