@@ -469,12 +469,12 @@ export function KondomerietDetail({
                       onClick={() => setPhoto(i)}
                     >
                       <img
-                        src={directImage(src, "large").src}
+                        src={directImage(src, "medium").src}
                         alt=""
                         loading="lazy"
                         decoding="async"
                         onError={(e) => {
-                          const fb = directImage(src, "large").fallback;
+                          const fb = directImage(src, "medium").fallback;
                           if (e.currentTarget.src !== fb) e.currentTarget.src = fb;
                         }}
                       />

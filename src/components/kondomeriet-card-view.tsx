@@ -256,8 +256,11 @@ export function KondomerietCardView({
   const safeIndex = Math.min(Math.max(0, index), group.options.length - 1);
   const option = group.options[safeIndex];
   const p = option.product;
-  // The CDN's sized file directly (no redirects); the editor's own picture as it is.
-  const image = imageOverride ? { src: imageOverride, fallback: imageOverride } : directImage(primaryImageUrl(p), "large");
+  // The CDN's 500 px file directly (no redirects): enough for a card and
+  // lighter than the 1024 px one when the shop's original is big; the
+  // product info keeps the large one.
+  // The editor's own picture as it is.
+  const image = imageOverride ? { src: imageOverride, fallback: imageOverride } : directImage(primaryImageUrl(p), "medium");
   const img = image.src;
   const soldOut = isSoldOut(p);
   const canBuy = !!option.slug && !soldOut;

@@ -5,7 +5,7 @@
  * the product query ~1.4 s) and every image went through two redirects.
  *
  * - Hosts: `preconnect` / `dns-prefetch` to the API, the GraphQL and the image CDN.
- * - Images: the CDN's sized file directly (`<name>large.jpg`), not the
+ * - Images: the CDN's sized file directly (`<name>medium.jpg` on cards), not the
  *   `?size=` URL that redirects twice (container → api-ecom → container).
  * - Products: a short-lived browser cache (stale-while-revalidate, 5 min).
  * - The brand's identity (logo, name, promises): the same, so a card painted
@@ -86,22 +86,29 @@ export function preconnectCirclewise(refresh = false): void {
 
 export type ImageSize = "thumbnail" | "medium" | "large" | "full";
 const SIZED = /^(https:\/\/container\.vio\.live\/.+?)(\.[A-Za-z0-9]+)\?size=(thumbnail|medium|large|full)$/;
+/** The direct form the API gives since 18/11 (api #81): `…/product-images/<name>large.jpg`. */
+const DIRECT = /^(https:\/\/container\.vio\.live\/[^?#]*\/(?:product-images|products)\/[^/?#]*?)(thumbnail|medium|large)(\.(?:jpe?g|png|webp))$/i;
 
 /**
- * The CDN file of an image at `size`, without the redirects: Commerce gives
- * `…/<name>.jpg?size=large`, which answers 308 → api-ecom → 302 →
- * `…/<name>large.jpg` (two round trips before the first byte; on 3G about a
- * second each). Only use a size the import generated: `large` (1024 px) exists
- * for every product (checked on the Kondomeriet collection, 31/31), `medium`
- * mostly does not (30/31 answered 404, the redirect too) and `full` is the
- * original upload, whose size is the merchant's. Any other URL is returned as
- * it is; `fallback` is the redirecting URL, tried when the direct file fails.
+ * The CDN file of an image at `size`, without redirects.
+ *
+ * Since 18/11 every product image in our container has its three variants,
+ * written on upload and backfilled for the old ones (base-api #74, products
+ * #71): `thumbnail` 150 px, `medium` 500 px, `large` 1024 px, never upscaled.
+ * `full` is the original upload. The API gives either the direct file
+ * (`…/<name>large.jpg`, api #81) or the old redirecting form
+ * (`…/<name>.jpg?size=large`: 308 → api-ecom → 302 → the file); both are
+ * turned into the direct file at the size asked. Any other URL (another
+ * host, the editor's own picture) is returned as it is. `fallback` is the
+ * redirecting form, tried when the direct file fails.
  */
 export function directImage(url: string | undefined | null, size: ImageSize): { src: string; fallback: string } {
   const raw = typeof url === "string" ? url : "";
   const m = raw.match(SIZED);
-  if (!m) return { src: raw, fallback: raw };
-  const [, base, ext] = m;
+  const d = m ? null : raw.match(DIRECT);
+  if (!m && !d) return { src: raw, fallback: raw };
+  const base = m ? m[1] : d![1];
+  const ext = m ? m[2] : d![3];
   return { src: size === "full" ? `${base}${ext}` : `${base}${size}${ext}`, fallback: `${base}${ext}?size=${size}` };
 }
 
