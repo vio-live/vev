@@ -20,6 +20,7 @@ import {
   setCirclewiseSettings,
   setFastChannel,
   type FastChannel,
+  FAST_START_MISSING_NOTICE,
 } from "./kondomeriet-helpers";
 import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest } from "./kondomeriet-perf";
 
@@ -173,6 +174,21 @@ function KondomerietConfigOwner(props: Props) {
           }}
         >
           Environment is <strong>{env}</strong>: Kondomeriet's products and campaign only exist in <strong>Production</strong>.
+        </div>
+      ) : null}
+      {inEditor && !(fs && fs.environment === env && fs.apiKey) ? (
+        <div
+          style={{
+            padding: "8px 12px",
+            marginBottom: 8,
+            border: "1px dashed #b06000",
+            borderRadius: 8,
+            background: "#fff8e1",
+            color: "#7a4100",
+            font: "13px/1.4 system-ui, sans-serif",
+          }}
+        >
+          {FAST_START_MISSING_NOTICE}
         </div>
       ) : null}
       <VioConfig {...configProps} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />

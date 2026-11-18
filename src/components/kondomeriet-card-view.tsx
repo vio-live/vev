@@ -126,6 +126,14 @@ type CardViewProps = {
   imageOverride?: string;
   /** One of the first cards on screen: its image loads eagerly, with high priority. */
   priority?: boolean;
+  /**
+   * While loading: what is known of the group before its products (how many
+   * options, its own «buy on card»), so the skeleton takes the card's real
+   * height — the same button (Vipps or «Se mer») and lines.
+   */
+  pending?: { options: number; buyOnCard?: unknown; offerEnd?: string };
+  /** Editor-only notices from the block (e.g. a missing snapshot), with the card's own. */
+  editorNotices?: string[];
 };
 
 /** The card sells itself (Vipps or the disabled bar) rather than sending to the product info: the Auto/Always/Never rule. */
@@ -146,6 +154,8 @@ export function KondomerietCardView({
   rootRef,
   imageOverride,
   priority = false,
+  pending,
+  editorNotices = [],
 }: CardViewProps) {
   const { disabled: editor } = useEditorState();
   const {
@@ -227,18 +237,72 @@ export function KondomerietCardView({
   const showMeta = !isImageOnly && !isOverlay;
 
   if (loading) {
+    // The card's own shape with grey lines in place of the product: the same
+    // classes (so the same heights — brand line, two-line name, price, the
+    // button at Vipps' height for its width, note, trust and seller lines,
+    // the info bar), so the products arriving move nothing (CLS) even when
+    // the block has no snapshot.
+    const pMode = resolveBuyOnCard(pending?.buyOnCard, config.buyOnCard, vippsButton);
+    const pBuy = pMode === "always" || (pMode === "auto" && (pending?.options ?? 1) <= 1);
+    const pIdentity = brandIdentityOrCached(sponsorId);
+    const pTarget: HurtigkasseTarget = inAppBrowser() ? "_top" : hurtigkasseTarget;
+    const pNote = (pTarget === "_blank" ? vippsNote : vippsNoteSameWindow).trim();
+    const pTrust = showTrustLine ? trustLineFor(config.trustLine, pIdentity) : "";
+    const pSeller = pIdentity?.name?.trim() || KONDOMERIET_NAME;
+    const pOffer = offerEndText(pending?.offerEnd || config.offerEnd, config.offerEndText, now);
+    const line = (width: string) => <span className="vnc-skel knd-skel-line" style={{ width }} />;
+    const pButton = pBuy ? (
+      <div className="vnc-btn-vipps knd-skel-block" aria-hidden="true" />
+    ) : (
+      <div className="vnc-btn-text vnc-btn-bar knd-more knd-skel-block" aria-hidden="true">
+        {moreLabel}
+      </div>
+    );
+    const pMeta = (
+      <>
+        {directBadgeOnCard && directBadge ? <span className="knd-direct-badge">{directBadge}</span> : null}
+        {showBrand ? <div className="vnc-brand">{line("40%")}</div> : null}
+        {showName ? <div className="vnc-name">{line("85%")}</div> : null}
+        {subtitle.trim() ? <div className="knd-subtitle">{subtitle.trim()}</div> : null}
+        {descriptionText.trim() ? <p className="vnc-description">{descriptionText.trim()}</p> : null}
+        {showPrice ? <div className="vnc-price">{line("35%")}</div> : null}
+        {pOffer ? <div className="knd-offer-end">{pOffer}</div> : null}
+        {pButton}
+        {pBuy && pNote ? <div className="knd-vipps-note">{pNote}</div> : null}
+        {pTrust ? <div className="knd-trust">{pTrust}</div> : null}
+        {showRetailer ? <div className="vnc-retailer">{KONDOMERIET_NAME}</div> : null}
+        {showSeller ? (
+          <div className="knd-seller">
+            {pIdentity?.logoUrl ? (
+              <SellerLogo src={pIdentity.logoUrl} name={pSeller} className="knd-seller-logo" />
+            ) : (
+              // The brand's logo comes with the bootstrap: its place is kept (on a narrow card it takes its own line).
+              <span className="vnc-skel knd-skel-logo" aria-hidden="true" />
+            )}
+            <span>
+              Du handler direkte hos <strong>{pSeller}</strong>
+            </span>
+          </div>
+        ) : null}
+      </>
+    );
     return (
-      <div className={rootClass} style={accentStyle} aria-busy="true">
+      // Its own key: the card that replaces it is mounted afresh, so no node of
+      // the skeleton is reused as another element of the card (counted as a shift).
+      <div key="knd-skeleton" ref={setRoot} className={rootClass} style={accentStyle} aria-busy="true">
+        <EditorNotices notices={editorNotices} />
         <div className="vnc-image">
           <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
         </div>
-        {showMeta ? (
-          <div className="vnc-meta">
-            <div className="vnc-skel" style={{ height: 10, width: "40%", marginBottom: 8 }} />
-            <div className="vnc-skel" style={{ height: 16, width: "85%", marginBottom: 10 }} />
-            <div className="vnc-skel" style={{ height: 16, width: "30%" }} />
-          </div>
-        ) : null}
+        <div className="vnc-body">
+          {showMeta ? <div className="vnc-meta">{pMeta}</div> : pButton}
+          {pBuy && infoButton && infoButtonStyle === "bar" ? (
+            <div className="vnc-btn-text vnc-btn-bar knd-skel-block" aria-hidden="true">
+              {infoLabel}
+            </div>
+          ) : null}
+          {footerText.trim() ? <div className="knd-footer">{footerText.trim()}</div> : null}
+        </div>
       </div>
     );
   }
@@ -500,7 +564,7 @@ export function KondomerietCardView({
 
   return (
     <div ref={setRoot} className={rootClass} style={accentStyle}>
-      <EditorNotices notices={cutByFrame ? [CUT_BY_FRAME_NOTICE] : []} />
+      <EditorNotices notices={cutByFrame ? [CUT_BY_FRAME_NOTICE, ...editorNotices] : editorNotices} />
       <div
         className="vnc-image"
         role="button"

@@ -1464,3 +1464,22 @@ export function openKondomerietDetail(request: KondomerietDetailRequest): void {
   if (typeof document === "undefined") return;
   document.dispatchEvent(new CustomEvent(KONDOMERIET_DETAIL_EVENT, { detail: request }));
 }
+
+// ---------------------------------------------------------------------------
+// Editor notices: what makes the published page slower until someone opens a panel
+// ---------------------------------------------------------------------------
+
+/**
+ * A block's props can only be written from its properties panel (Vev gives a
+ * block on the canvas no way to save its own props): the snapshot is written
+ * by the group editor when it opens, the Config's fast start by its field.
+ * Until then the editor says so on the block, before publishing.
+ */
+export const SNAPSHOT_MISSING_NOTICE =
+  "Instant loading missing — select this block and open its properties once (its products), then publish.";
+export const FAST_START_MISSING_NOTICE = "Fast start missing — open this Config's properties once, then publish.";
+
+/** Some picked product has no snapshot: the published card waits for the products to paint. */
+export function groupsMissingSnapshot(groups: KondomerietGroup[]): boolean {
+  return groups.some((g) => g.ids.some((id) => !g.snap?.[String(id)]));
+}
