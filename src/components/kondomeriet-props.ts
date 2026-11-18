@@ -191,6 +191,14 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     initialValue: "",
     description: "Optional, «2026-11-30 23:59». Shows the line below until then; a card's own date (Details) wins.",
   },
+  {
+    name: "trackingLink",
+    title: "Tracking link (Circlewise)",
+    type: "string",
+    initialValue: "",
+    description:
+      "Optional: the sheet's link (https://c.trackmytarget.com/?a=…&i=…&ref1=…). «Kjøp med Vipps» then goes through Circlewise to the Hurtigkasse. A card's own link (Details) wins. Empty or invalid: direct.",
+  },
   { name: "offerEndText", title: "Offer end text", type: "string", initialValue: "Tilbudet gjelder til {dato}", description: "{dato} = «mandag 30. november»." },
   {
     name: "imageClickAction",
@@ -316,7 +324,7 @@ const CONFIG_KEYS = [
   "annonse", "annonseText", "optionTitle", "selectorStyle", "vippsLabel", "infoButton", "infoButtonStyle", "infoLabel",
   "hurtigkasseTarget", "directBadge", "directBadgeOnCard", "perks", "stockText", "infoImageOnly", "discountMode",
   "discountText", "vippsButton", "buyOnCard", "moreLabel", "showRating", "showTrustLine", "trustLine", "vippsNote",
-  "vippsNoteSameWindow", "offerEnd", "offerEndText", "imageClickAction", "subtitle", "tagText", "footerText",
+  "vippsNoteSameWindow", "offerEnd", "offerEndText", "trackingLink", "imageClickAction", "subtitle", "tagText", "footerText",
 ] as const;
 
 export function pickKondomerietConfig(props: Record<string, any>): KondomerietCardConfig {

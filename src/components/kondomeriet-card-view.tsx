@@ -8,6 +8,7 @@ import {
   KONDOMERIET_NAME,
   brandIdentityOrCached,
   cardRating,
+  parseCirclewiseLink,
   trustLineFor,
   offerEndText,
   resolveBuyOnCard,
@@ -79,6 +80,8 @@ export type KondomerietCardConfig = {
   /** Under the Vipps button, when the Hurtigkasse opens in a new tab / in the same window. */
   vippsNote?: string;
   vippsNoteSameWindow?: string;
+  /** The block's Circlewise tracking link (the sheet's); a card's own (Details) wins. */
+  trackingLink?: string;
   /** «Tilbudet gjelder til …»: the block's offer end (`datetime-local`) and its text (`{dato}`). */
   offerEnd?: string;
   offerEndText?: string;
@@ -282,6 +285,8 @@ export function KondomerietCardView({
   const trust = showTrustLine ? trustLineFor(config.trustLine, identity) : "";
   const rating = showRating ? cardRating(p?.description) : null;
   const offer = offerEndText(group.group.offerEnd || config.offerEnd, config.offerEndText, now);
+  // Circlewise: the card's own link, else the block's; an invalid one is said in the editor and ignored.
+  const cw = parseCirclewiseLink(group.group.tracking || config.trackingLink);
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
@@ -305,6 +310,7 @@ export function KondomerietCardView({
       target,
       vippsNote: note,
       offerText: offer,
+      tracking: cw.link,
       badge,
       discountMode,
       discountText,
@@ -330,6 +336,7 @@ export function KondomerietCardView({
       label: `${vippsLabel} Vipps`,
       target,
       inAppBrowser: browser,
+      tracking: cw.link,
       editor,
     });
   };
@@ -345,7 +352,7 @@ export function KondomerietCardView({
   // «Image click»: the product info (default), or Kjøp med Vipps when the option can be bought.
   const onImage = () => {
     if (imageClickAction === "vipps" && canBuy && buyHere) {
-      buyWithHurtigkasse(option, { attribution: attribution(), sponsorId, where: "card", label: "image", target, inAppBrowser: browser, editor });
+      buyWithHurtigkasse(option, { attribution: attribution(), sponsorId, where: "card", label: "image", target, inAppBrowser: browser, tracking: cw.link, editor });
       return;
     }
     openInfo();
@@ -489,6 +496,11 @@ export function KondomerietCardView({
             {vippsEl}
           </>
         )}
+        {editor && cw.error ? (
+          <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
+            Editor: tracking link ignored — {cw.error}. «Kjøp med Vipps» goes direct to the Hurtigkasse.
+          </div>
+        ) : null}
         {editor && buyHere && !option.slug ? (
           <div className="vnc-retailer" style={{ color: "#b42318", textTransform: "none", letterSpacing: 0, marginTop: 6 }}>
             Editor: «{option.label}» has no kondomeriet.no URL — set its Hurtigkasse slug in the group's Details.

@@ -419,6 +419,16 @@ værende i artikkelen» when the Hurtigkasse opens in a new tab (*Under Vipps (n
 none; the product info adds it to its Hurtigkasse note); and «Tilbudet gjelder til mandag 30. november» while an
 *Offer ends* date (block, or a card's own in *Details*) is ahead.
 
+**Circlewise (TargetCircle) tracking.** *Tracking link (Circlewise)* on the card / carousel / grid, and per card in
+*Details* (which wins): paste the sheet's link (`https://c.trackmytarget.com/?a=…&i=…&ref1=…&r=…`). With a valid one
+(host `c.trackmytarget.com`, `a`, `i` and `ref1`), «Kjøp med Vipps» first sends our events as always, then opens —
+in the same mode as the Hurtigkasse (new tab, same window, same window in an app's browser) —
+`https://c.trackmytarget.com/?a=<a>&i=<i>&ref1=<ref1>&r=<bridge>`, the bridge being
+`https://container.vio.live/reachu-uploads-production/bridge/kondomeriet-hurtigkasse.html?slug=<chosen option>&utm_source=vg&utm_medium=content&utm_campaign=blackweek&utm_content=<ref1>`,
+which validates the slug and posts the Hurtigkasse form (`qty-<slug>=1&cbtn=vps`) keeping `tmt_*` / `utm_*`. Without a
+link, the direct POST as before; an invalid link is said in the editor (canvas and *Details*) and ignored. The click
+carries `tracking: circlewise | direct` (`select_item`) and `_circlewise` on the `cta_click` variant.
+
 **In-app browsers.** In the browser of an app — Facebook / Messenger, Instagram, VG, Dagbladet, Snapchat, LinkedIn,
 TikTok, an Android WebView or an iOS web view (`inAppBrowser()` in `kondomeriet-perf.ts`, by user agent) — the
 Hurtigkasse opens in the same window whatever the block says (a form posted to a new tab fails or opens badly there),

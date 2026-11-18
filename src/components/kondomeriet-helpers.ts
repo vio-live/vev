@@ -54,6 +54,8 @@ export type KondomerietGroup = {
   buyOnCard?: BuyOnCard;
   /** «Tilbudet gjelder til …»: this card's offer end (`datetime-local`), overriding the block's. */
   offerEnd?: string;
+  /** This card's Circlewise tracking link (the sheet's), overriding the block's. */
+  tracking?: string;
   /**
    * What the editor saw when the products were picked, per product id — the
    * published card paints from it at once and refreshes price and stock from
@@ -251,6 +253,7 @@ export function parseGroups(value?: GroupsValue | null): KondomerietGroup[] {
       discountEnd: cleanText(src.discountEnd),
       buyOnCard: cleanBuyOnCard(src.buyOnCard),
       offerEnd: cleanText(src.offerEnd),
+      tracking: cleanText(src.tracking),
       snap: cleanSnap(src.snap),
     });
   }
@@ -278,6 +281,8 @@ function normalizeGroup(g: KondomerietGroup): KondomerietGroup {
   if (buy) out.buyOnCard = buy;
   const end = cleanText(g.offerEnd);
   if (end) out.offerEnd = end;
+  const tracking = cleanText(g.tracking);
+  if (tracking) out.tracking = tracking;
   // The snapshot of the products still in the group.
   const snap = cleanSnap(g.snap);
   if (snap) {
@@ -426,6 +431,80 @@ export function submitHurtigkasse(slug: string, target: HurtigkasseTarget = "_bl
     form.submit();
   } finally {
     setTimeout(() => form.remove(), 1000);
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Circlewise (TargetCircle) tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * A Circlewise tracking link as the sheet gives it —
+ * `https://c.trackmytarget.com/?a=h9k6zq&i=3j26pb&ref1=blackweek_blowcastpro&r=…`
+ * — reduced to what we rebuild it from: `a`, `i` and `ref1`.
+ */
+export type CirclewiseLink = { a: string; i: string; ref1: string };
+
+export const CIRCLEWISE_HOST = "c.trackmytarget.com";
+/**
+ * The bridge page on Vio's CDN: it validates the slug and posts the
+ * Hurtigkasse form (`qty-<slug>=1&cbtn=vps`) to kondomeriet.no, keeping the
+ * `tmt_*` and `utm_*` of its URL — tested end to end in prod (tracker →
+ * bridge → Hurtigkasse → Vipps «Kondomeriet AS»).
+ */
+export const HURTIGKASSE_BRIDGE = "https://container.vio.live/reachu-uploads-production/bridge/kondomeriet-hurtigkasse.html";
+const CW_PARAM = /^[A-Za-z0-9_.-]{1,80}$/;
+
+/** The pasted link: null when empty; an error (and no link) when it is not a Circlewise link with `a`, `i` and `ref1`. */
+export function parseCirclewiseLink(raw: unknown): { link: CirclewiseLink | null; error: string | null } {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return { link: null, error: null };
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return { link: null, error: "Not a URL" };
+  }
+  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== CIRCLEWISE_HOST) {
+    return { link: null, error: `Not a Circlewise link (${CIRCLEWISE_HOST})` };
+  }
+  const a = url.searchParams.get("a") ?? "";
+  const i = url.searchParams.get("i") ?? "";
+  const ref1 = url.searchParams.get("ref1") ?? "";
+  const missing = [["a", a], ["i", i], ["ref1", ref1]].filter(([, v]) => !CW_PARAM.test(v)).map(([k]) => k);
+  if (missing.length) return { link: null, error: `Missing or invalid ${missing.join(", ")}` };
+  return { link: { a, i, ref1 }, error: null };
+}
+
+/**
+ * The tracker URL for one purchase: Circlewise's redirect with `r` = the
+ * bridge for the chosen option's slug, tagged for VG's Black Week
+ * (`utm_content` = the link's `ref1`).
+ */
+export function circlewiseUrl(link: CirclewiseLink, slug: string): string {
+  const bridge =
+    `${HURTIGKASSE_BRIDGE}?slug=${encodeURIComponent(slug)}` +
+    `&utm_source=vg&utm_medium=content&utm_campaign=blackweek&utm_content=${encodeURIComponent(link.ref1)}`;
+  return (
+    `https://${CIRCLEWISE_HOST}/?a=${encodeURIComponent(link.a)}&i=${encodeURIComponent(link.i)}` +
+    `&ref1=${encodeURIComponent(link.ref1)}&r=${encodeURIComponent(bridge)}`
+  );
+}
+
+/** Opens a URL the way the Hurtigkasse opens (new tab, or the same window), from inside the click. */
+export function openInTarget(url: string, target: HurtigkasseTarget = "_blank"): boolean {
+  if (typeof document === "undefined") return false;
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = target === "_top" ? "_top" : "_blank";
+  if (a.target === "_blank") a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    setTimeout(() => a.remove(), 1000);
   }
   return true;
 }
@@ -959,6 +1038,8 @@ export type KondomerietDetailRequest = {
   vippsNote?: string;
   /** «Tilbudet gjelder til …», already worded; null = none. */
   offerText?: string | null;
+  /** The card's Circlewise link (valid), so the drawer's Vipps goes through it too. */
+  tracking?: CirclewiseLink | null;
   /** The card follows a choice made in the drawer. */
   onSelect?: (index: number) => void;
 };
