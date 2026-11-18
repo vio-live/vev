@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { registerVevComponent } from "@vev/react";
 import { KondomerietCardView } from "./kondomeriet-card-view";
+import { simpleConfigRequest } from "./kondomeriet-perf";
 import {
   GROUP_PROP,
   KONDOMERIET_CARD_IMAGE_PROPS,
@@ -32,6 +33,7 @@ type Props = {
 };
 
 export default function KondomerietProductCard(props: Props) {
+  simpleConfigRequest();
   const { group, slot, slotName, hostRef } = props;
   const groupsKey = group?.data ?? "";
   const groups = parseGroups(group).slice(0, 1);

@@ -21,7 +21,7 @@ import {
   setFastChannel,
   type FastChannel,
 } from "./kondomeriet-helpers";
-import { ensurePreconnect, preconnectCirclewise } from "./kondomeriet-perf";
+import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest } from "./kondomeriet-perf";
 
 /**
  * Kondomeriet Config (SDK) — the Vio Config for Kondomeriet pages: the same
@@ -67,6 +67,9 @@ function mountedConfigs(): string[] {
 }
 
 export default function KondomerietConfig(props: Props) {
+  // The config as a simple GET (no preflight) from the first request on: set
+  // while rendering, before the Vio Config inside starts the bootstrap.
+  simpleConfigRequest();
   // ONE Config per page. A second one (a common editor slip, Alan in #491)
   // must not touch the page: its fast start, Circlewise settings and
   // environment would overwrite the first one's (whichever rendered last
@@ -203,6 +206,7 @@ export function KondomerietFastStartField({
     let cancelled = false;
     setState("working");
     (async () => {
+      simpleConfigRequest();
       ensureVioInit(key, env);
       await Vio.bootstrap();
       const sid = sponsorForSlot(null, await resolveActiveSponsorId(v?.sponsorId));

@@ -15,6 +15,71 @@
  * Every storage access is wrapped: a browser that refuses it just loses the cache.
  */
 
+import { Vio } from "../../vio-sdk";
+
+// ---------------------------------------------------------------------------
+// The config as a simple request
+// ---------------------------------------------------------------------------
+
+/**
+ * The SDK asks for the config with an `X-API-Key` header, which makes the
+ * browser send a CORS preflight first (one more round trip before anything
+ * can paint). The API also takes the key in the URL (campaigns#39,
+ * handoff 2026-11-18-cdn-edge-cache-sdk §5): `GET /v2/mobile/config?apiKey=…
+ * &platform=…`, nothing else in it, with only `Accept` — a simple request, no
+ * preflight, and cacheable by the CDN.
+ *
+ * The SDK is not changed: this wraps, at runtime and only once a Kondomeriet
+ * block renders, the `bootstrap` of the REST client the page's Vio facade
+ * hands out (`Vio.api`). Through the facade, not our copy's `VioApi` class:
+ * the facade is one per page (`globalThis.__VIO_FACADE__`) and the file Vev
+ * serves holds the package twice, so the facade's client can come from the
+ * other copy. Pages without Kondomeriet blocks (the Vio blocks alone, Replit)
+ * keep the SDK's request; on a page with both, the page's one config request
+ * is this one, for every block — same answer. Anything but a 2xx JSON answer
+ * falls back to the SDK's own request.
+ */
+export function simpleConfigRequest(): void {
+  try {
+    const facade = Vio as any;
+    if (!facade || facade.__kndSimpleConfig) return;
+    let desc: PropertyDescriptor | undefined;
+    for (let o = Object.getPrototypeOf(facade); o && !desc; o = Object.getPrototypeOf(o)) desc = Object.getOwnPropertyDescriptor(o, "api");
+    const sdkGetter = desc?.get;
+    if (typeof sdkGetter !== "function") return;
+    facade.__kndSimpleConfig = true;
+    Object.defineProperty(facade, "api", {
+      configurable: true,
+      get() {
+        const api = sdkGetter.call(this);
+        if (api && !api.__kndSimpleConfig && typeof api.bootstrap === "function") wrapBootstrap(api);
+        return api;
+      },
+    });
+  } catch {
+    /* the SDK's request stays */
+  }
+}
+
+function wrapBootstrap(api: any): void {
+  const sdkBootstrap = api.bootstrap;
+  api.__kndSimpleConfig = true;
+  api.bootstrap = async function (platform?: string) {
+    if (typeof api.apiBase === "string" && typeof api.apiKey === "string" && api.apiKey) {
+      try {
+        const url =
+          `${api.apiBase}/v2/mobile/config?apiKey=${encodeURIComponent(api.apiKey)}` +
+          (platform ? `&platform=${encodeURIComponent(platform)}` : "");
+        const res = await fetch(url, { headers: { Accept: "application/json" } });
+        if (res.ok) return await res.json();
+      } catch {
+        /* the SDK's request below */
+      }
+    }
+    return sdkBootstrap.call(api, platform);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Connections
 // ---------------------------------------------------------------------------

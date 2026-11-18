@@ -9,6 +9,7 @@ import {
   brandIdentity,
   brandIdentityOrCached,
   fetchKondomerietProducts,
+  kondomerietShippingRates,
   ref1ForOption,
   type BrandIdentity,
   compareAtAmount,
@@ -296,12 +297,15 @@ export function KondomerietDetail({
     (async () => {
       if (sponsorId == null) return;
       const campaignId = attribution.campaignId;
-      const commerce = campaignId != null ? (Vio as any).commerceFor(sponsorId, { campaignId }) : (Vio as any).commerceFor(sponsorId);
-      const product = commerce?.channel?.product;
       const currency = String(p?.price?.currency_code ?? "NOK").toUpperCase();
-      const raw: any[] =
-        typeof product?.getShippingRates === "function" ? (await product.getShippingRates(option.productId, { currency })) ?? [] : [];
-      const usable = raw
+      // A simple GET first (no preflight); the SDK's own read when that cannot answer.
+      let raw: any[] | null = await kondomerietShippingRates(option.productId, sponsorId, campaignId, currency);
+      if (raw == null) {
+        const commerce = campaignId != null ? (Vio as any).commerceFor(sponsorId, { campaignId }) : (Vio as any).commerceFor(sponsorId);
+        const product = commerce?.channel?.product;
+        raw = typeof product?.getShippingRates === "function" ? (await product.getShippingRates(option.productId, { currency })) ?? [] : [];
+      }
+      const usable = (raw ?? [])
         .filter((r) => !r?.currency || String(r.currency).toUpperCase() === currency)
         .map((r) => ({
           name: String(r.name ?? ""),
