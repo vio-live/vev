@@ -22,6 +22,9 @@ import {
   type KondomerietGroup,
 } from "./kondomeriet-helpers";
 
+const PICKER_ERROR_HINT =
+  "Check the page's Kondomeriet Config: Environment must be Production and the API key the publisher's (a staging Config with a production key cannot connect). Only one Config per page.";
+
 /** In the picker, next to each price: the Black Week sheet's discount for the product (by its shop slug). */
 function pickerFacts(p: CatalogProduct): PickerFacts {
   return { discount: blackWeekDiscount(slugFromProductUrl((p as any).origin_url)) };
@@ -494,6 +497,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
           // Fresh on every opening, never the page's cached list (see loadFreshCatalog).
           load={loadForPicker}
           describe={pickerFacts}
+          errorHint={PICKER_ERROR_HINT}
           selectedIds={selected}
           onToggle={toggleDraft}
           onClose={closeCardPicker}
@@ -505,6 +509,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
           title="Select products"
           load={loadForPicker}
           describe={pickerFacts}
+          errorHint={PICKER_ERROR_HINT}
           selectedIds={selected}
           onToggle={toggleDraft}
           onClose={closeAddProducts}
