@@ -3,6 +3,7 @@ import { registerVevComponent } from "@vev/react";
 import { KondomerietList, type KondomerietListProps } from "./kondomeriet-list";
 import { GROUPS_PROP, KONDOMERIET_CARD_IMAGES_PROP, KONDOMERIET_EDITABLE_CSS, KONDOMERIET_LIST_CARD_PROPS } from "./kondomeriet-props";
 import { SLOT_PROPS } from "./slot-props";
+import { copySettingsProp } from "./kondomeriet-migrate";
 
 /**
  * Kondomeriet Product Grid — a responsive grid of Kondomeriet cards, one per
@@ -18,6 +19,7 @@ registerVevComponent(KondomerietProductGrid, {
   size: { width: "100%" as any, height: "auto" },
   editableCSS: KONDOMERIET_EDITABLE_CSS,
   props: [
+    copySettingsProp("grid"),
     GROUPS_PROP,
     KONDOMERIET_CARD_IMAGES_PROP,
     { name: "kicker", title: "Kicker", type: "string", initialValue: "" },

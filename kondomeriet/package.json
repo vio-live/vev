@@ -1,0 +1,12 @@
+{
+  "name": "vio-vev-kondomeriet",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "vev build",
+    "analyze": "vev build --analyze",
+    "check": "npx -p typescript@5 tsc --noEmit -p .",
+    "sdk-lite": "node scripts/build-sdk-lite.mjs ../../vio-web-sdk"
+  }
+}

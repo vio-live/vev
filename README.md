@@ -322,6 +322,32 @@ The vendored SDK is **0.40.1**, built from `vio-web-sdk` `main` `6c8fa29` (the 0
 commit; on npm once it is published from there). The blocks still check for the API they call — a block must never
 throw into the editor — so with an older bundle they behave as before.
 
+## Kondomeriet package (`kondomeriet/`, no Vio SDK)
+
+The Kondomeriet blocks also live in a Vev package of their own, `kondomeriet/` (its own `vev.json`), built
+without the Vio web SDK bundle: ~242 KB uncompressed / ~75 KB gzip against the shared package's ~808 KB /
+~218 KB (the published file of a page carries the package twice today, so double those). Same blocks
+(Kondomeriet Config, Product Card, Grid, Carousel), same props, same behaviour.
+
+- **What replaces the SDK.** `kondomeriet/vio-sdk/index.ts` is a facade with the calls the blocks make on
+  `Vio` (init, bootstrap, sponsors, campaigns, attribution, slots, analytics), built on the SDK's own code for
+  everything that must behave the same: `vio-sdk/sdk-lite.js` is compiled from vio-web-sdk's source
+  (analytics manager — same events to the collector, same `vio.session.v1` / `vio.anon.v1`; configuration;
+  the campaign, slot and sponsor rules; slot declarations with the same 24 h memory; content; tokens; the Vipps
+  button helper; price and image formatters) and `vio-sdk/detail-css.js` is the SDK product detail's
+  stylesheet. No cart, checkout, payments or `<vio-*>` elements: these blocks never used them. Rebuild both
+  from an SDK checkout with `node kondomeriet/scripts/build-sdk-lite.mjs <path to vio-web-sdk>`.
+- **The rest is the same code** as `src/components/` — the Kondomeriet files and the shared ones they use
+  (`vio-helpers`, `vio-config` without its block registration, `analytics`, `card-view`, `card-props`,
+  `product-picker`, `editor-fit`, `slot-props`), copied. New Kondomeriet work goes into `kondomeriet/`; the
+  Kondomeriet blocks of the shared package stay as they are until no page uses them.
+- **Moving a page.** The old blocks have «Copy settings for the Kondomeriet package» in their panel; the new
+  ones «Paste settings from the old block» (`kondomeriet-migrate.ts`): the pasted values fill every prop still
+  at its default, and the products editor shows the pasted cards until they are edited. Re-place the Config
+  and each block (the block ids carry the package key), paste, publish.
+- **Build / check:** `cd kondomeriet && vev build --analyze` and `npx -p typescript@5 tsc --noEmit -p .`.
+  Its key is created once with `vev init` in `kondomeriet/` (see the PR). Not deployed until Angelo says so.
+
 ## Kondomeriet blocks (Vipps Hurtigkasse)
 
 A Kondomeriet-only variant of the blocks, for the Black Week article Kondomeriet writes for VG. Products come

@@ -11,6 +11,7 @@ import {
   pickKondomerietConfig,
 } from "./kondomeriet-props";
 import { SLOT_PROPS } from "./slot-props";
+import { copySettingsProp } from "./kondomeriet-migrate";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, useVioSlotId, vioAttribution } from "./vio-helpers";
@@ -96,5 +97,5 @@ registerVevComponent(KondomerietProductCard, {
   name: "Kondomeriet Product Card",
   size: { height: "auto", width: 300 },
   editableCSS: KONDOMERIET_EDITABLE_CSS,
-  props: [GROUP_PROP, ...KONDOMERIET_CARD_IMAGE_PROPS, ...SLOT_PROPS, ...KONDOMERIET_CARD_PROPS],
+  props: [copySettingsProp("card"), GROUP_PROP, ...KONDOMERIET_CARD_IMAGE_PROPS, ...SLOT_PROPS, ...KONDOMERIET_CARD_PROPS],
 });
