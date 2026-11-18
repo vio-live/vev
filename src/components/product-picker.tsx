@@ -30,7 +30,7 @@ function priceLabel(p: CatalogProduct): string {
   return `${amount} ${p.price?.currency_code ?? ""}`.trim();
 }
 
-function CatalogModal({
+export function CatalogModal({
   multi,
   selectedIds,
   onToggle,

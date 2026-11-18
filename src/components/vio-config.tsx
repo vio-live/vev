@@ -145,6 +145,13 @@ type Props = {
   analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
   analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
   sendToVio?: boolean; // forward events to the Vio collector (Vio Analytics pipeline)
+  /**
+   * Not a Vev prop (never in the panel): what a variant of this block mounts
+   * on the published page INSTEAD of the Vio overlays — no cart, no checkout,
+   * no product detail, no cart button. The Kondomeriet Config passes its own
+   * detail drawer here. Undefined (every Vio Config) = the Vio overlays.
+   */
+  overlaysOverride?: React.ReactNode;
 };
 
 /**
@@ -237,6 +244,7 @@ export default function VioConfig({
   analytics = true,
   analyticsDebug = false,
   sendToVio = true,
+  overlaysOverride,
 }: Props) {
   const { disabled } = useEditorState(); // true in the editor, false on the published page
   // The Vev page this Config is on — its key and title (the same source the
@@ -636,7 +644,12 @@ export default function VioConfig({
   const cartVisibility = resolveCartVisibility(cartButton);
   const showCartButton =
     cartVisibility === "always" || (cartVisibility === "items" && count > 0);
-  const overlays = (
+  const overlays = overlaysOverride !== undefined ? (
+    <>
+      {overlaysOverride}
+      {analytics && analyticsDebug ? <AnalyticsInspector /> : null}
+    </>
+  ) : (
     <>
       {showCartButton ? (
       <button
