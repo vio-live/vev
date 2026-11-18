@@ -334,7 +334,6 @@ touches `Vio.cart` or `Vio.checkout`.
 | **Kondomeriet Config (SDK)** | Once per page, instead of Vio Config. Same connection (API key, sponsor, campaign, environment), page identity, slots, theme and analytics, but no Vio cart, checkout, SDK detail or cart button — it mounts only the Kondomeriet detail drawer. It *is* `VioConfig` with an internal `overlaysOverride` prop (not in the panel), so the connection flow is not copied. |
 | **Kondomeriet Product Card** | One card for a product **group**. |
 | **Kondomeriet Product Carousel** / **Grid** | One card per group; same layout options as the Vio carousel / grid. |
-| **Kondomeriet Product List** | The same groups as rows: a small square image, brand / name / price beside it, «Kjøp nå med Vipps» or «Se mer» (the same Auto / Always / Never rule) on the right, under the text on a phone. Thin line between rows; kicker, heading and disclaimer above. Each row is the card (`KondomerietCardView`, `variant="row"`): same price, options, buying, product info and analytics. For Vio it is a grid (slot kind and template `product-grid`). |
 
 **Same look as the Vio blocks.** The card is the Vio Product Card: the same `.vio-native-card` markup, styles,
 layouts (standard, image only, info over image, horizontal), accent colour, badge, «Annonse», price and editable CSS
@@ -370,9 +369,9 @@ discount badge (the carousel / grid add, reorder and remove cards). Stored as JS
 - **Price**: the selected option's price incl. taxes, written as the Vio card writes it (`1199 NOK`) and, in the
   drawer, as the SDK detail does (`1 199 Kr`). A real sale from the feed (`compare_at` above the price) shows the
   sale price in the sale colour with the old price struck through beside it, and a `−NN %` badge computed from the
-  two — on the card, the row and in the drawer, with nothing to set.
+  two — on the card and in the drawer, with nothing to set.
 - **Discount badge**: per card, manual text (e.g. `−60 %`) with optional start / end (`datetime-local`, read in
-  the reader's time zone — Norway for VG readers), shown in the Vio badge's place on the card, the row and the
+  the reader's time zone — Norway for VG readers), shown in the Vio badge's place on the card and on the
   drawer's photo while its dates say so — **unless the feed has a real sale**, whose computed % replaces it. The
   sheet's % never becomes an old price: Norwegian pricing rules want the «før-pris» to be a price the shop really
   charged, and the Hurtigkasse charges the shop's price.

@@ -40,9 +40,6 @@ const LIST_CSS = `
 .knd-list, .knd-list-grid, .knd-list-track { box-sizing: border-box; max-width: 100%; }
 .knd-list-grid > * { min-width: 0; }
 @media (max-width: 480px) { .knd-list-heading { font-size: 22px; } .knd-list-disclaimer { white-space: normal; text-align: right; } }
-/* The Product List: rows with a thin line between them; the rows' container answers their phone layout. */
-.knd-list-rows { display: flex; flex-direction: column; container: knd-rows / inline-size; }
-.knd-list-rows > .knd-row + .knd-row { border-top: 1px solid var(--vio-color-border, #e5e5e5); }
 .knd-list-empty { border: 1px dashed #ccc; border-radius: 10px; padding: 40px; text-align: center; color: #999; font-size: 14px; }
 `;
 
@@ -78,7 +75,7 @@ const Arrow = ({ dir }: { dir: "prev" | "next" }) => (
 /** Cards whose image loads eagerly with high priority; the rest load lazily. */
 const PRIORITY_CARDS = 4;
 
-export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "list"; props: KondomerietListProps }) {
+export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; props: KondomerietListProps }) {
   simpleConfigRequest();
   const { kicker, heading, disclaimer = "annonselenker", visible = 4, columns = 3, arrows = true, slot: slotProp, slotName } = props;
   const gap = Number(props.gap ?? (kind === "carousel" ? 16 : 20)) || 0;
@@ -88,13 +85,10 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "
   const groups = parseGroups(props.groups);
   const filled = groups.filter((g) => g.ids.length > 0);
   const images = cardImagesByIndex(props.cardImages);
-  // The list is a one-column grid for Vio: the grid's slot kind and template id (analytics, slots).
-  const vioKind = kind === "carousel" ? "carousel" : "grid";
-  const template = COMPONENT_TEMPLATE_ID[vioKind];
-  const listName =
-    heading || kicker || (kind === "carousel" ? "Kondomeriet Carousel" : kind === "list" ? "Kondomeriet List" : "Kondomeriet Grid");
+  const template = kind === "carousel" ? COMPONENT_TEMPLATE_ID.carousel : COMPONENT_TEMPLATE_ID.grid;
+  const listName = heading || kicker || (kind === "carousel" ? "Kondomeriet Carousel" : "Kondomeriet Grid");
 
-  const slot = useVioSlot({ slot: slotProp, slotName, kind: vioKind, title: heading || kicker, hostRef: props.hostRef });
+  const slot = useVioSlot({ slot: slotProp, slotName, kind, title: heading || kicker, hostRef: props.hostRef });
   const sponsorId = useActiveSponsorId(undefined, slot);
   const campaignId = sponsorId != null ? vioAttribution(slot, sponsorId).campaignId ?? null : null;
   const { products, resolved, ids, live } = useKondomerietGroups({
@@ -210,7 +204,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "
   // While loading: one skeleton per group, in the layout the cards will take.
   const cells: React.ReactNode[] = loading
     ? filled.map((g, i) => (
-        <KondomerietCardView key={`skel-${i}`} group={null} loading config={cardConfig} sponsorId={sponsorId} variant={kind === "list" ? "row" : "card"} />
+        <KondomerietCardView key={`skel-${i}`} group={null} loading config={cardConfig} sponsorId={sponsorId} />
       ))
     : resolved.map((g, i) => {
         // The card's number in the panel (resolveGroup keys it `<index>:<ids>`).
@@ -226,7 +220,6 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "
           componentTemplateId={template}
           // The first cards (two rows on a phone, the first row on a desktop) load their image first.
           priority={i < PRIORITY_CARDS}
-          variant={kind === "list" ? "row" : "card"}
         />
         );
       });
@@ -237,13 +230,13 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "
     width > 0 ? Math.max(1, Math.min(max, Math.floor((width + effGap) / (min + effGap)))) : max;
 
   const head =
-    kicker || heading || (kind !== "grid" && disclaimer) ? (
+    kicker || heading || (kind === "carousel" && disclaimer) ? (
       <div className="knd-list-head">
         <div className="knd-list-titles">
           {kicker ? <div className="knd-list-kicker">{kicker}</div> : null}
           {heading ? <h3 className="knd-list-heading">{heading}</h3> : null}
         </div>
-        {kind !== "grid" && disclaimer ? <div className="knd-list-disclaimer">{disclaimer}</div> : null}
+        {kind === "carousel" && disclaimer ? <div className="knd-list-disclaimer">{disclaimer}</div> : null}
       </div>
     ) : null;
 
@@ -252,15 +245,6 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid" | "
       <div ref={setRoot} className="knd-list">
         {head}
         <div className="knd-list-empty">None of these products are available on this channel.</div>
-      </div>
-    );
-  }
-
-  if (kind === "list") {
-    return (
-      <div ref={setRoot} className="knd-list">
-        {head}
-        <div className="knd-list-rows">{cells}</div>
       </div>
     );
   }

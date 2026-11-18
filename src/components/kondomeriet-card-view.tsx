@@ -126,13 +126,6 @@ type CardViewProps = {
   imageOverride?: string;
   /** One of the first cards on screen: its image loads eagerly, with high priority. */
   priority?: boolean;
-  /**
-   * `card` (default) | `row`: the Kondomeriet Product List's row — a small
-   * square image, brand / name / price beside it, the buy button on the right
-   * (under the text on a phone). Same group, price, options, buy and
-   * analytics as the card: only the markup differs.
-   */
-  variant?: "card" | "row";
 };
 
 /** The card sells itself (Vipps or the disabled bar) rather than sending to the product info: the Auto/Always/Never rule. */
@@ -153,9 +146,7 @@ export function KondomerietCardView({
   rootRef,
   imageOverride,
   priority = false,
-  variant = "card",
 }: CardViewProps) {
-  const row = variant === "row";
   const { disabled: editor } = useEditorState();
   const {
     layout = "standard",
@@ -215,11 +206,9 @@ export function KondomerietCardView({
     else if (rootRef) (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
   };
   // Vipps' own button wraps below 220px; its compact form keeps one line (as the Vio card).
-  // A row measures its button's column, not the whole row.
-  const ctaRef = useRef<HTMLDivElement | null>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
-    const el = row ? ctaRef.current : localRef.current;
+    const el = localRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setNarrow(el.getBoundingClientRect().width < 220));
     ro.observe(el);
@@ -236,24 +225,6 @@ export function KondomerietCardView({
   const isImageOnly = layout === "image-only";
   const isOverlay = layout === "overlay";
   const showMeta = !isImageOnly && !isOverlay;
-
-  if (loading && row) {
-    return (
-      <div className="vio-native-card knd-row" aria-busy="true">
-        <div className="vnc-image knd-row-image">
-          <div className="vnc-skel" style={{ position: "absolute", inset: 0 }} />
-        </div>
-        <div className="knd-row-main">
-          <div className="vnc-skel" style={{ height: 10, width: "35%", marginBottom: 8 }} />
-          <div className="vnc-skel" style={{ height: 15, width: "75%", marginBottom: 8 }} />
-          <div className="vnc-skel" style={{ height: 15, width: "25%" }} />
-        </div>
-        <div className="knd-row-cta">
-          <div className="vnc-skel" style={{ height: 46 }} />
-        </div>
-      </div>
-    );
-  }
 
   if (loading) {
     return (
@@ -526,48 +497,6 @@ export function KondomerietCardView({
       }}
     />
   ) : null;
-
-  // The Kondomeriet Product List's row: the card's pieces in a row.
-  if (row) {
-    return (
-      <div ref={setRoot} className={`vio-native-card knd-row${buyHere ? "" : " knd-row-more"}`} style={accentStyle}>
-        <div className="vnc-image knd-row-image" role="button" tabIndex={0} aria-label={`${brand} ${name} ${price} – ${infoLabel}`} onClick={onImage} onKeyDown={imageKeys}>
-          {imgEl}
-          {badge ? <span className="vnc-badge">{badge}</span> : null}
-        </div>
-        <div className="knd-row-main">
-          {showBrand && brand ? <div className="vnc-brand">{brand}</div> : null}
-          {showName && name ? (
-            <div className="vnc-name" role="button" tabIndex={0} onClick={() => openInfo()} onKeyDown={(e) => (e.key === "Enter" ? openInfo() : null)}>
-              {name}
-            </div>
-          ) : null}
-          {buyHere ? selector : null}
-          {priceEl}
-          {offer ? <div className="knd-offer-end">{offer}</div> : null}
-          {annonse ? <div className="knd-row-annonse">{annonseText}</div> : null}
-          {showSeller ? (
-            // The logo's place is kept from the first paint: rows stack, so a
-            // logo arriving with the bootstrap must not push the rows below.
-            <div className="knd-seller">
-              <span className="knd-row-logo">
-                {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
-              </span>
-              <span>
-                Du handler direkte hos <strong>{sellerName}</strong>
-              </span>
-            </div>
-          ) : null}
-          {editorWarnings}
-        </div>
-        <div className="knd-row-cta" ref={ctaRef}>
-          {vippsEl}
-          {buyHere && canBuy && note ? <div className="knd-vipps-note">{note}</div> : null}
-        </div>
-        {!editor ? <KondomerietDetailHost /> : null}
-      </div>
-    );
-  }
 
   return (
     <div ref={setRoot} className={rootClass} style={accentStyle}>
