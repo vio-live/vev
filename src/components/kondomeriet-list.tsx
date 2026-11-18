@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { KondomerietCardView } from "./kondomeriet-card-view";
-import { pickKondomerietConfig } from "./kondomeriet-props";
+import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { parseGroups, type GroupsValue } from "./kondomeriet-helpers";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
@@ -25,7 +25,7 @@ const LIST_CSS = `
 .knd-list-viewport { position: relative; }
 .knd-list-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; -ms-overflow-style: none; scrollbar-width: none; padding-bottom: 2px; }
 .knd-list-track::-webkit-scrollbar { display: none; }
-.knd-list-item { flex: 0 0 auto; scroll-snap-align: start; min-width: 150px; }
+.knd-list-item { flex: 0 0 auto; scroll-snap-align: start; min-width: 0; }
 .knd-list-arrow {
   position: absolute; top: 35%; transform: translateY(-50%); z-index: 4; width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
   background: #fff; color: #0a0a0a; box-shadow: 0 2px 12px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center;
@@ -36,7 +36,9 @@ const LIST_CSS = `
 .knd-list-arrow.prev { left: -8px; }
 .knd-list-arrow.next { right: -8px; }
 .knd-list-grid { display: grid; }
-@media (max-width: 640px) { .knd-list-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+.knd-list, .knd-list-grid, .knd-list-track { box-sizing: border-box; max-width: 100%; }
+.knd-list-grid > * { min-width: 0; }
+@media (max-width: 480px) { .knd-list-heading { font-size: 22px; } .knd-list-disclaimer { white-space: normal; text-align: right; } }
 .knd-list-empty { border: 1px dashed #ccc; border-radius: 10px; padding: 40px; text-align: center; color: #999; font-size: 14px; }
 `;
 
@@ -73,7 +75,11 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   const { kicker, heading, disclaimer = "annonselenker", visible = 4, columns = 3, arrows = true, slot: slotProp, slotName } = props;
   const gap = Number(props.gap ?? (kind === "carousel" ? 16 : 20)) || 0;
   const groupsKey = props.groups?.data ?? "";
-  const groups = parseGroups(props.groups).filter((g) => g.ids.length > 0);
+  // Every group, empty ones too, so a card's number is its number in the panel
+  // (`cardImages`); the empty ones simply resolve to no card.
+  const groups = parseGroups(props.groups);
+  const filled = groups.filter((g) => g.ids.length > 0);
+  const images = cardImagesByIndex(props.cardImages);
   const template = kind === "carousel" ? COMPONENT_TEMPLATE_ID.carousel : COMPONENT_TEMPLATE_ID.grid;
   const listName = heading || kicker || (kind === "carousel" ? "Kondomeriet Carousel" : "Kondomeriet Grid");
 
@@ -95,6 +101,27 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   }, []);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The block's own width, not the window's: Vev sizes a frame per breakpoint,
+  // and a block in a column is narrower than the phone. Columns and cards per
+  // view follow it, so the cards never get narrower than a readable minimum.
+  const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
+  const setRoot = (el: HTMLDivElement | null) => {
+    rootRef.current = el;
+    setRootEl(el);
+  };
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!rootEl) return;
+    const measure = () => setWidth(Math.round(rootEl.getBoundingClientRect().width));
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(rootEl);
+    return () => ro.disconnect();
+  }, [rootEl]);
   useEffect(() => {
     if (!products || products.length === 0) return;
     return observeVioImpression(
@@ -158,7 +185,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
 
   if (ids.length === 0) {
     return (
-      <div className="knd-list">
+      <div ref={setRoot} className="knd-list">
         <div className="knd-list-empty">Add cards (product groups) in the panel to build the {kind}.</div>
       </div>
     );
@@ -168,19 +195,29 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   const loading = products == null;
   // While loading: one skeleton per group, in the layout the cards will take.
   const cells: React.ReactNode[] = loading
-    ? groups.map((g, i) => (
+    ? filled.map((g, i) => (
         <KondomerietCardView key={`skel-${i}`} group={null} loading config={cardConfig} sponsorId={sponsorId} />
       ))
-    : resolved.map((g) => (
+    : resolved.map((g) => {
+        // The card's number in the panel (resolveGroup keys it `<index>:<ids>`).
+        const img = images.get(parseInt(g.key, 10));
+        return (
         <KondomerietCardView
           key={g.key}
           group={g}
-          config={cardConfig}
+          imageOverride={img?.url}
+          config={img?.only ? { ...cardConfig, infoImageOnly: true } : cardConfig}
           sponsorId={sponsorId}
           slot={slot}
           componentTemplateId={template}
         />
-      ));
+        );
+      });
+
+  // Narrow blocks tighten the gap, then drop columns / cards per view.
+  const effGap = width > 0 && width < 480 ? Math.min(gap, 12) : gap;
+  const fit = (min: number, max: number) =>
+    width > 0 ? Math.max(1, Math.min(max, Math.floor((width + effGap) / (min + effGap)))) : max;
 
   const head =
     kicker || heading || (kind === "carousel" && disclaimer) ? (
@@ -195,7 +232,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
 
   if (!loading && resolved.length === 0) {
     return (
-      <div className="knd-list">
+      <div ref={setRoot} className="knd-list">
         {head}
         <div className="knd-list-empty">None of these products are available on this channel.</div>
       </div>
@@ -203,21 +240,24 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   }
 
   if (kind === "grid") {
-    const cols = Math.max(1, Number(columns) || 3);
+    // Never narrower than 130px a card: a 320px phone keeps two columns, a column of 250px one.
+    const cols = fit(130, Math.max(1, Number(columns) || 3));
     return (
-      <div ref={rootRef} className="knd-list">
+      <div ref={setRoot} className="knd-list">
         {head}
-        <div className="knd-list-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap }}>
+        <div className="knd-list-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: effGap }}>
           {cells}
         </div>
       </div>
     );
   }
 
-  const perView = Math.max(1, Number(visible) || 4);
-  const itemWidth = `calc((100% - ${gap * (perView - 1)}px) / ${perView})`;
+  // Cards of at least 150px; on a narrow block the next card peeks in, so it reads as swipeable.
+  const perView = fit(150, Math.max(1, Number(visible) || 4));
+  const peek = width > 0 && width < 640 && cells.length > perView ? 0.18 : 0;
+  const itemWidth = `calc((100% - ${effGap * (perView - (peek ? 0 : 1))}px) / ${perView + peek})`;
   return (
-    <div ref={rootRef} className="knd-list">
+    <div ref={setRoot} className="knd-list">
       {head}
       <div className="knd-list-viewport">
         {arrows && overflows ? (
@@ -225,7 +265,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
             <Arrow dir="prev" />
           </button>
         ) : null}
-        <div className="knd-list-track" ref={trackRef} style={{ gap }}>
+        <div className="knd-list-track" ref={trackRef} style={{ gap: effGap }}>
           {cells.map((cell, i) => (
             <div key={i} className="knd-list-item" style={{ width: itemWidth }}>
               {cell}

@@ -1,7 +1,14 @@
 import React, { useEffect, useRef } from "react";
 import { registerVevComponent } from "@vev/react";
 import { KondomerietCardView } from "./kondomeriet-card-view";
-import { GROUP_PROP, KONDOMERIET_CARD_PROPS, KONDOMERIET_EDITABLE_CSS, pickKondomerietConfig } from "./kondomeriet-props";
+import {
+  GROUP_PROP,
+  KONDOMERIET_CARD_IMAGE_PROPS,
+  KONDOMERIET_CARD_PROPS,
+  KONDOMERIET_EDITABLE_CSS,
+  imageUrlOf,
+  pickKondomerietConfig,
+} from "./kondomeriet-props";
 import { SLOT_PROPS } from "./slot-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { parseGroups, type GroupsValue } from "./kondomeriet-helpers";
@@ -73,6 +80,7 @@ export default function KondomerietProductCard(props: Props) {
       componentTemplateId={COMPONENT_TEMPLATE_ID.card}
       standalone
       rootRef={rootRef}
+      imageOverride={imageUrlOf(props.image)}
     />
   );
 }
@@ -81,5 +89,5 @@ registerVevComponent(KondomerietProductCard, {
   name: "Kondomeriet Product Card",
   size: { height: "auto", width: 300 },
   editableCSS: KONDOMERIET_EDITABLE_CSS,
-  props: [GROUP_PROP, ...SLOT_PROPS, ...KONDOMERIET_CARD_PROPS],
+  props: [GROUP_PROP, ...KONDOMERIET_CARD_IMAGE_PROPS, ...SLOT_PROPS, ...KONDOMERIET_CARD_PROPS],
 });

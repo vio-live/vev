@@ -7,11 +7,13 @@ import { DEFAULT_DIRECT_BADGE, DEFAULT_PERKS, DEFAULT_STOCK_TEXT } from "./kondo
  * Props of the Kondomeriet card / carousel / grid. The look-and-feel fields
  * are the Vio card's own — the same definitions, taken from CARD_CONFIG_PROPS
  * (layout, accent, brand / name / price / description, «Annonse») — so they
- * behave the same. Left out is what needs Vio's cart: the add button and its
- * action, the image's «add» action, the discount badge mode (the Kondomeriet
- * badge is the group's own text, else the feed sale's %), and the Vio Vipps
- * Express button (here the Vipps button is always the Hurtigkasse). On top:
- * the selector, the product-info button and where the Hurtigkasse opens.
+ * behave the same — and the rest of the Vio card's choices with their
+ * Kondomeriet meaning: the button (bar / pill / icon) opens the product info
+ * instead of adding to a cart, «Image click» opens it or buys with Vipps, the
+ * discount badge is Off / Auto (the group's badge in its dates, else the sale
+ * %) / Manual, and the Vipps button is the Hurtigkasse. On top: the selector,
+ * where the Hurtigkasse opens, the product-info texts, a picture per card and
+ * the editor's own subtitle, label and footer.
  */
 
 /** The Vio card fields reused as they are. */
@@ -66,6 +68,7 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
       items: [
         { value: "bar", label: "Full-width bar" },
         { value: "text", label: "Text (pill)" },
+        { value: "icon", label: "Icon (i)" },
       ],
     },
     hidden: (ctx: any) => ctx?.value?.infoButton === false,
@@ -115,8 +118,115 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     initialValue: DEFAULT_STOCK_TEXT,
     description: "Ticked first in the list when the option is in stock («Utsolgt» when it is not).",
   },
+  // The Vio card's remaining choices, with the Kondomeriet meaning.
+  {
+    ...CARD_CONFIG_PROPS.find((p) => p.name === "discountMode"),
+    initialValue: "auto",
+    options: {
+      display: "dropdown",
+      items: [
+        { value: "off", label: "Off" },
+        { value: "auto", label: "Auto (card's badge in its dates, else sale %)" },
+        { value: "manual", label: "Manual (text)" },
+      ],
+    },
+  },
+  {
+    ...CARD_CONFIG_PROPS.find((p) => p.name === "discountText"),
+    hidden: (ctx: any) => (ctx?.value?.discountMode ?? "auto") !== "manual",
+  },
+  {
+    name: "vippsButton",
+    title: "Vipps Hurtigkasse button",
+    type: "select",
+    initialValue: "bar",
+    options: {
+      display: "dropdown",
+      items: [
+        { value: "bar", label: "Full-width bar" },
+        { value: "hidden", label: "Off (product info only)" },
+      ],
+    },
+  },
+  {
+    name: "imageClickAction",
+    title: "Image click",
+    type: "select",
+    initialValue: "info",
+    options: {
+      display: "dropdown",
+      items: [
+        { value: "info", label: "Product info" },
+        { value: "vipps", label: "Kjøp med Vipps" },
+      ],
+    },
+  },
   ...reused.filter((p) => p.name !== "layout"),
+  // The editor's own texts.
+  { name: "subtitle", title: "Subtitle (own text)", type: "string", initialValue: "", description: "A line under the name. Empty: none." },
+  { name: "tagText", title: "Label on the photo", type: "string", initialValue: "", description: "E.g. «Bestselger». Empty: none." },
+  {
+    name: "footerText",
+    title: "Footer (own text)",
+    type: "string",
+    initialValue: "",
+    options: { multiline: true },
+    description: "Small text at the bottom of the card. Empty: none.",
+  },
 ];
+
+/** The single card: its own picture (Vev image), and whether the product info shows only it. */
+export const KONDOMERIET_CARD_IMAGE_PROPS: any[] = [
+  {
+    name: "image",
+    title: "Card image",
+    type: "image",
+    description: "Replaces the product's photo on the card; first in the product info. Empty: the product's.",
+  },
+  {
+    name: "infoImageOnly",
+    title: "Product info: only this image",
+    type: "boolean",
+    initialValue: false,
+    hidden: (ctx: any) => !ctx?.value?.image,
+  },
+];
+
+/**
+ * Carousel / grid: a picture per card (Vev image), by its number in the list
+ * (1 = the first card). A plain array of objects — no custom editor, which
+ * crashes Vev's array fields.
+ */
+export const KONDOMERIET_CARD_IMAGES_PROP: any = {
+  name: "cardImages",
+  title: "Card images",
+  type: "array",
+  of: "object",
+  fields: [
+    { name: "card", title: "Card # (1 = first)", type: "number", initialValue: 1 },
+    { name: "image", title: "Image", type: "image" },
+    { name: "only", title: "Product info: only this image", type: "boolean", initialValue: false },
+  ],
+};
+
+/** A Vev image value as a URL (`{ url, key }`, or a bare url from older values). */
+export function imageUrlOf(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  const url = (value as any)?.url;
+  return typeof url === "string" && url.trim() ? url.trim() : undefined;
+}
+
+/** `cardImages` → per card index (0-based): its URL and the «only» flag. */
+export function cardImagesByIndex(value: unknown): Map<number, { url: string; only: boolean }> {
+  const out = new Map<number, { url: string; only: boolean }>();
+  if (!Array.isArray(value)) return out;
+  for (const item of value) {
+    const n = Number(item?.card);
+    const url = imageUrlOf(item?.image);
+    if (Number.isInteger(n) && n >= 1 && url) out.set(n - 1, { url, only: !!item?.only });
+  }
+  return out;
+}
 
 /** Carousel / grid: one description text for every card would be wrong. */
 export const KONDOMERIET_LIST_CARD_PROPS: any[] = KONDOMERIET_CARD_PROPS.filter((p) => p.name !== "descriptionText");
@@ -128,6 +238,10 @@ export const KONDOMERIET_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .knd-option-label", title: "Option label", properties: ["color", "font-size", "letter-spacing"] },
   { selector: ".vio-native-card .knd-was", title: "Old price", properties: ["color", "font-size"] },
   { selector: ".vio-native-card .knd-direct-badge", title: "Direct badge (card)", properties: ["background", "color", "border-radius", "font-size", "padding"] },
+  { selector: ".vio-native-card .knd-subtitle", title: "Subtitle", properties: ["color", "font-size", "font-weight", "line-height"] },
+  { selector: ".vio-native-card .knd-tag", title: "Label on the photo", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
+  { selector: ".vio-native-card .knd-footer", title: "Footer", properties: ["color", "font-size", "line-height"] },
+  { selector: ".vio-native-card .knd-info-icon", title: "Product info icon", properties: ["background", "color", "box-shadow", "width", "height"] },
 ];
 
 export const GROUP_PROP = {
@@ -146,51 +260,15 @@ export const GROUPS_PROP = {
   fields: [{ name: "data", type: "string" }],
 };
 
+const CONFIG_KEYS = [
+  "layout", "accentColor", "showBrand", "showName", "showPrice", "showRetailer", "showDescription", "descriptionText",
+  "annonse", "annonseText", "optionTitle", "selectorStyle", "vippsLabel", "infoButton", "infoButtonStyle", "infoLabel",
+  "hurtigkasseTarget", "directBadge", "directBadgeOnCard", "perks", "stockText", "infoImageOnly", "discountMode",
+  "discountText", "vippsButton", "imageClickAction", "subtitle", "tagText", "footerText",
+] as const;
+
 export function pickKondomerietConfig(props: Record<string, any>): KondomerietCardConfig {
-  const {
-    layout,
-    accentColor,
-    showBrand,
-    showName,
-    showPrice,
-    showRetailer,
-    showDescription,
-    descriptionText,
-    annonse,
-    annonseText,
-    optionTitle,
-    selectorStyle,
-    vippsLabel,
-    infoButton,
-    infoButtonStyle,
-    infoLabel,
-    hurtigkasseTarget,
-    directBadge,
-    directBadgeOnCard,
-    perks,
-    stockText,
-  } = props;
-  return {
-    layout,
-    accentColor,
-    showBrand,
-    showName,
-    showPrice,
-    showRetailer,
-    showDescription,
-    descriptionText,
-    annonse,
-    annonseText,
-    optionTitle,
-    selectorStyle,
-    vippsLabel,
-    infoButton,
-    infoButtonStyle,
-    infoLabel,
-    hurtigkasseTarget,
-    directBadge,
-    directBadgeOnCard,
-    perks,
-    stockText,
-  };
+  const out: Record<string, any> = {};
+  for (const k of CONFIG_KEYS) out[k] = props[k];
+  return out as KondomerietCardConfig;
 }

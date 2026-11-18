@@ -399,6 +399,25 @@ for the chosen option and «Du betaler med Vipps Hurtigkasse hos Kondomeriet.».
   (*In-stock line*) or «Utsolgt», then *Shop promises* (one per line; default «Anonym levering», «Miljørabatt»,
   «Orgasmegaranti», «Frakt fra kun 59,-»; empty = none).
 
+**Fits any width.** The carousel and grid measure their own block (not the window: Vev sizes a frame per
+breakpoint) and drop columns / cards per view so a card is never narrower than 130 px (grid) or 150 px (carousel);
+under 480 px the gap tightens to 12 px and, under 640 px, the carousel shows the edge of the next card. A 375 px phone
+gets two columns, 320 px one carousel card plus a peek. Inside the card the Vio card's container queries keep the
+Vipps button (compact «Kjøp nå»), the option pills and the bars on one line.
+
+**More of the Vio card's choices, and the editor's own.** Besides layout, accent, brand / name / price / retailer /
+description / «Annonse»: *Discount badge* (Off · Auto — the card's badge in its dates, else the sale % · Manual),
+*Vipps Hurtigkasse button* (bar / off), *Image click* (product info / Kjøp med Vipps), the product-info button as
+bar, pill or icon, and three own texts — *Subtitle* (under the name), *Label on the photo*, *Footer* — all with
+editable CSS. **Card image** (Vev image): replaces the product's photo on the card and goes first in the product
+info (or alone, *Product info: only this image*); the carousel / grid take *Card images*, one per card number.
+
+**The brand's promises.** When the brand has promises in Vio (dashboard → brand profile, `highlights` on the
+bootstrap's sponsor, read with `Vio.sponsorIdentity`), the drawer draws them as the SDK detail does (the
+`.highlights` strip, the SDK's icons) and the editable promises step aside; without them the editable list stays.
+The drawer also shows the brand's logo in the top bar and the SDK's «Frakt & retur» fold — the product's rates
+(`getShippingRates`, with each rate's logo), the delivery time, the return right and the brand's terms links.
+
 It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
 on the same page never opens its detail or cart for these cards. Mounted once per page by the Config or by the
 first card (whichever mounts first).

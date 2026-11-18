@@ -17,7 +17,15 @@ import {
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOpenInfo, trackOptionSelect } from "./kondomeriet-track";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
-import { OptionSelector, cardBadge, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
+import { OptionSelector, badgeFor, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
+
+const InfoIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+    <circle cx="12" cy="12" r="9" />
+    <line x1="12" y1="11" x2="12" y2="16.5" />
+    <circle cx="12" cy="7.8" r="0.6" fill="currentColor" />
+  </svg>
+);
 
 /**
  * The Kondomeriet card: ONE card for a product group — several Vio products
@@ -58,6 +66,19 @@ export type KondomerietCardConfig = {
   perks?: string;
   /** The product info's stock line when in stock. */
   stockText?: string;
+  /** In the product info, the editor's image alone (true) or first and then the product's (false). */
+  infoImageOnly?: boolean;
+  /** The Vio card's «Discount badge»: auto (the group's text in its dates, else the sale %) | manual (discountText) | off. */
+  discountMode?: string;
+  discountText?: string;
+  /** The Vio card's «Vipps Express button», here the Hurtigkasse: bar | hidden. */
+  vippsButton?: string;
+  /** The Vio card's «Image click»: info (product info) | vipps (Kjøp med Vipps). */
+  imageClickAction?: string;
+  /** The editor's own texts: a line under the name, a label on the photo, a footer. */
+  subtitle?: string;
+  tagText?: string;
+  footerText?: string;
 };
 
 type CardViewProps = {
@@ -71,6 +92,8 @@ type CardViewProps = {
   componentTemplateId?: string;
   standalone?: boolean;
   rootRef?: React.Ref<HTMLDivElement>;
+  /** The editor's picture for this card (Vev image prop), in place of the product's. */
+  imageOverride?: string;
 };
 
 export function KondomerietCardView({
@@ -83,6 +106,7 @@ export function KondomerietCardView({
   componentTemplateId = COMPONENT_TEMPLATE_ID.card,
   standalone = false,
   rootRef,
+  imageOverride,
 }: CardViewProps) {
   const { disabled: editor } = useEditorState();
   const {
@@ -104,6 +128,14 @@ export function KondomerietCardView({
     infoLabel = "Se produktinfo",
     hurtigkasseTarget = "_blank",
     directBadgeOnCard = false,
+    infoImageOnly = false,
+    discountMode = "auto",
+    discountText = "",
+    vippsButton = "bar",
+    imageClickAction = "info",
+    subtitle = "",
+    tagText = "",
+    footerText = "",
   } = config;
   const directBadge = directBadgeFrom(config.directBadge);
 
@@ -185,13 +217,13 @@ export function KondomerietCardView({
   const safeIndex = Math.min(Math.max(0, index), group.options.length - 1);
   const option = group.options[safeIndex];
   const p = option.product;
-  const img = primaryImageUrl(p) ?? "";
+  const img = imageOverride || primaryImageUrl(p) || "";
   const soldOut = isSoldOut(p);
   const canBuy = !!option.slug && !soldOut;
   const amount = getProductPriceAmount(p);
   const price = cardPrice(amount, p);
   const was = compareAtAmount(p);
-  const badge = cardBadge(group.group, p, now);
+  const badge = badgeFor(discountMode, discountText, group.group, p, now);
   const brand = group.brand;
   const name = group.title;
   const ownDescription = descriptionText.trim();
@@ -213,7 +245,11 @@ export function KondomerietCardView({
       optionTitle,
       vippsLabel,
       target: hurtigkasseTarget,
-      badge: cardBadge(group.group, p),
+      badge,
+      discountMode,
+      discountText,
+      leadImage: imageOverride || undefined,
+      leadImageOnly: !!imageOverride && infoImageOnly,
       accentColor,
       directBadge,
       perks: perksFrom(config.perks),
@@ -241,10 +277,18 @@ export function KondomerietCardView({
     e.stopPropagation();
     openInfo();
   };
+  // «Image click»: the product info (default), or Kjøp med Vipps when the option can be bought.
+  const onImage = () => {
+    if (imageClickAction === "vipps" && canBuy && vippsButton !== "hidden") {
+      buyWithHurtigkasse(option, { attribution: attribution(), sponsorId, where: "card", label: "image", target: hurtigkasseTarget, editor });
+      return;
+    }
+    openInfo();
+  };
 
   // The Vio card's Vipps button: Vipps' own when it loads, the orange bar otherwise.
   // Sold out / no Hurtigkasse: the bar, disabled.
-  const vippsEl = !canBuy ? (
+  const vippsEl = vippsButton === "hidden" ? null : !canBuy ? (
     <button
       type="button"
       className="vnc-btn-vipps"
@@ -291,6 +335,7 @@ export function KondomerietCardView({
       {inBody && directBadgeOnCard && directBadge ? <span className="knd-direct-badge">{directBadge}</span> : null}
       {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || " "}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
+      {subtitle.trim() ? <div className="knd-subtitle">{subtitle.trim()}</div> : null}
       {inBody && description ? <p className="vnc-description">{description}</p> : null}
       {inBody ? selector : null}
       {priceEl}
@@ -307,17 +352,23 @@ export function KondomerietCardView({
         role="button"
         tabIndex={0}
         aria-label={`${brand} ${name} ${price} – ${infoLabel}`}
-        onClick={openInfo}
+        onClick={onImage}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            openInfo();
+            onImage();
           }
         }}
       >
         {img ? <img src={img} alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()} loading="lazy" /> : null}
         {badge ? <span className="vnc-badge">{badge}</span> : null}
         {annonse ? <span className="vnc-annonse">{annonseText}</span> : null}
+        {tagText.trim() ? <span className="knd-tag">{tagText.trim()}</span> : null}
+        {infoButton && infoButtonStyle === "icon" ? (
+          <button type="button" className="vnc-add knd-info-icon" onClick={onInfoButton} aria-label={infoLabel} title={infoLabel}>
+            <InfoIcon />
+          </button>
+        ) : null}
         {infoButton && infoButtonStyle === "text" ? (
           <button type="button" className="vnc-btn-text vnc-btn-pill" onClick={onInfoButton}>
             {infoLabel}
@@ -340,11 +391,12 @@ export function KondomerietCardView({
             Editor: «{option.label}» has no kondomeriet.no URL — set its Hurtigkasse slug in the group's Details.
           </div>
         ) : null}
-        {infoButton && infoButtonStyle !== "text" ? (
+        {infoButton && infoButtonStyle === "bar" ? (
           <button type="button" className="vnc-btn-text vnc-btn-bar" onClick={onInfoButton}>
             {infoLabel}
           </button>
         ) : null}
+        {footerText.trim() ? <div className="knd-footer">{footerText.trim()}</div> : null}
       </div>
       {/* The drawer, mounted once per page by whichever block gets there first. */}
       {!editor ? <KondomerietDetailHost /> : null}
