@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useEditorState } from "@vev/react";
-import { ensureVippsButton, primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
+import { primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
 import { COMPONENT_TEMPLATE_ID, getProductPriceAmount, vioAttribution, type VioAttribution } from "./vio-helpers";
 import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit";
 import {
@@ -22,7 +22,7 @@ import {
   type HurtigkasseTarget,
   type ResolvedGroup,
 } from "./kondomeriet-helpers";
-import { directImage, ensurePreconnect, inAppBrowser, preconnectCirclewise } from "./kondomeriet-perf";
+import { directImage, ensurePreconnect, inAppBrowser, preconnectCirclewise, useVippsButton } from "./kondomeriet-perf";
 
 // The hosts a card needs, as soon as the package loads.
 ensurePreconnect();
@@ -128,6 +128,12 @@ type CardViewProps = {
   priority?: boolean;
 };
 
+/** The card sells itself (Vipps or the disabled bar) rather than sending to the product info: the Auto/Always/Never rule. */
+function buysOnCard(group: ResolvedGroup, blockValue: unknown, legacyVippsButton: unknown): boolean {
+  const mode = resolveBuyOnCard(group.group.buyOnCard, blockValue, legacyVippsButton);
+  return mode === "always" || (mode === "auto" && group.options.length <= 1);
+}
+
 export function KondomerietCardView({
   group,
   loading,
@@ -208,16 +214,10 @@ export function KondomerietCardView({
     ro.observe(el);
     return () => ro.disconnect();
   }, [groupKey, loading]);
-  const [vippsOfficial, setVippsOfficial] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    ensureVippsButton().then((ok: boolean) => {
-      if (!cancelled) setVippsOfficial(ok);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Vipps' own button only when this card has one to show (see useVippsButton).
+  const wantsVipps =
+    !!group && buysOnCard(group, config.buyOnCard, vippsButton) && group.options.some((o) => !!o.slug && !isSoldOut(o.product));
+  const vippsOfficial = useVippsButton(localRef, wantsVipps && !loading);
   const cutByFrame = useCutByFrame(localRef, standalone, group);
 
   const rootClass = `vio-native-card knd-card l-${layout}${standalone ? " vnc-standalone" : ""}`;
@@ -266,8 +266,7 @@ export function KondomerietCardView({
   const canBuy = !!option.slug && !soldOut;
   // Buy here, or send to the product info (Angelo's conversion default).
   const multi = group.options.length > 1;
-  const mode = resolveBuyOnCard(group.group.buyOnCard, config.buyOnCard, vippsButton);
-  const buyHere = mode === "always" || (mode === "auto" && !multi);
+  const buyHere = buysOnCard(group, config.buyOnCard, vippsButton);
   // A «Se mer» card with options: «Fra <lowest>» when the options cost
   // differently (the Vio card's «Fra» for products with variants), else the price.
   const priced = group.options.filter((o) => getProductPriceAmount(o.product) != null);
