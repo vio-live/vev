@@ -8,11 +8,15 @@ import {
   isValidSlug,
   loadFreshCatalog,
   parseCirclewiseLink,
+  addProductsAsCards,
   allGroupIds,
+  applyCardPick,
+  familiesOf,
   parseGroups,
   serializeGroups,
   snapshotOf,
   slugFromProductUrl,
+  type FamilyItem,
   type GroupsValue,
   type KondomerietGroup,
 } from "./kondomeriet-helpers";
@@ -308,7 +312,62 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
     commit(next);
   };
   const pickingGroup = picking != null ? groups[picking] : null;
-  const selected = useMemo(() => new Set<number>(pickingGroup?.ids ?? []), [pickingGroup]);
+  // The picker works on a draft (in the order products are picked) and the
+  // block changes once, when it closes: then a card's pick can split into one
+  // card per family, and «+ Add products» adds one card per family.
+  const [draft, setDraft] = useState<number[]>([]);
+  const [addingMany, setAddingMany] = useState(false);
+  const [note, setNote] = useState("");
+  const selected = useMemo(() => new Set<number>(draft), [draft]);
+  // Titles, brands and shop slugs of what the picker listed — the families are read from them.
+  const pickerRows = useRef(new Map<number, FamilyItem>());
+  const loadForPicker = () =>
+    loadFreshCatalog().then((list) => {
+      for (const p of list as any[]) {
+        pickerRows.current.set(Number(p.id), { id: Number(p.id), title: p.title, brand: p.brand, slug: slugFromProductUrl(p.origin_url) });
+      }
+      return list;
+    });
+  const familyInfo = (): Map<number, FamilyItem> => {
+    const info = new Map<number, FamilyItem>();
+    for (const [id, p] of catalog) info.set(id, { id, title: p.title, brand: p.brand, slug: slugFromProductUrl((p as any).origin_url) });
+    for (const [id, it] of pickerRows.current) info.set(id, it);
+    return info;
+  };
+  const toggleDraft = (id: number) => setDraft((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
+  const openCardPicker = (i: number) => {
+    setNote("");
+    setDraft(groups[i]?.ids ?? []);
+    setPicking(i);
+  };
+  const closeCardPicker = () => {
+    const i = picking;
+    setPicking(null);
+    if (i == null) return;
+    if (!multi) {
+      update(0, { ...groups[0], ids: draft });
+      return;
+    }
+    const res = applyCardPick(groups, i, draft, familyInfo());
+    commit(res.groups);
+    if (res.created > 0) {
+      setNote(`Different products: split into ${res.created + 1} cards — ${res.created} new card${res.created === 1 ? "" : "s"} added after card ${i + 1}.`);
+    }
+  };
+  const closeAddProducts = () => {
+    setAddingMany(false);
+    if (draft.length === 0) return;
+    const res = addProductsAsCards(groups, draft, familyInfo());
+    commit(res.groups);
+    setNote(
+      `${res.created} card${res.created === 1 ? "" : "s"} added` +
+        (res.skipped ? ` (${res.skipped} product${res.skipped === 1 ? " was" : "s were"} already in a card)` : "") +
+        "."
+    );
+  };
+  // A single card with products of different families: it still shows them,
+  // as options of one card — say so, and where several products belong.
+  const mixed = !multi && groups[0]?.ids.length > 1 && familiesOf(groups[0].ids.map((id) => familyInfo().get(id) ?? { id })).length > 1;
 
   // The snapshot the published card paints from at once (title, brand,
   // price, compare-at, image, shop URL, stock, rating): taken when products
@@ -377,7 +436,7 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
             {groupSummary(g, catalog)}
           </SilkeText>
           <SilkeBox gap="xs" style={{ flexWrap: "wrap" }}>
-            <SilkeButton label="Products" size="s" kind="secondary" onClick={() => setPicking(i)} />
+            <SilkeButton label="Products" size="s" kind="secondary" onClick={() => openCardPicker(i)} />
             <SilkeButton label="Details" size="s" kind="secondary" onClick={() => setEditing(i)} disabled={g.ids.length === 0} />
             {multi ? (
               <>
@@ -389,29 +448,58 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
           </SilkeBox>
         </SilkeBox>
       ))}
-      {multi ? (
-        <SilkeButton
-          label="+ Add card"
-          size="s"
-          kind="primary"
-          onClick={() => {
-            commit([...groups, { ids: [] }]);
-            setPicking(groups.length);
-          }}
-        />
+      {mixed ? (
+        <SilkeText style={{ fontSize: 11, color: "#b45309", lineHeight: 1.4 }}>
+          These products look different; they will show as options of one card. For several products use Kondomeriet
+          Product Grid or Kondomeriet Product Carousel.
+        </SilkeText>
       ) : null}
+      {multi ? (
+        <SilkeBox gap="xs" style={{ flexWrap: "wrap" }}>
+          <SilkeButton
+            label="+ Add card"
+            size="s"
+            kind="primary"
+            onClick={() => {
+              setNote("");
+              commit([...groups, { ids: [] }]);
+              setDraft([]);
+              setPicking(groups.length);
+            }}
+          />
+          <SilkeButton
+            label="+ Add products"
+            size="s"
+            kind="secondary"
+            onClick={() => {
+              setNote("");
+              setDraft([]);
+              setAddingMany(true);
+            }}
+          />
+        </SilkeBox>
+      ) : null}
+      {note ? <SilkeText style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.4 }}>{note}</SilkeText> : null}
 
-      {pickingGroup && picking != null ? (
+      {picking != null && (pickingGroup || picking === groups.length) ? (
         <CatalogModal
           multi
+          title="Select colors, sizes or models of one product"
           // Fresh on every opening, never the page's cached list (see loadFreshCatalog).
-          load={loadFreshCatalog}
+          load={loadForPicker}
           selectedIds={selected}
-          onToggle={(id) => {
-            const ids = pickingGroup.ids.includes(id) ? pickingGroup.ids.filter((x) => x !== id) : [...pickingGroup.ids, id];
-            update(picking, { ...pickingGroup, ids });
-          }}
-          onClose={() => setPicking(null)}
+          onToggle={toggleDraft}
+          onClose={closeCardPicker}
+        />
+      ) : null}
+      {addingMany ? (
+        <CatalogModal
+          multi
+          title="Select products"
+          load={loadForPicker}
+          selectedIds={selected}
+          onToggle={toggleDraft}
+          onClose={closeAddProducts}
         />
       ) : null}
       {editing != null && groups[editing] ? (
