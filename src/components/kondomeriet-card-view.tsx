@@ -546,7 +546,18 @@ export function KondomerietCardView({
           {priceEl}
           {offer ? <div className="knd-offer-end">{offer}</div> : null}
           {annonse ? <div className="knd-row-annonse">{annonseText}</div> : null}
-          {sellerEl}
+          {showSeller ? (
+            // The logo's place is kept from the first paint: rows stack, so a
+            // logo arriving with the bootstrap must not push the rows below.
+            <div className="knd-seller">
+              <span className="knd-row-logo">
+                {identity?.logoUrl ? <SellerLogo src={identity.logoUrl} name={sellerName} className="knd-seller-logo" /> : null}
+              </span>
+              <span>
+                Du handler direkte hos <strong>{sellerName}</strong>
+              </span>
+            </div>
+          ) : null}
           {editorWarnings}
         </div>
         <div className="knd-row-cta" ref={ctaRef}>

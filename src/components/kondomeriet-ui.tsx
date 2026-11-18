@@ -121,8 +121,19 @@ const KND_CSS = `
 .vio-native-card.knd-row .knd-offer-end { margin: 0 0 4px; }
 .vio-native-card.knd-row .knd-row-annonse { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #888; margin-bottom: 4px; }
 .vio-native-card.knd-row .knd-seller { margin-top: 6px; font-size: 11.5px; }
-.vio-native-card.knd-row .knd-seller .knd-seller-logo { height: 16px; }
-.vio-native-card.knd-row .knd-row-cta { grid-area: cta; min-width: 0; align-self: center; }
+.vio-native-card.knd-row .knd-row-logo { flex: 0 0 64px; height: 16px; display: block; }
+.vio-native-card.knd-row .knd-row-logo .knd-seller-logo { height: 16px; max-width: 64px; object-position: left center; }
+.vio-native-card.knd-row .knd-row-cta { grid-area: cta; min-width: 0; align-self: center; container: knd-cta / inline-size; }
+/* As on the card (see above): the row's Vipps bar takes the height Vipps' own
+   button will have at the button column's width, so the lazy swap moves nothing.
+   Compact below 220 px (the row measures this column for «narrow»). */
+.vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps, .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps-official { box-sizing: border-box; height: 46px; }
+@container knd-cta (max-width: 219.98px) {
+  .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps, .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps-official { height: 46.4px; }
+}
+@container knd-cta (max-width: 131.98px) {
+  .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps, .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps-official { height: 64.4px; }
+}
 .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps, .vio-native-card.knd-row .knd-row-cta > .vnc-btn-vipps-official,
 .vio-native-card.knd-row .knd-row-cta > .knd-more { margin: 0; }
 .vio-native-card.knd-row .knd-row-cta .knd-vipps-note { margin: 6px 0 0; }
