@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox } from "@vev/silke";
 import { Vio } from "../../vio-sdk";
-import { registerVevComponent } from "@vev/react";
+import { registerVevComponent, useEditorState } from "@vev/react";
 import VioConfig, { VioApiKeyEditor, VioCampaignSelector, VioSponsorSelector } from "./vio-config";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
 import {
@@ -40,7 +40,58 @@ type Props = Record<string, any>;
 // The hosts a card needs, as soon as the package loads (before any block mounts).
 ensurePreconnect();
 
+const OWNER_KEY = "__KND_CONFIG_OWNER__";
+const OWNER_FREED = "knd:config-owner-freed";
+
+/** Claims the page for this Config if no other Kondomeriet Config has it. */
+function claimOwner(id: string): boolean {
+  const g = globalThis as any;
+  if (!g[OWNER_KEY]) g[OWNER_KEY] = id;
+  return g[OWNER_KEY] === id;
+}
+
 export default function KondomerietConfig(props: Props) {
+  // ONE Config per page. A second one (a common editor slip, Alan in #491)
+  // must not touch the page: its fast start, Circlewise settings and
+  // environment would overwrite the first one's (whichever rendered last
+  // won). The first one mounted owns the page; the others render only an
+  // editor warning, and take over if the owner is deleted.
+  const { disabled: inEditor } = useEditorState();
+  const idRef = useRef("knd-cfg-" + Math.random().toString(36).slice(2));
+  const [owner, setOwner] = useState(() => claimOwner(idRef.current));
+  useEffect(() => {
+    const id = idRef.current;
+    const retry = () => setOwner(claimOwner(id));
+    window.addEventListener(OWNER_FREED, retry);
+    return () => {
+      window.removeEventListener(OWNER_FREED, retry);
+      const g = globalThis as any;
+      if (g[OWNER_KEY] === id) {
+        g[OWNER_KEY] = null;
+        window.dispatchEvent(new Event(OWNER_FREED));
+      }
+    };
+  }, []);
+  if (!owner) {
+    return inEditor ? (
+      <div
+        style={{
+          padding: "10px 12px",
+          border: "1px dashed #d93025",
+          borderRadius: 8,
+          background: "#fff4f3",
+          color: "#a50e0e",
+          font: "13px/1.4 system-ui, sans-serif",
+        }}
+      >
+        <strong>Duplicate Kondomeriet Config.</strong> This page already has one; this copy is ignored. Delete it.
+      </div>
+    ) : null;
+  }
+  return <KondomerietConfigOwner {...props} inEditor={inEditor} />;
+}
+
+function KondomerietConfigOwner(props: Props) {
   // One round trip instead of two: the channel the editor resolved goes in
   // before the blocks ask (this runs while the Config renders), so the
   // products request leaves in parallel with the bootstrap. Only for the
@@ -76,7 +127,27 @@ export default function KondomerietConfig(props: Props) {
     window.addEventListener("vio:sponsor-changed", onSponsor);
     return () => window.removeEventListener("vio:sponsor-changed", onSponsor);
   }, []);
-  return <VioConfig {...props} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />;
+  const { inEditor, ...configProps } = props;
+  return (
+    <>
+      {inEditor && env !== "production" ? (
+        <div
+          style={{
+            padding: "8px 12px",
+            marginBottom: 8,
+            border: "1px dashed #b06000",
+            borderRadius: 8,
+            background: "#fff8e1",
+            color: "#7a4100",
+            font: "13px/1.4 system-ui, sans-serif",
+          }}
+        >
+          Environment is <strong>{env}</strong>: Kondomeriet's products and campaign only exist in <strong>Production</strong>.
+        </div>
+      ) : null}
+      <VioConfig {...configProps} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />
+    </>
+  );
 }
 
 /**
@@ -170,7 +241,8 @@ registerVevComponent(KondomerietConfig, {
       name: "environment",
       title: "Environment",
       type: "select",
-      initialValue: DEFAULT_ENVIRONMENT,
+      // Kondomeriet lives only in production (a new Config used to start on staging).
+      initialValue: "production",
       options: {
         display: "dropdown",
         items: [
