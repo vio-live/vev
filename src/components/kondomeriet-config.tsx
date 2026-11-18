@@ -5,6 +5,7 @@ import { registerVevComponent, useEditorState, useModel } from "@vev/react";
 import VioConfig, { VioApiKeyEditor, VioCampaignSelector, VioSponsorSelector } from "./vio-config";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
 import { imposeOwnerConnection, isDuplicateConfig, writeConfigRole } from "./kondomeriet-owner";
+import { copySettingsProp } from "./kondomeriet-migrate";
 import {
   DEFAULT_ENVIRONMENT,
   ensureVioInit,
@@ -337,6 +338,7 @@ registerVevComponent(KondomerietConfig, {
   name: "Kondomeriet Config (SDK)",
   size: { width: 320, height: "auto" },
   props: [
+    copySettingsProp("config"),
     { name: "apiKey", title: "Vio API Key", type: "string", initialValue: "", component: KondomerietApiKeyEditor as any },
     { name: "sponsorId", title: "Active Sponsor", type: "number", component: VioSponsorSelector as any },
     { name: "campaignId", title: "Campaign", type: "number", component: VioCampaignSelector as any },

@@ -1,0 +1,22 @@
+{
+  "include": ["src/**/*", "vio-sdk/**/*"],
+  "exclude": ["node_modules", ".vev", "scripts"],
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "target": "es2020",
+    "lib": ["dom", "es2020"],
+    "jsx": "react",
+    "jsxFactory": "React.createElement",
+    "jsxFragmentFactory": "React.Fragment",
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "typeRoots": ["../node_modules/@types"],
+    "baseUrl": "."
+  }
+}
