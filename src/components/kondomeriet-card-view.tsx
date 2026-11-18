@@ -6,6 +6,8 @@ import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit"
 import {
   KONDOMERIET_NAME,
   compareAtAmount,
+  directBadgeFrom,
+  perksFrom,
   initialOptionIndex,
   isSoldOut,
   openKondomerietDetail,
@@ -49,6 +51,13 @@ export type KondomerietCardConfig = {
   infoButtonStyle?: string;
   infoLabel?: string;
   hurtigkasseTarget?: HurtigkasseTarget;
+  /** «Kjøp direkte fra artikkelen» in the product info (and on the card with directBadgeOnCard); '' = off. */
+  directBadge?: string;
+  directBadgeOnCard?: boolean;
+  /** The shop's promises in the product info, one per line; '' = none. */
+  perks?: string;
+  /** The product info's stock line when in stock. */
+  stockText?: string;
 };
 
 type CardViewProps = {
@@ -94,7 +103,9 @@ export function KondomerietCardView({
     infoButtonStyle = "bar",
     infoLabel = "Se produktinfo",
     hurtigkasseTarget = "_blank",
+    directBadgeOnCard = false,
   } = config;
+  const directBadge = directBadgeFrom(config.directBadge);
 
   useEffect(() => {
     injectKondomerietStyles();
@@ -204,6 +215,9 @@ export function KondomerietCardView({
       target: hurtigkasseTarget,
       badge: cardBadge(group.group, p),
       accentColor,
+      directBadge,
+      perks: perksFrom(config.perks),
+      stockText: config.stockText,
       attribution: attr,
       sponsorId,
       onSelect: (i) => setIndex(i),
@@ -274,6 +288,7 @@ export function KondomerietCardView({
   // The Vio card's meta: brand, name, description, (selector), price, Vipps, retailer.
   const metaBlock = (inBody: boolean) => (
     <>
+      {inBody && directBadgeOnCard && directBadge ? <span className="knd-direct-badge">{directBadge}</span> : null}
       {showBrand && (brand || inBody) ? <div className="vnc-brand">{brand || " "}</div> : null}
       {showName && name ? <div className="vnc-name">{name}</div> : null}
       {inBody && description ? <p className="vnc-description">{description}</p> : null}

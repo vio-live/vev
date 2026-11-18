@@ -50,6 +50,11 @@ const KND_CSS = `
   border: 1px solid var(--vio-color-border, #e5e5e5); border-radius: var(--vio-detail-option-radius, 0);
   background: #fff; color: var(--vio-color-text, #0a0a0a);
 }
+.vio-native-card .knd-direct-badge {
+  align-self: flex-start; display: inline-block; margin: 0 0 8px;
+  background: var(--vnc-accent, #0a0a0a); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
+}
 .vio-native-card .vnc-price .knd-was {
   margin-left: 8px; font-size: 0.85em; font-weight: 400; color: var(--vio-color-text-tertiary, #999); text-decoration: line-through;
 }

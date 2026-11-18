@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ensureVippsButton } from "../../vio-sdk";
 import { getProductPriceAmount } from "./vio-helpers";
 import {
+  DEFAULT_STOCK_TEXT,
   KONDOMERIET_DETAIL_EVENT,
   KONDOMERIET_NAME,
   compareAtAmount,
@@ -11,6 +12,7 @@ import {
 } from "./kondomeriet-helpers";
 import { buyWithHurtigkasse, trackOptionSelect } from "./kondomeriet-track";
 import { cardBadge, classRef, detailPrice, plainText } from "./kondomeriet-ui";
+import { parseRichDescription, renderRich, splitPlainRating } from "./kondomeriet-description";
 
 /**
  * The Kondomeriet product detail — the drawer «Se produktinfo» opens — drawn
@@ -64,7 +66,50 @@ const EXTRA_CSS = `
   font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
 }
 .buy-vipps-official[aria-disabled="true"] { pointer-events: none; opacity: 0.5; }
+
+/* «Kjøp direkte fra artikkelen»: the same badge, in the brand's row. */
+.knd-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.knd-direct {
+  display: inline-block; background: var(--vnc-accent, #0a0a0a); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: var(--vio-card-badge-radius, 4px);
+}
+/* The shop's rating, under the title. */
+.knd-rating { font-size: 13px; line-height: 1.4; color: var(--vio-color-text-secondary, #666); }
+.knd-rating .knd-stars { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
+
+/* Stock and the shop's promises, ticked, under the buy button (the type of the SDK's highlights). */
+.knd-perks { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.knd-perks li { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.35; color: var(--vio-color-text, #0a0a0a); }
+.knd-perks svg { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.knd-perks li.in-stock { color: #2e7d32; font-weight: 500; }
+.knd-perks li.out-of-stock { color: var(--vio-color-text-tertiary, #999); }
+
+/* Vio's HTML descriptions: the SDK's description type, with its sections. */
+.description.rich { white-space: normal; }
+.description.rich.collapsed { display: block; max-height: calc(1.6em * var(--vio-detail-description-preview-lines, 3)); }
+.description.rich > :first-child { margin-top: 0; }
+.description.rich p { margin: 0 0 10px; }
+.description.rich h3 {
+  margin: 18px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: var(--vio-tracking-label, 0.1em);
+  color: var(--vio-color-text-secondary, #666); font-weight: 600;
+}
+.description.rich h4 { margin: 14px 0 4px; font-size: 14px; font-weight: 600; color: var(--vio-color-text, #0a0a0a); }
+.description.rich ul, .description.rich ol { margin: 0 0 10px; padding-left: 18px; }
+.description.rich li { margin: 3px 0; }
+.description.rich strong { color: var(--vio-color-text, #0a0a0a); font-weight: 600; }
+details.description-block > .description { padding-top: 0; }
 `;
+
+const Check = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <polyline points="4.5 12.5 9.5 17.5 19.5 7" />
+  </svg>
+);
+const Cross = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 6l12 12M18 6 6 18" />
+  </svg>
+);
 
 const CLOSE_MS = 320;
 
@@ -139,8 +184,16 @@ export function KondomerietDetail({
   const canBuy = !!option.slug && !soldOut;
   const amount = getProductPriceAmount(p);
   const was = compareAtAmount(p);
-  const description = plainText(p?.description);
+  // Vio's clean HTML (sections, lists, bold) when it is that; the feed's text otherwise.
+  const rich = useMemo(() => parseRichDescription(p?.description), [p?.description]);
+  const plain = useMemo(() => (rich ? null : splitPlainRating(plainText(p?.description))), [rich, p?.description]);
+  const rating = rich?.rating ?? plain?.rating ?? null;
+  const hasIntro = rich ? rich.intro.length > 0 : !!plain?.rest;
+  const description = rich ? `${option.productId}` : plain?.rest ?? "";
   const vippsLabel = request.vippsLabel || "Kjøp med";
+  const directBadge = request.directBadge ?? "";
+  const perks = request.perks ?? [];
+  const stockText = request.stockText?.trim() || DEFAULT_STOCK_TEXT;
   // The card's badge rule, for the option on screen: the group's text in its
   // dates, else this option's own sale %.
   const badge = cardBadge(group.group, p);
@@ -270,12 +323,17 @@ export function KondomerietDetail({
           </div>
 
           <div className="info">
-            {group.brand ? <div className="brand">{group.brand}</div> : null}
+            {group.brand || directBadge ? (
+              <div className="knd-brand-row">
+                {group.brand ? <div className="brand">{group.brand}</div> : <span />}
+                {directBadge ? <span className="knd-direct">{directBadge}</span> : null}
+              </div>
+            ) : null}
             <div className="headline">
               <div className="title-row">
                 <h2 className="name">{group.title}</h2>
-                {soldOut ? <div className="stock out-of-stock">Utsolgt</div> : null}
               </div>
+              {rating ? <RatingLine text={rating} /> : null}
               {amount != null ? (
                 <div className="price-row">
                   <span className="price">{detailPrice(amount, p)}</span>
@@ -292,11 +350,23 @@ export function KondomerietDetail({
                     ? `Du betaler med Vipps Hurtigkasse hos ${KONDOMERIET_NAME}.`
                     : "Dette produktet kan ikke kjøpes direkte her."}
                 </p>
+                <ul className="knd-perks">
+                  <li className={soldOut ? "out-of-stock" : "in-stock"}>
+                    {soldOut ? <Cross /> : <Check />}
+                    {soldOut ? "Utsolgt" : stockText}
+                  </li>
+                  {perks.map((t, i) => (
+                    <li key={i}>
+                      <Check />
+                      {t}
+                    </li>
+                  ))}
+                </ul>
                 <p className="seller-note">
                   Du handler direkte hos <strong>{KONDOMERIET_NAME}</strong>.
                 </p>
               </div>
-              {description ? (
+              {hasIntro ? (
                 <div className={`description-block description-preview preview${descOpen ? " open" : ""}${descClipped ? " clipped" : ""}`}>
                   <button
                     className="desc-head"
@@ -308,10 +378,10 @@ export function KondomerietDetail({
                   </button>
                   <div
                     ref={descRef}
-                    className={`description${descOpen ? "" : " collapsed"}`}
+                    className={`description${rich ? " rich" : ""}${descOpen ? "" : " collapsed"}`}
                     onClick={() => descClipped && !descOpen && setDescOpen(true)}
                   >
-                    {description}
+                    {rich ? renderRich(rich.intro, "intro") : description}
                   </div>
                   {descClipped ? (
                     <button className="desc-more" type="button" onClick={() => setDescOpen((o) => !o)}>
@@ -320,11 +390,36 @@ export function KondomerietDetail({
                   ) : null}
                 </div>
               ) : null}
+              {/* Each section of Vio's HTML (Produktinformasjon, Spesifikasjoner,
+                  Inkludert i esken…) folds like the SDK's «Frakt & retur»; the first is open. */}
+              {rich?.sections.map((s, i) => (
+                <details key={`${option.productId}-${i}`} className="description-block" open={i === 0}>
+                  <summary>{s.title || "Mer informasjon"}</summary>
+                  <div className="description rich">{renderRich(s.body, `s${i}`)}</div>
+                </details>
+              ))}
             </div>
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+/** «★ 5/5 · 792 anmeldelser hos Kondomeriet»: the stars and score stand out. */
+function RatingLine({ text }: { text: string }) {
+  const m = text.match(/^(★+\s*[\d.,]+\s*\/\s*\d+)(.*)$/);
+  return (
+    <div className="knd-rating">
+      {m ? (
+        <>
+          <span className="knd-stars">{m[1]}</span>
+          {m[2]}
+        </>
+      ) : (
+        text
+      )}
+    </div>
   );
 }
 

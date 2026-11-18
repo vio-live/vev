@@ -553,11 +553,33 @@ export type KondomerietDetailRequest = {
   target?: HurtigkasseTarget;
   badge?: string | null;
   accentColor?: string;
+  /** «Kjøp direkte fra artikkelen» — the card's text; '' = no badge. */
+  directBadge?: string;
+  /** The shop's promises under the Vipps button (one per line in the panel). */
+  perks?: string[];
+  /** The stock line when the option is in stock. */
+  stockText?: string;
   attribution: VioAttribution;
   sponsorId: number | null;
   /** The card follows a choice made in the drawer. */
   onSelect?: (index: number) => void;
 };
+
+/** Defaults of the editable trust texts (props of the Kondomeriet card / carousel / grid). */
+export const DEFAULT_DIRECT_BADGE = "Kjøp direkte fra artikkelen";
+export const DEFAULT_PERKS = ["Anonym levering", "Miljørabatt", "Orgasmegaranti", "Frakt fra kun 59,-"];
+export const DEFAULT_STOCK_TEXT = "På lager — Leveres innen 1-3 virkedager";
+
+/** The panel's text (one per line) as a list; undefined = the defaults, '' = none. */
+export function perksFrom(value: unknown): string[] {
+  if (typeof value !== "string") return DEFAULT_PERKS;
+  return value.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/** The badge text; undefined = the default, '' (or blanks) = no badge. */
+export function directBadgeFrom(value: unknown): string {
+  return typeof value === "string" ? value.trim() : DEFAULT_DIRECT_BADGE;
+}
 
 export function openKondomerietDetail(request: KondomerietDetailRequest): void {
   if (typeof document === "undefined") return;

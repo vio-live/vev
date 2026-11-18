@@ -1,6 +1,7 @@
 import { CARD_CONFIG_PROPS, CARD_EDITABLE_CSS } from "./card-props";
 import { KondomerietGroupEditor, KondomerietGroupsEditor } from "./kondomeriet-group-editor";
 import type { KondomerietCardConfig } from "./kondomeriet-card-view";
+import { DEFAULT_DIRECT_BADGE, DEFAULT_PERKS, DEFAULT_STOCK_TEXT } from "./kondomeriet-helpers";
 
 /**
  * Props of the Kondomeriet card / carousel / grid. The look-and-feel fields
@@ -84,6 +85,36 @@ export const KONDOMERIET_CARD_PROPS: any[] = [
     },
   },
   { name: "showRetailer", title: "Show 'Kondomeriet'", type: "boolean", initialValue: false },
+  // Product info (the drawer): trust texts the editor can change or clear.
+  {
+    name: "directBadge",
+    title: "Product info badge",
+    type: "string",
+    initialValue: DEFAULT_DIRECT_BADGE,
+    description: "Shown by the brand in the product info. Empty: no badge.",
+  },
+  {
+    name: "directBadgeOnCard",
+    title: "Badge on the card too",
+    type: "boolean",
+    initialValue: false,
+    hidden: (ctx: any) => typeof ctx?.value?.directBadge === "string" && !ctx.value.directBadge.trim(),
+  },
+  {
+    name: "perks",
+    title: "Shop promises (one per line)",
+    type: "string",
+    initialValue: DEFAULT_PERKS.join("\n"),
+    options: { multiline: true },
+    description: "Ticked under the Vipps button in the product info. Empty: none.",
+  },
+  {
+    name: "stockText",
+    title: "In-stock line",
+    type: "string",
+    initialValue: DEFAULT_STOCK_TEXT,
+    description: "Ticked first in the list when the option is in stock («Utsolgt» when it is not).",
+  },
   ...reused.filter((p) => p.name !== "layout"),
 ];
 
@@ -96,6 +127,7 @@ export const KONDOMERIET_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card .knd-option-pill", title: "Option pill", properties: ["background", "color", "border-color", "border-radius", "font-size", "padding"] },
   { selector: ".vio-native-card .knd-option-label", title: "Option label", properties: ["color", "font-size", "letter-spacing"] },
   { selector: ".vio-native-card .knd-was", title: "Old price", properties: ["color", "font-size"] },
+  { selector: ".vio-native-card .knd-direct-badge", title: "Direct badge (card)", properties: ["background", "color", "border-radius", "font-size", "padding"] },
 ];
 
 export const GROUP_PROP = {
@@ -133,6 +165,10 @@ export function pickKondomerietConfig(props: Record<string, any>): KondomerietCa
     infoButtonStyle,
     infoLabel,
     hurtigkasseTarget,
+    directBadge,
+    directBadgeOnCard,
+    perks,
+    stockText,
   } = props;
   return {
     layout,
@@ -152,5 +188,9 @@ export function pickKondomerietConfig(props: Record<string, any>): KondomerietCa
     infoButtonStyle,
     infoLabel,
     hurtigkasseTarget,
+    directBadge,
+    directBadgeOnCard,
+    perks,
+    stockText,
   };
 }

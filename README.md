@@ -384,7 +384,22 @@ stylesheet: it lives in a shadow root that carries the styles of `<vio-product-d
 bar, gallery and thumbnails, brand, name, price / compare-at, option pills, Vipps button, seller note, «Beskrivelse»
 with «Les mer»), so it follows the same theme tokens and `--vio-detail-*` variables — bottom sheet on phones, side
 panel on wider screens. In place of the quantity, «Legg i handlekurv» and the other ways to pay: «Kjøp med Vipps»
-for the chosen option and «Du betaler med Vipps Hurtigkasse hos Kondomeriet.». It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
+for the chosen option and «Du betaler med Vipps Hurtigkasse hos Kondomeriet.». What the drawer adds to make it a complete shop page:
+
+- **«Kjøp direkte fra artikkelen»** badge by the brand (card prop *Product info badge*; empty = off; *Badge on the
+  card too* puts it above the card's brand).
+- **The full description, formatted.** Vio's clean HTML (`<!-- vio:keep-description -->` + `h3`, `h4`, `p`, `ul`,
+  `ol`, `li`, `strong`, `em`, `br`, written from the product page on kondomeriet.no) is parsed with `DOMParser`,
+  reduced to that whitelist with no attributes (links become their text; scripts, styles, media and comments go)
+  and rebuilt as React elements — never `innerHTML`. A first paragraph that starts with ★ (the shop's rating) shows
+  under the title. The text before the first `h3` is «Beskrivelse» (preview + «Les mer»); each `h3` is a fold of its
+  own (Produktinformasjon, Spesifikasjoner, Inkludert i esken), the first open, in the SDK's fold style. The feed's
+  broken text («h2…/h2p…», no `< >`) is still shown as plain text (`kondomeriet-description.tsx`).
+- **Stock and the shop's promises**, ticked under the Vipps button: «På lager — Leveres innen 1-3 virkedager»
+  (*In-stock line*) or «Utsolgt», then *Shop promises* (one per line; default «Anonym levering», «Miljørabatt»,
+  «Orgasmegaranti», «Frakt fra kun 59,-»; empty = none).
+
+It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
 on the same page never opens its detail or cart for these cards. Mounted once per page by the Config or by the
 first card (whichever mounts first).
 
