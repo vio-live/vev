@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SilkeBox, SilkeButton, SilkeModal, SilkeText } from "@vev/silke";
 import { CatalogModal } from "./product-picker";
-import { loadCatalog, resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
+import { resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
 import {
   deriveLabels,
   fetchKondomerietProducts,
   isValidSlug,
+  loadFreshCatalog,
   parseGroups,
   serializeGroups,
   slugFromProductUrl,
@@ -44,7 +45,7 @@ function useCatalogMap(trigger: unknown): Map<number, CatalogProduct> {
   const [map, setMap] = useState<Map<number, CatalogProduct>>(new Map());
   useEffect(() => {
     let cancelled = false;
-    loadCatalog()
+    loadFreshCatalog()
       .then((list) => {
         if (!cancelled) setMap(new Map(list.map((p) => [Number(p.id), p])));
       })
@@ -252,7 +253,8 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
   const groups: KondomerietGroup[] = multi ? stored : [stored[0] ?? { ids: [] }];
   const [picking, setPicking] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
-  const catalog = useCatalogMap(picking);
+  // Titles and photos of the panel: read again each time the picker closes.
+  const catalog = useCatalogMap(picking == null);
   const commit = (next: KondomerietGroup[]) => onChange(serializeGroups(next));
   const update = (i: number, g: KondomerietGroup) => commit(groups.map((x, j) => (j === i ? g : x)));
   const move = (i: number, dir: number) => {
@@ -302,6 +304,8 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
       {pickingGroup && picking != null ? (
         <CatalogModal
           multi
+          // Fresh on every opening, never the page's cached list (see loadFreshCatalog).
+          load={loadFreshCatalog}
           selectedIds={selected}
           onToggle={(id) => {
             const ids = pickingGroup.ids.includes(id) ? pickingGroup.ids.filter((x) => x !== id) : [...pickingGroup.ids, id];

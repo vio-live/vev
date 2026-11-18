@@ -335,6 +335,13 @@ touches `Vio.cart` or `Vio.checkout`.
 | **Kondomeriet Product Card** | One card for a product **group**. |
 | **Kondomeriet Product Carousel** / **Grid** | One card per group; same layout options as the Vio carousel / grid. |
 
+**Same look as the Vio blocks.** The card is the Vio Product Card: the same `.vio-native-card` markup, styles,
+layouts (standard, image only, info over image, horizontal), accent colour, badge, «Annonse», price and editable CSS
+(all of the Vio card's entries, plus *Option pill*, *Option label* and *Old price*). Its Vipps button is the Vio card's
+(Vipps' own `<vipps-mobilepay-button>` when it loads, the orange bar otherwise); the product-info button is the Vio
+card's full-width bar or pill. Only three things are Kondomeriet's own: the option selector (drawn with the values of
+the SDK detail's option pills), «Kjøp med Vipps» instead of adding to a cart, and the Hurtigkasse note.
+
 **Groups.** The feed creates one Vio product per colour / model / size, so a card unifies several products behind
 a selector (pills, photo thumbnails or a dropdown); each option is its own Vio product with its own photo, price,
 stock and shop URL. A single product is a group of one. In the panel: *Products* opens the Vio catalog picker for
@@ -346,12 +353,19 @@ discount badge (the carousel / grid add, reorder and remove cards). Stored as JS
   label (`Womanizer Premium 2 blåbær` → title `Womanizer Premium 2`, label `blåbær`). Shared trailing words go too,
   unless they start with a unit (`Easyglide vannbasert 150 ml` → `150 ml`). Empty or repeated labels fall back to
   the full title. An override in *Details* wins.
-- **Stock**: quantity 0 is sold out (the feed sweep sets it) — the option is struck through and the button says
-  «Utsolgt». The card starts on the first option in stock.
-- **Price**: the selected option's price incl. taxes; a real sale from the feed (`compare_at` above the price)
-  shows the old price struck through and the new one in red.
+- **Stock**: quantity 0 is sold out (the feed sweep sets it) — the option is struck through and disabled, like a
+  sold-out size in the SDK detail, and the button says «Utsolgt». The card starts on the first option in stock.
+- **Price**: the selected option's price incl. taxes, written as the Vio card writes it (`1199 NOK`) and, in the
+  drawer, as the SDK detail does (`1 199 Kr`). A real sale from the feed (`compare_at` above the price) adds the old
+  price struck through (the SDK detail's `.compare-at`) and a `-60 %` badge — the Vio card's «Auto (from sale
+  price)» — on the card and in the drawer.
 - **Discount badge**: per card, manual text (e.g. `−60 %`) with optional start / end (`datetime-local`, read in
-  the reader's time zone — Norway for VG readers), so it only shows during Black Week.
+  the reader's time zone — Norway for VG readers), shown in the Vio badge's place on the card and on the drawer's
+  photo while its dates say so; it wins over the sale %. It never changes the price: the Hurtigkasse charges the
+  shop's.
+- **Picker**: the Kondomeriet blocks' catalog picker reads the catalog fresh each time it opens (`useCache: false`,
+  `loadFreshCatalog`): the shared `loadCatalog` of the Vio pickers answered with a list the gateway had cached, so a
+  product added to the collection that day did not show. The Vio blocks' pickers are unchanged.
 
 **«Kjøp med Vipps» → Hurtigkasse.** kondomeriet.no's product page buys through a POST form
 (`<form id=purchaseform method=post action=https://www.kondomeriet.no/k/<slug>/kjop/>` with `qty-<slug>=1` and the
@@ -365,10 +379,27 @@ Target: **new tab** by default (`_blank`, `rel=noopener`) — the article stays 
 that allows popups, and the Vipps app handoff happens in the shop's own tab; *Same window* (`_top`) is a card
 option for pages that prefer it (it needs a frame that allows top navigation). In the editor nothing is posted.
 
-**«Se produktinfo»** (and the image) opens the Kondomeriet detail drawer — laid out like the SDK's product detail
-(bottom sheet on phones, side panel on wider screens: gallery, brand, name, option pills, price, description) but
-with «Kjøp med Vipps» for the chosen option instead of «Legg i handlekurv», and a link to the product on
-kondomeriet.no. It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
+**«Se produktinfo»** (and the image) opens the Kondomeriet detail drawer, drawn with the SDK detail's own
+stylesheet: it lives in a shadow root that carries the styles of `<vio-product-detail>` and uses its classes (top
+bar, gallery and thumbnails, brand, name, price / compare-at, option pills, Vipps button, seller note, «Beskrivelse»
+with «Les mer»), so it follows the same theme tokens and `--vio-detail-*` variables — bottom sheet on phones, side
+panel on wider screens. In place of the quantity, «Legg i handlekurv» and the other ways to pay: «Kjøp med Vipps»
+for the chosen option and «Du betaler med Vipps Hurtigkasse hos Kondomeriet.». What the drawer adds to make it a complete shop page:
+
+- **«Kjøp direkte fra artikkelen»** badge by the brand (card prop *Product info badge*; empty = off; *Badge on the
+  card too* puts it above the card's brand).
+- **The full description, formatted.** Vio's clean HTML (`<!-- vio:keep-description -->` + `h3`, `h4`, `p`, `ul`,
+  `ol`, `li`, `strong`, `em`, `br`, written from the product page on kondomeriet.no) is parsed with `DOMParser`,
+  reduced to that whitelist with no attributes (links become their text; scripts, styles, media and comments go)
+  and rebuilt as React elements — never `innerHTML`. A first paragraph that starts with ★ (the shop's rating) shows
+  under the title. The text before the first `h3` is «Beskrivelse» (preview + «Les mer»); each `h3` is a fold of its
+  own (Produktinformasjon, Spesifikasjoner, Inkludert i esken), the first open, in the SDK's fold style. The feed's
+  broken text («h2…/h2p…», no `< >`) is still shown as plain text (`kondomeriet-description.tsx`).
+- **Stock and the shop's promises**, ticked under the Vipps button: «På lager — Leveres innen 1-3 virkedager»
+  (*In-stock line*) or «Utsolgt», then *Shop promises* (one per line; default «Anonym levering», «Miljørabatt»,
+  «Orgasmegaranti», «Frakt fra kun 59,-»; empty = none).
+
+It listens to its own `kondomeriet:open-detail` event, never `vio:product-click`, so a Vio Config
 on the same page never opens its detail or cart for these cards. Mounted once per page by the Config or by the
 first card (whichever mounts first).
 

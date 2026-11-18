@@ -35,11 +35,14 @@ export function CatalogModal({
   selectedIds,
   onToggle,
   onClose,
+  load = loadCatalog,
 }: {
   multi: boolean;
   selectedIds: Set<number>;
   onToggle: (id: number) => void;
   onClose: () => void;
+  /** Where the list comes from. Default: the shared, cached `loadCatalog` (every Vio block's picker). */
+  load?: () => Promise<CatalogProduct[]>;
 }) {
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +51,7 @@ export function CatalogModal({
 
   useEffect(() => {
     let cancelled = false;
-    loadCatalog()
+    load()
       .then((list) => {
         if (!cancelled) {
           setProducts(list);
