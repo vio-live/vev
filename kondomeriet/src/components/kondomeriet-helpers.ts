@@ -1298,12 +1298,13 @@ export function fetchKondomerietProducts(
 export function fetchKondomerietProductsSettled(
   productIds: number[],
   sponsorId: number | null,
-  campaignId?: number | null
+  campaignId?: number | null,
+  { full = false }: { full?: boolean } = {}
 ): Promise<{ list: any[]; ok: boolean }> {
   simpleConfigRequest();
   const ids = productIds.filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0 || sponsorId == null) return Promise.resolve({ list: [], ok: false });
-  return Promise.allSettled(ids.map((id) => batchedProduct(id, sponsorId, campaignId, false))).then((rs) => ({
+  return Promise.allSettled(ids.map((id) => batchedProduct(id, sponsorId, campaignId, full))).then((rs) => ({
     list: rs.map((r) => (r.status === "fulfilled" ? r.value : null)).filter(Boolean),
     ok: rs.every((r) => r.status === "fulfilled"),
   }));

@@ -8,7 +8,7 @@ import {
   KONDOMERIET_NAME,
   brandIdentity,
   brandIdentityOrCached,
-  fetchKondomerietProducts,
+  fetchKondomerietProductsSettled,
   kondomerietShippingRates,
   ref1ForOption,
   type BrandIdentity,
@@ -200,15 +200,33 @@ export function KondomerietDetail({
     const g = request.group;
     if (sponsorId == null || !g.options.some((o) => o.product?.__snap || o.product?.__light)) return;
     let cancelled = false;
-    fetchKondomerietProducts(
+    fetchKondomerietProductsSettled(
       g.options.map((o) => o.productId),
       sponsorId,
       attribution.campaignId ?? null,
       { full: true }
-    ).then((list) => {
-      if (cancelled || !list.length) return;
+    ).then(({ list, ok }) => {
+      if (cancelled || (!list.length && !ok)) return;
       const byId = new Map(list.map((p) => [Number(p.id), p]));
-      setGroup({ ...g, options: g.options.map((o) => ({ ...o, product: byId.get(o.productId) ?? o.product })) });
+      // The channel leaves out what is sold out: an option it did not return
+      // (when it did answer) stays in the drawer as sold out — no Vipps for it
+      // (the same rule as the cards, #491 19/11).
+      setGroup({
+        ...g,
+        options: g.options.map((o) => ({
+          ...o,
+          // What the card already knows is sold out stays sold out: a second
+          // answer saying otherwise may be an older cached one, and a sale of
+          // something out of stock is the worse mistake.
+          product: byId.has(o.productId)
+            ? isSoldOut(o.product)
+              ? { ...byId.get(o.productId), quantity: 0 }
+              : byId.get(o.productId)
+            : ok
+              ? { ...o.product, quantity: 0 }
+              : o.product,
+        })),
+      });
     });
     return () => {
       cancelled = true;
