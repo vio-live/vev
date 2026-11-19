@@ -14,6 +14,7 @@ import {
   ref1ForOption,
   type BrandIdentity,
   compareAtAmount,
+  initialOptionIndex,
   isSoldOut,
   type KondomerietDetailRequest,
 } from "./kondomeriet-helpers";
@@ -95,6 +96,9 @@ const EXTRA_CSS = `
 .knd-perks svg { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .knd-perks li.in-stock { color: #2e7d32; font-weight: 500; }
 .knd-perks li.out-of-stock { color: var(--vio-color-text-tertiary, #999); }
+
+/* A sold-out option that is the one on screen stays readable (the SDK paints a pressed pill white on black). */
+.option-pill.unavailable[aria-pressed='true'] { color: var(--vio-color-text, #0a0a0a); border-color: var(--vio-color-text, #0a0a0a); opacity: 0.55; }
 
 /* Vio's HTML descriptions: the SDK's description type, with its sections. */
 .description.rich { white-space: normal; }
@@ -236,7 +240,18 @@ export function KondomerietDetail({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [index, setIndex] = useState(request.index);
+  const [index, setIndex] = useState(() =>
+    isSoldOut(request.group.options[request.index]?.product) ? initialOptionIndex(request.group.options) : request.index
+  );
+  // The full products can say an option is sold out after the drawer opened:
+  // it moves to the first in stock — unless the reader picked that option.
+  const picked = useRef(false);
+  const stockKey = group.options.map((o) => (isSoldOut(o.product) ? "0" : "1")).join("");
+  useEffect(() => {
+    if (picked.current) return;
+    setIndex((i) => (isSoldOut(group.options[i]?.product) ? initialOptionIndex(group.options) : i));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockKey]);
   const [photo, setPhoto] = useState(0);
   const [vippsOfficial, setVippsOfficial] = useState(vippsButtonDefined);
   const [descOpen, setDescOpen] = useState(false);
@@ -362,6 +377,7 @@ export function KondomerietDetail({
 
   const select = (i: number) => {
     if (i === index) return;
+    picked.current = true;
     setIndex(i);
     request.onSelect?.(i);
     trackOptionSelect(group.options[i], attribution, sponsorId, "detail");
