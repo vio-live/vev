@@ -22,7 +22,7 @@ import {
   type HurtigkasseTarget,
   type ResolvedGroup,
 } from "./kondomeriet-helpers";
-import { directImage, ensurePreconnect, inAppBrowser, preconnectCirclewise, useVippsButton } from "./kondomeriet-perf";
+import { directImage, ensurePreconnect, holdImageGate, inAppBrowser, preconnectCirclewise, useImageAllowed, useVippsButton } from "./kondomeriet-perf";
 
 // The hosts a card needs, as soon as the package loads.
 ensurePreconnect();
@@ -215,6 +215,24 @@ export function KondomerietCardView({
     if (typeof rootRef === "function") rootRef(el);
     else if (rootRef) (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
   };
+  // The image: a priority card's (the first on screen) holds the page's other
+  // card images until it has loaded; the others wait for that, for the
+  // viewport or for 2.5 s (kondomeriet-perf.ts). The editor shows all at once.
+  const imageAllowed = useImageAllowed(priority || editor, () => localRef.current);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const releaseImage = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!priority || editor) return;
+    const release = holdImageGate();
+    releaseImage.current = release;
+    return release;
+  }, [priority, editor]);
+  useEffect(() => {
+    // Already loaded (the browser had it) before the hold was taken.
+    const el = imgRef.current;
+    if (el && el.complete) releaseImage.current?.();
+  });
+
   // Vipps' own button wraps below 220px; its compact form keeps one line (as the Vio card).
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -549,8 +567,9 @@ export function KondomerietCardView({
       onImage();
     }
   };
-  const imgEl = img ? (
+  const imgEl = img && imageAllowed ? (
     <img
+      ref={imgRef}
       src={img}
       alt={`${name} ${group.options.length > 1 ? option.label : ""}`.trim()}
       // The box is square (.vnc-image, aspect-ratio 1/1): the size only states the ratio — no layout shift.
@@ -559,9 +578,11 @@ export function KondomerietCardView({
       decoding="async"
       loading={priority ? "eager" : "lazy"}
       {...({ fetchpriority: priority ? "high" : "auto" } as any)}
+      onLoad={() => releaseImage.current?.()}
       onError={(e) => {
         const el = e.currentTarget;
         if (image.fallback && el.src !== image.fallback) el.src = image.fallback;
+        else releaseImage.current?.();
       }}
     />
   ) : null;

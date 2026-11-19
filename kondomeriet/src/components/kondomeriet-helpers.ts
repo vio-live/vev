@@ -1052,7 +1052,11 @@ export async function directGraphQL(endpoint: string, apiKey: string, query: str
         `&variables=${encodeURIComponent(JSON.stringify(variables))}` +
         (op ? `&operationName=${encodeURIComponent(op)}` : "") +
         `&apiKey=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url);
+      // `no-cache`: the answer may sit in the edge (s-maxage) but this browser
+      // always asks again — its HTTP cache would otherwise serve a price up to
+      // 5 minutes old (stale-while-revalidate=300), after the photo and the
+      // local cache already painted. No preflight: the mode adds no header of ours.
+      const res = await fetch(url, { cache: "no-cache" });
       const json = res.ok ? await res.json() : null;
       if (json?.data && !json?.errors?.length) return json.data;
       getRefused.add(endpoint);

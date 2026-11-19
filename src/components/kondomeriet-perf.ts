@@ -218,6 +218,87 @@ export function directImage(url: string | undefined | null, size: ImageSize): { 
 }
 
 // ---------------------------------------------------------------------------
+// Images below the fold wait for the first ones
+// ---------------------------------------------------------------------------
+
+/**
+ * `loading="lazy"` does not hold the images of the cards below the fold:
+ * Chrome's lazy margin on 4G is ~1 250 px, so on a phone they all leave with
+ * the first ones and share the bandwidth — measured on a mid-range phone on
+ * 4G, the four cards on screen took 0.8–1.2 s for 7–25 KB each. Here a card
+ * that is not a priority card gets its image when every priority image of the
+ * page has loaded (or failed), when it comes within 100 px of the viewport
+ * (scrolling, or the carousel moving), or after 2.5 s — whichever is first.
+ * After that, `loading="lazy"` applies as before.
+ */
+const IMAGE_GATE_TIMEOUT_MS = 2500;
+const IMAGE_NEAR_PX = 100;
+
+type ImageGate = { pending: number; open: boolean; listeners: Set<() => void>; timer: any };
+
+function imageGate(): ImageGate {
+  const g = globalThis as { __KND_IMG_GATE__?: ImageGate };
+  return g.__KND_IMG_GATE__ ?? (g.__KND_IMG_GATE__ = { pending: 0, open: false, listeners: new Set(), timer: null });
+}
+
+function openImageGate(): void {
+  const g = imageGate();
+  if (g.open) return;
+  g.open = true;
+  clearTimeout(g.timer);
+  const ls = [...g.listeners];
+  g.listeners.clear();
+  for (const f of ls) f();
+}
+
+function armImageGate(): void {
+  const g = imageGate();
+  if (!g.open && !g.timer) g.timer = setTimeout(openImageGate, IMAGE_GATE_TIMEOUT_MS);
+}
+
+/** A priority image starts loading; call the returned function once it has loaded or failed (idempotent). */
+export function holdImageGate(): () => void {
+  const g = imageGate();
+  if (g.open) return () => {};
+  g.pending++;
+  armImageGate();
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    g.pending--;
+    if (g.pending <= 0) openImageGate();
+  };
+}
+
+/** Whether a card's image may load now (see above). `bypass`: priority cards and the editor. */
+export function useImageAllowed(bypass: boolean, node: () => Element | null): boolean {
+  const [ok, setOk] = useState(() => bypass || imageGate().open);
+  useEffect(() => {
+    if (ok) return;
+    if (bypass || imageGate().open) return setOk(true);
+    const allow = () => setOk(true);
+    const g = imageGate();
+    g.listeners.add(allow);
+    armImageGate();
+    let io: IntersectionObserver | null = null;
+    const el = node();
+    if (el && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver((es) => {
+        if (es.some((e) => e.isIntersecting)) allow();
+      }, { rootMargin: `${IMAGE_NEAR_PX}px` });
+      io.observe(el);
+    }
+    return () => {
+      g.listeners.delete(allow);
+      io?.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ok, bypass]);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
 // Browser cache (stale-while-revalidate)
 // ---------------------------------------------------------------------------
 
