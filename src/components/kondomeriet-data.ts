@@ -4,7 +4,7 @@ import { getActiveCurrency, vioAttribution } from "./vio-helpers";
 import { photoProduct, usePhotoArrival, useSnapFallback } from "./kondomeriet-photo";
 import {
   allGroupIds,
-  fetchKondomerietProducts,
+  fetchKondomerietProductsSettled,
   marketKey,
   productFromSnap,
   registerWantedProducts,
@@ -91,8 +91,10 @@ export function useKondomerietGroups({
     if (liveKey.current !== key) setLive(null);
     liveKey.current = key;
     let cancelled = false;
-    fetchKondomerietProducts(ids, sid, cid).then((list) => {
-      if (!cancelled && list.length) setLive(list);
+    // An empty answer counts when the channel did answer: its products are
+    // gone (sold out), and the cards must stop offering them.
+    fetchKondomerietProductsSettled(ids, sid, cid).then(({ list, ok }) => {
+      if (!cancelled && (list.length || ok)) setLive(list);
     });
     return () => {
       cancelled = true;
@@ -104,7 +106,7 @@ export function useKondomerietGroups({
   // campaign comes from the bootstrap): the event's attribution is complete.
   const tracked = useRef<any[] | null>(null);
   useEffect(() => {
-    if (!live || sponsorId == null || tracked.current === live) return;
+    if (!live || !live.length || sponsorId == null || tracked.current === live) return;
     tracked.current = live;
     trackViewItemList(
       live.map((p) => productToItem(p)),

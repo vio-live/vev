@@ -1186,7 +1186,10 @@ async function queryProducts(ids: number[], sponsorId: number, campaignId: numbe
     );
   } catch (err: any) {
     console.warn("[Vio] Kondomeriet product query failed, using the standard one (no shop URL)", err?.message ?? err);
-    return (await fetchVioProducts(ids, sponsorId, campaignId)) as any[];
+    const fallback = (await fetchVioProducts(ids, sponsorId, campaignId)) as any[];
+    // An empty fallback after a failure is not «none of these exist»: keep it a failure.
+    if (!Array.isArray(fallback) || fallback.length === 0) throw err;
+    return fallback;
   }
 }
 
@@ -1285,6 +1288,25 @@ export function fetchKondomerietProducts(
   return Promise.all(ids.map((id) => batchedProduct(id, sponsorId, campaignId, full).catch(() => null))).then(
     (list) => list.filter(Boolean)
   );
+}
+
+/**
+ * Like `fetchKondomerietProducts`, saying whether the channel answered:
+ * `ok` with an empty `list` means none of those products is on the channel
+ * now (sold out or out of the collection), not a failed request.
+ */
+export function fetchKondomerietProductsSettled(
+  productIds: number[],
+  sponsorId: number | null,
+  campaignId?: number | null
+): Promise<{ list: any[]; ok: boolean }> {
+  simpleConfigRequest();
+  const ids = productIds.filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0 || sponsorId == null) return Promise.resolve({ list: [], ok: false });
+  return Promise.allSettled(ids.map((id) => batchedProduct(id, sponsorId, campaignId, false))).then((rs) => ({
+    list: rs.map((r) => (r.status === "fulfilled" ? r.value : null)).filter(Boolean),
+    ok: rs.every((r) => r.status === "fulfilled"),
+  }));
 }
 
 /** The product ids the page's Kondomeriet blocks show — registered as they render. */
