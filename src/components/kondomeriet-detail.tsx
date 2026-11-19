@@ -94,6 +94,13 @@ const EXTRA_CSS = `
 .knd-perks svg { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .knd-perks li.in-stock { color: #2e7d32; font-weight: 500; }
 .knd-perks li.out-of-stock { color: var(--vio-color-text-tertiary, #999); }
+/* The brand's promises: the SDK detail's highlights strip (vio-web-sdk src/ui/highlights.ts
+   highlightsStyles('detail')), which the SDK detail stylesheet copy does not carry. */
+.highlights { list-style: none; margin: 0; padding: var(--vio-detail-highlights-padding, 16px 0 2px); display: var(--vio-detail-highlights-display, grid); grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; border-top: 1px solid var(--vio-color-border, #e5e5e5); }
+.hl { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; min-width: 0; }
+.hl-icon { width: var(--vio-detail-highlight-icon-size, 22px); height: var(--vio-detail-highlight-icon-size, 22px); margin-bottom: 8px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; object-fit: contain; }
+.hl-title { font-size: 12px; font-weight: 400; line-height: 1.3; letter-spacing: 0.01em; color: var(--vio-color-text, #0a0a0a); }
+.hl-text { font-size: 10.5px; line-height: 1.35; letter-spacing: 0.01em; color: var(--vio-color-text-secondary, #666); }
 
 /* A sold-out option that is the one on screen stays readable (the SDK paints a pressed pill white on black). */
 .option-pill.unavailable[aria-pressed='true'] { color: var(--vio-color-text, #0a0a0a); border-color: var(--vio-color-text, #0a0a0a); opacity: 0.55; }
