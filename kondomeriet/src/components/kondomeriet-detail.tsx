@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Vio } from "../../vio-sdk";
 import { SDK_DETAIL_CSS } from "../../vio-sdk/detail-css.js";
 import { getProductPriceAmount } from "./vio-helpers";
+import { BottomSheet, isPhoneSheet } from "./kondomeriet-sheet";
 import {
   DEFAULT_STOCK_TEXT,
   KONDOMERIET_DETAIL_EVENT,
@@ -274,8 +275,20 @@ export function KondomerietDetail({
     void (host.shadowRoot?.querySelector(".modal") as HTMLElement | null)?.offsetWidth;
     host.setAttribute("open", "");
     const opener = document.activeElement as HTMLElement | null;
+    // On a phone the bottom sheet locks the page (position: fixed — overflow
+    // alone does not hold iOS Safari) and closes on a pull down, like the
+    // SDK's sheets; the side drawer on a desktop keeps the overflow lock.
+    const phone = isPhoneSheet();
     const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    if (!phone) document.body.style.overflow = "hidden";
+    const sheetDrag = new BottomSheet({
+      host,
+      sheet: () => host.shadowRoot?.querySelector(".modal") as HTMLElement | null,
+      backdrop: () => host.shadowRoot?.querySelector(".backdrop") as HTMLElement | null,
+      dragZones: ".handle, .topbar",
+      close,
+    });
+    sheetDrag.update(true);
     closeRef.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
@@ -289,7 +302,8 @@ export function KondomerietDetail({
     return () => {
       cancelled = true;
       host.removeAttribute("open");
-      document.body.style.overflow = prevOverflow;
+      sheetDrag.disconnect();
+      if (!phone) document.body.style.overflow = prevOverflow;
       document.removeEventListener("keydown", onKey);
       opener?.focus?.({ preventScroll: true });
     };
