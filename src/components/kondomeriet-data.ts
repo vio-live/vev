@@ -61,8 +61,20 @@ export function useKondomerietGroups({
   // in the block's order.
   const photoTick = usePhotoArrival();
   const snapOk = useSnapFallback();
+  // Not before the block has mounted: a published Vev page arrives
+  // server-rendered with the skeleton, and React hydrates it. The browser
+  // cache, the photo and the timed snapshot exist only here, so a first render
+  // that already used them would not match the server's HTML — and React, in
+  // production, keeps the server's attributes on the nodes it reuses: the
+  // card came out mixed with the skeleton («knd-skel-line» behind the price,
+  // «knd-skel-block» for «Se produktinfo», aria-busy left on) on a reload
+  // with the cache (#491, 19/11). The first render is the skeleton, as on the
+  // server; the cached card follows in the same frame's effects.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const initial = useMemo(() => {
     if (ids.length === 0) return [];
+    if (!mounted) return null;
     const cached = readCachedProducts(ids, marketKey()).products;
     const snaps = new Map<number, any>();
     for (const g of groups) for (const [k, s] of Object.entries(g.snap ?? {})) snaps.set(Number(k), s);
@@ -75,7 +87,7 @@ export function useKondomerietGroups({
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupsKey, photoTick, snapOk]);
+  }, [groupsKey, photoTick, snapOk, mounted]);
 
   // Before the bootstrap names the sponsor, the channel the Config resolved
   // in the editor (`fastStart`): the request leaves in parallel with the bootstrap.
