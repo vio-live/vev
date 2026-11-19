@@ -151,13 +151,13 @@ export const CARD_EDITABLE_CSS: any[] = [
   { selector: ".vio-native-card", title: "Card", properties: ["background", "border-radius", "padding", "box-shadow", "gap"] },
   { selector: ".vio-native-card .vnc-image", title: "Image", properties: ["border-radius", "aspect-ratio", "background-color"] },
   { selector: ".vio-native-card .vnc-add", title: "Button (icon)", properties: ["background", "color", "border-radius", "box-shadow", "width", "height"] },
-  { selector: ".vio-native-card .vnc-btn-text", title: "Button (text)", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
-  { selector: ".vio-native-card .vnc-btn-vipps", title: "Vipps button", properties: ["background", "color", "border-radius", "font-size", "padding", "letter-spacing"] },
-  { selector: ".vio-native-card .vnc-badge", title: "Discount badge", properties: ["background", "color", "border-radius", "font-size", "padding"] },
-  { selector: ".vio-native-card .vnc-brand", title: "Brand", properties: ["color", "font-size", "letter-spacing", "font-weight"] },
+  { selector: ".vio-native-card .vnc-btn-text", title: "Button (text)", properties: ["background", "color", "border-radius", "font-size", "font-family", "font-weight", "padding", "letter-spacing"] },
+  { selector: ".vio-native-card .vnc-btn-vipps", title: "Vipps button", properties: ["background", "color", "border-radius", "font-size", "font-family", "font-weight", "padding", "letter-spacing"] },
+  { selector: ".vio-native-card .vnc-badge", title: "Discount badge", properties: ["background", "color", "border-radius", "font-size", "font-family", "font-weight", "padding"] },
+  { selector: ".vio-native-card .vnc-brand", title: "Brand", properties: ["color", "font-size", "font-family", "letter-spacing", "font-weight"] },
   { selector: ".vio-native-card .vnc-name", title: "Name", properties: ["color", "font-size", "font-weight", "font-family", "line-height"] },
-  { selector: ".vio-native-card .vnc-price", title: "Price", properties: ["color", "font-size", "font-weight"] },
-  { selector: ".vio-native-card .vnc-retailer", title: "Retailer", properties: ["color", "font-size", "letter-spacing"] },
+  { selector: ".vio-native-card .vnc-price", title: "Price", properties: ["color", "font-size", "font-family", "font-weight"] },
+  { selector: ".vio-native-card .vnc-retailer", title: "Retailer", properties: ["color", "font-size", "font-family", "font-weight", "letter-spacing"] },
 ];
 
 /** Extract the CardConfig subset from a Vev props object. */
