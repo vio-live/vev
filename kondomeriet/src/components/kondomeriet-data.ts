@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { productToItem, trackViewItemList } from "./analytics";
 import { getActiveCurrency, vioAttribution } from "./vio-helpers";
-import { photoProduct, usePhotoArrival } from "./kondomeriet-photo";
+import { photoProduct, usePhotoArrival, useSnapFallback } from "./kondomeriet-photo";
 import {
   allGroupIds,
   fetchKondomerietProducts,
@@ -19,10 +19,12 @@ import { inAppBrowser, readCachedProducts } from "./kondomeriet-perf";
  * The products of a block's groups, resolved into cards — painted at once,
  * refreshed in the background:
  *
- * 1. First paint, with no request: the browser cache (a product read in the
- *    last 5 minutes — coming back to the article), else the snapshot the
- *    editor stored in the block's props (`group.snap`). Only when neither
- *    covers every product does the block wait (`products` null → skeletons).
+ * 1. First paint, with no request of its own: the browser cache (a product
+ *    read in the last 5 minutes — coming back to the article), else the
+ *    CDN's photo of the surface (at most ~90 s old), else — when the photo
+ *    fails or has not come in 700 ms — the snapshot the editor stored in the
+ *    block's props (`group.snap`). Until one covers every product the block
+ *    waits (`products` null → skeletons).
  * 2. Then the API on the block's channel (one request for the whole page,
  *    `fetchKondomerietProducts`), whose answer replaces the first paint in
  *    place: a changed price or stock updates the same card, nothing moves.
@@ -53,8 +55,12 @@ export function useKondomerietGroups({
   // The page's Config asks for every block's products in one request.
   useMemo(() => registerWantedProducts(ids), [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // First paint: cache, else snapshot, else the CDN's photo of the surface — per product, in the block's order.
+  // First paint: cache, else the CDN's photo of the surface, else — only when
+  // the photo fails or has not come in 700 ms — the snapshot in the block's
+  // props, which can be days old (old price, old image names) — per product,
+  // in the block's order.
   const photoTick = usePhotoArrival();
+  const snapOk = useSnapFallback();
   const initial = useMemo(() => {
     if (ids.length === 0) return [];
     const cached = readCachedProducts(ids, marketKey()).products;
@@ -63,13 +69,13 @@ export function useKondomerietGroups({
     const list: any[] = [];
     for (const id of ids) {
       const p =
-        cached.get(id) ?? (snaps.has(id) ? productFromSnap(id, snaps.get(id)) : null) ?? photoProduct(id, getActiveCurrency());
+        cached.get(id) ?? photoProduct(id, getActiveCurrency()) ?? (snapOk && snaps.has(id) ? productFromSnap(id, snaps.get(id)) : null);
       if (!p) return null; // a product with neither: wait for the API
       list.push(p);
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupsKey, photoTick]);
+  }, [groupsKey, photoTick, snapOk]);
 
   // Before the bootstrap names the sponsor, the channel the Config resolved
   // in the editor (`fastStart`): the request leaves in parallel with the bootstrap.
