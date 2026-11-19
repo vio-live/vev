@@ -205,6 +205,15 @@ export function KondomerietCardView({
     setIndex(group ? initialOptionIndex(group.options) : 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupKey]);
+  // Stock arrives after the first paint (live data, a sweep): an option the
+  // card started on that turns out sold out gives way to the first in stock,
+  // unless the reader chose it.
+  const stockKey = group ? group.options.map((o) => (isSoldOut(o.product) ? "0" : "1")).join("") : "";
+  useEffect(() => {
+    if (!group) return;
+    setIndex((i) => (isSoldOut(group.options[i]?.product) ? initialOptionIndex(group.options) : i));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockKey]);
 
   // Until mounted the card renders what a server renders — a published Vev
   // page is hydrated over its server HTML, and that HTML must match: no brand

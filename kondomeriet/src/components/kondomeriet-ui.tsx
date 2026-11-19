@@ -38,6 +38,7 @@ const KND_CSS = `
   background: repeating-linear-gradient(-45deg, #fafafa, #fafafa 5px, #f0f0f0 5px, #f0f0f0 10px);
 }
 .vio-native-card .knd-option-pill.unavailable:hover { border-color: var(--vio-color-border, #e5e5e5); }
+.vio-native-card .knd-option-pill.unavailable[aria-pressed="true"] { color: var(--vio-color-text, #0a0a0a); border-color: var(--vio-color-text, #0a0a0a); opacity: 0.55; }
 .vio-native-card .knd-option-thumb {
   flex: 0 0 auto; width: 44px; height: 44px; padding: 0; overflow: hidden; cursor: pointer; box-sizing: border-box;
   background: var(--vio-color-surface-muted, #f2f2f2); border: 1px solid transparent; border-radius: var(--vio-detail-thumb-radius, 0);
