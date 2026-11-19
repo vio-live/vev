@@ -206,6 +206,13 @@ export function KondomerietCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupKey]);
 
+  // Until mounted the card renders what a server renders — a published Vev
+  // page is hydrated over its server HTML, and that HTML must match: no brand
+  // identity from this browser's cache, no in-app browser test, no offer
+  // countdown (the server's clock is the publish time). See kondomeriet-data.ts.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const hasDates = !!(group?.group.discountStart || group?.group.discountEnd || group?.group.offerEnd || config.offerEnd);
   const now = useMinuteClock(hasDates);
 
@@ -262,12 +269,12 @@ export function KondomerietCardView({
     // the block has no snapshot.
     const pMode = resolveBuyOnCard(pending?.buyOnCard, config.buyOnCard, vippsButton);
     const pBuy = pMode === "always" || (pMode === "auto" && (pending?.options ?? 1) <= 1);
-    const pIdentity = brandIdentityOrCached(sponsorId);
-    const pTarget: HurtigkasseTarget = inAppBrowser() ? "_top" : hurtigkasseTarget;
+    const pIdentity = mounted ? brandIdentityOrCached(sponsorId) : null;
+    const pTarget: HurtigkasseTarget = mounted && inAppBrowser() ? "_top" : hurtigkasseTarget;
     const pNote = (pTarget === "_blank" ? vippsNote : vippsNoteSameWindow).trim();
     const pTrust = showTrustLine ? trustLineFor(config.trustLine, pIdentity) : "";
     const pSeller = pIdentity?.name?.trim() || KONDOMERIET_NAME;
-    const pOffer = offerEndText(pending?.offerEnd || config.offerEnd, config.offerEndText, now);
+    const pOffer = mounted ? offerEndText(pending?.offerEnd || config.offerEnd, config.offerEndText, now) : "";
     const line = (width: string) => <span className="vnc-skel knd-skel-line" style={{ width }} />;
     const pButton = pBuy ? (
       <div className="vnc-btn-vipps knd-skel-block" aria-hidden="true" />
