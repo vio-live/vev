@@ -124,7 +124,11 @@ export function useKondomerietGroups({
       return ids
         .map((id) => {
           const p = byId.get(id);
-          if (!p) return null;
+          // The channel leaves out what is sold out (and what left the
+          // collection): a product the first paint showed but the API did not
+          // return stays on the card as sold out — «Utsolgt», nothing to buy —
+          // instead of keeping its stale buy button (seen in #491, 19/11).
+          if (!p) return first.has(id) ? { ...first.get(id), quantity: 0 } : null;
           return p.description == null && first.get(id)?.description ? { ...p, description: first.get(id).description } : p;
         })
         .filter(Boolean);
