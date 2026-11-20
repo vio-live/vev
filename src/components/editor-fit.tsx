@@ -104,6 +104,17 @@ export const CUT_BY_FRAME_NOTICE =
   "The frame's height is fixed: this block is cut when published. Set its height to Auto.";
 
 /**
+ * The Kondomeriet blocks' version: on their pages the frames are fixed on
+ * purpose (Vev's «Auto» measures 0 px in the editor), so the fix is a taller
+ * frame, not Auto. Each breakpoint has its own frame: a grid sized on Mobile
+ * is ~300 px too short on Desktop, where its wider columns make square photos
+ * and the cards taller (#491, 20/11), and what does not fit runs over the
+ * element below.
+ */
+export const KONDOMERIET_FRAME_NOTICE =
+  "Taller than its frame at this screen size: when published it runs over what is below. Make the frame taller here (Desktop, Tablet and Mobile each have their own height).";
+
+/**
  * Editor-only notices over a block, stacked in its top-left corner (the
  * block's root is positioned). Renders nothing outside the editor, whatever
  * it is given, so a published page never carries one.

@@ -5,7 +5,7 @@ import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
 import { NO_KONDOMERIET_CONFIG } from "./kondomeriet-owner";
-import { EditorNotices } from "./editor-fit";
+import { EditorNotices, KONDOMERIET_FRAME_NOTICE, useCutByFrame } from "./editor-fit";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem } from "./analytics";
 
@@ -193,6 +193,9 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
     el.scrollTo({ left, behavior: "smooth" });
   };
 
+  // In the editor: the block taller than its frame at this breakpoint (see KONDOMERIET_FRAME_NOTICE).
+  const cutByFrame = useCutByFrame(rootRef, true, rootEl);
+
   if (ids.length === 0) {
     return (
       <div ref={setRoot} className="knd-list">
@@ -203,7 +206,11 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
 
   const cardConfig = pickKondomerietConfig(props);
   // In the editor: picked products without a snapshot (see SNAPSHOT_MISSING_NOTICE).
-  const notices = [...(configMissing ? [NO_KONDOMERIET_CONFIG] : []), ...(groupsMissingSnapshot(filled) ? [SNAPSHOT_MISSING_NOTICE] : [])];
+  const notices = [
+    ...(cutByFrame ? [KONDOMERIET_FRAME_NOTICE] : []),
+    ...(configMissing ? [NO_KONDOMERIET_CONFIG] : []),
+    ...(groupsMissingSnapshot(filled) ? [SNAPSHOT_MISSING_NOTICE] : []),
+  ];
   const loading = products == null;
   // While loading: one skeleton per group, in the layout the cards will take.
   const cells: React.ReactNode[] = loading

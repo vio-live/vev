@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useEditorState } from "@vev/react";
 import { primaryImageUrl, vippsButtonAttributes } from "../../vio-sdk";
 import { COMPONENT_TEMPLATE_ID, getProductPriceAmount, vioAttribution, type VioAttribution } from "./vio-helpers";
-import { CUT_BY_FRAME_NOTICE, EditorNotices, useCutByFrame } from "./editor-fit";
+import { EditorNotices, KONDOMERIET_FRAME_NOTICE, useCutByFrame } from "./editor-fit";
 import {
   DEFAULT_VIPPS_NOTE,
   KONDOMERIET_NAME,
@@ -632,7 +632,7 @@ export function KondomerietCardView({
 
   return (
     <div ref={setRoot} className={rootClass} style={accentStyle}>
-      <EditorNotices notices={cutByFrame ? [CUT_BY_FRAME_NOTICE, ...editorNotices] : editorNotices} />
+      <EditorNotices notices={cutByFrame ? [KONDOMERIET_FRAME_NOTICE, ...editorNotices] : editorNotices} />
       <div
         key="image"
         className="vnc-image"
