@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { kondomerietScope } from "./kondomeriet-perf";
+import { pageScope } from "./vio-helpers";
 
 /**
  * The «photo» of a surface on the CDN: what `/v2/mobile/config` answers for
@@ -112,7 +114,7 @@ export function startPhoto(surfaceKey: string | null | undefined): Promise<Surfa
   if (known && known.key === key) return known.promise;
   try {
     // Per page: on the same origin, another page (Vio blocks only) must not load this one's photo.
-    localStorage.setItem(LAST_KEY, JSON.stringify({ key, path: location.pathname }));
+    localStorage.setItem(LAST_KEY, JSON.stringify({ key, path: pageScope() }));
   } catch {
     /* no storage: the next visit starts at the Config */
   }
@@ -153,7 +155,7 @@ export function startRememberedPhoto(): void {
   try {
     if (typeof window === "undefined") return;
     const last = JSON.parse(localStorage.getItem(LAST_KEY) || "null");
-    if (last && last.path === location.pathname) startPhoto(String(last.key ?? ""));
+    if (last && last.path === pageScope()) startPhoto(String(last.key ?? ""));
   } catch {
     /* nothing remembered */
   }
@@ -172,8 +174,15 @@ export function photoConfigFor(surfaceKey: string): Promise<any | null> {
   return s.promise.then((p) => (isFresh(p) && p.config ? p.config : null));
 }
 
-/** A product from the photo, in the page's currency (another market's price is not painted). */
+/**
+ * A product from the photo, in the page's currency (another market's price is
+ * not painted) — only the photo of the page's Kondomeriet Config's key: one
+ * remembered from another page, or with no Kondomeriet Config here, paints
+ * nothing.
+ */
 export function photoProduct(id: number, currency: string): any | null {
+  const scope = kondomerietScope();
+  if (!scope || photoState()?.key !== scope.key) return null;
   const p = photoNow()?.products.find((x) => Number(x?.id) === id) ?? null;
   if (!p) return null;
   const cur = String(p?.price?.currency_code ?? photoNow()?.currency ?? "").toUpperCase();

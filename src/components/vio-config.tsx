@@ -12,6 +12,9 @@ import {
   clearPersistedApiKey,
   DEFAULT_ENVIRONMENT,
   persistApiKey,
+  persistEnvironment,
+  scopedStorageKey,
+  setRuntimeEnvironment,
   resolveConfigApiKey,
   setRuntimeApiKey,
   resetCatalogCache,
@@ -325,6 +328,15 @@ export default function VioConfig({
       setStatusMsg("");
       try {
         setRuntimeApiKey(key);
+        // The page's Config imposes its key and environment — in this window
+        // and, from the editor, for the properties panel of THIS page (another
+        // window; see pageScope in vio-helpers). Whatever another page left
+        // in this browser is not used.
+        setRuntimeEnvironment(activeEnvironment);
+        if (disabled) {
+          persistApiKey(key);
+          persistEnvironment(activeEnvironment, key);
+        }
         // The page's campaign goes into the init (the SDK's fallback for every
         // slot without an assignment, and what the declaration carries); a
         // change of campaign re-inits like a change of key. Any campaign of
@@ -752,9 +764,12 @@ export default function VioConfig({
 type ApiKeyEditorProps = {
   value?: string;
   onChange: (value: string) => void;
+  /** Vev's form context: `value` holds this block's other props (environment). */
+  context?: { value?: { environment?: VioEnvironment } };
 };
 
-export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
+export function VioApiKeyEditor({ value, onChange, context }: ApiKeyEditorProps) {
+  const formEnvironment: VioEnvironment = context?.value?.environment || DEFAULT_ENVIRONMENT;
   // The block's canvas side (VioConfig) resolves its key as this prop →
   // localStorage (see resolveConfigApiKey). Showing only the raw prop here —
   // and only offering Disconnect when the PROP is set — hid a real gap: a key
@@ -776,8 +791,13 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
   /** Persist the key to the Vev prop (+ localStorage). A CHANGED key auto-
    * connects via VioConfig's key effect; an unchanged key is a no-op. */
   const handleSave = () => {
+    // The key AND this Config's environment, together and for this page only:
+    // the panel's own SDK (pickers, Vipps check) must not keep the environment
+    // another page's Config saved (#491, 20/11).
     persistApiKey(trimmed);
+    persistEnvironment(formEnvironment, trimmed);
     setRuntimeApiKey(trimmed);
+    setRuntimeEnvironment(formEnvironment);
     onChange(trimmed);
   };
 
@@ -796,6 +816,7 @@ export function VioApiKeyEditor({ value, onChange }: ApiKeyEditorProps) {
   const handleConnect = () => {
     if (!trimmed) return;
     setRuntimeApiKey(trimmed);
+    setRuntimeEnvironment(formEnvironment);
     onChange(trimmed);
   };
 
@@ -869,7 +890,7 @@ function usePersistedList<T>(read: () => T[], storageKey: string): { list: T[]; 
   const [connection, setConnection] = useState<string | null>(() => getStoredConnection());
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key !== null && e.key !== storageKey && e.key !== VIO_CONNECTION_STORAGE) return;
+      if (e.key !== null && e.key !== scopedStorageKey(storageKey) && e.key !== scopedStorageKey(VIO_CONNECTION_STORAGE)) return;
       setList(read());
       setConnection(getStoredConnection());
     };

@@ -29,20 +29,79 @@ let lastInitCampaign: number | null = null;
 
 export const VIO_ENVIRONMENT_STORAGE = "vio.environment";
 
-export function getPersistedEnvironment(): VioEnvironment | null {
-  if (typeof localStorage === "undefined") return null;
+// ---- What a Config leaves in the browser belongs to its page ----------------
+//
+// localStorage is per origin: every page of editor.vev.design, and every page
+// of a *.vev.site, shares it. A key, an environment, a sponsor or a campaign
+// saved by one page's Config was read by the next page opened — a staging
+// Vio Config stayed on production after a Kondomeriet page had saved
+// «production» (Alan, #491, 20/11). Each of these entries now carries the page
+// it belongs to: the path of the top window, which the editor's canvas (an
+// iframe) and its properties panel share, and which differs per page in the
+// editor (/edit/<project>/<page>) and on a published site.
+
+/** The page this window shows or edits (the top window's path; this window's when the top is not readable). */
+export function pageScope(): string {
   try {
-    const env = localStorage.getItem(VIO_ENVIRONMENT_STORAGE);
-    return (env as VioEnvironment) || null;
+    const top = typeof window !== "undefined" ? window.top?.location?.pathname : "";
+    if (top) return top;
+  } catch {
+    /* a cross-origin top */
+  }
+  try {
+    return typeof location !== "undefined" ? location.pathname || "/" : "/";
+  } catch {
+    return "/";
+  }
+}
+
+/** A connection entry's name for this page (`vio.apiKey@/edit/<project>/<page>`). */
+export function scopedStorageKey(base: string): string {
+  return `${base}@${pageScope()}`;
+}
+
+/** The entries from before the page scope: read by any page, so they are dropped once. */
+const UNSCOPED_CONNECTION_KEYS = [
+  "vio.apiKey",
+  "vio.environment",
+  "vio.sponsorId",
+  "vio.sponsors",
+  "vio.connection",
+  "vio.campaignId",
+  "vio.campaigns",
+  "knd.configOwner.v1",
+  "knd.products.v1",
+  "knd.identity.v1",
+];
+(function dropUnscopedConnectionState() {
+  try {
+    if (typeof localStorage === "undefined") return;
+    for (const k of UNSCOPED_CONNECTION_KEYS) localStorage.removeItem(k);
+  } catch {
+    /* no storage */
+  }
+})();
+
+/**
+ * The environment this page's Config saved FOR `apiKey` — never an
+ * environment on its own: another key (another Config, a key typed in the
+ * panel) does not inherit it.
+ */
+export function getPersistedEnvironment(apiKey?: string): VioEnvironment | null {
+  if (typeof localStorage === "undefined" || !apiKey) return null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(scopedStorageKey(VIO_ENVIRONMENT_STORAGE)) || "null");
+    return saved && saved.key === apiKey.trim() && typeof saved.environment === "string" ? (saved.environment as VioEnvironment) : null;
   } catch {
     return null;
   }
 }
 
-export function persistEnvironment(env: VioEnvironment): void {
-  if (typeof localStorage === "undefined") return;
+/** Saves the environment of `apiKey` for this page (nothing without a key). */
+export function persistEnvironment(env: VioEnvironment, apiKey?: string): void {
+  if (typeof localStorage === "undefined" || !apiKey || !env) return;
   try {
-    localStorage.setItem(VIO_ENVIRONMENT_STORAGE, env);
+    localStorage.setItem(scopedStorageKey(VIO_ENVIRONMENT_STORAGE), JSON.stringify({ key: apiKey.trim(), environment: env }));
   } catch {
     /* noop */
   }
@@ -52,15 +111,16 @@ export function setRuntimeEnvironment(env: VioEnvironment): void {
   (globalThis as { __VIO_ENVIRONMENT__?: VioEnvironment }).__VIO_ENVIRONMENT__ = env;
 }
 
-export function resolveEnvironment(propEnv?: VioEnvironment): VioEnvironment {
+/** The environment for `apiKey`: the caller's → this window's runtime → the one this page saved for that key → the default. */
+export function resolveEnvironment(propEnv?: VioEnvironment, apiKey?: string): VioEnvironment {
   const runtime = (globalThis as { __VIO_ENVIRONMENT__?: VioEnvironment }).__VIO_ENVIRONMENT__;
-  return propEnv || runtime || getPersistedEnvironment() || DEFAULT_ENVIRONMENT;
+  return propEnv || runtime || getPersistedEnvironment(apiKey) || DEFAULT_ENVIRONMENT;
 }
 
 export function getPersistedApiKey(): string | null {
   if (typeof localStorage === "undefined") return null;
   try {
-    return localStorage.getItem(VIO_API_KEY_STORAGE);
+    return localStorage.getItem(scopedStorageKey(VIO_API_KEY_STORAGE));
   } catch {
     return null;
   }
@@ -68,7 +128,7 @@ export function getPersistedApiKey(): string | null {
 
 export function persistApiKey(key: string): void {
   try {
-    localStorage.setItem(VIO_API_KEY_STORAGE, key.trim());
+    localStorage.setItem(scopedStorageKey(VIO_API_KEY_STORAGE), key.trim());
   } catch {
     /* noop */
   }
@@ -76,7 +136,7 @@ export function persistApiKey(key: string): void {
 
 export function clearPersistedApiKey(): void {
   try {
-    localStorage.removeItem(VIO_API_KEY_STORAGE);
+    localStorage.removeItem(scopedStorageKey(VIO_API_KEY_STORAGE));
   } catch {
     /* noop */
   }
@@ -162,7 +222,7 @@ export function campaignListFromBootstrap(boot: unknown): CampaignListItem[] {
 export function readPersistedCampaigns(): CampaignListItem[] {
   if (typeof localStorage === "undefined") return [];
   try {
-    const raw = localStorage.getItem(VIO_CAMPAIGNS_STORAGE);
+    const raw = localStorage.getItem(scopedStorageKey(VIO_CAMPAIGNS_STORAGE));
     const list = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(list)) return [];
     return list
@@ -219,7 +279,7 @@ export function validatePageCampaign(list: readonly CampaignListItem[], wanted: 
 export function persistedCampaignValidity(key: string, environment: string, wanted: number): boolean | undefined {
   if (!(wanted > 0)) return false;
   if (getStoredConnection() !== connectionFingerprint(key, environment)) return undefined;
-  if (typeof localStorage === "undefined" || localStorage.getItem(VIO_CAMPAIGNS_STORAGE) == null) return undefined;
+  if (typeof localStorage === "undefined" || localStorage.getItem(scopedStorageKey(VIO_CAMPAIGNS_STORAGE)) == null) return undefined;
   return validatePageCampaign(readPersistedCampaigns(), wanted).effective === wanted;
 }
 
@@ -231,7 +291,7 @@ export function sdkSupportsPageCampaign(): boolean {
 export function getPersistedCampaignId(): number | null {
   if (typeof localStorage === "undefined") return null;
   try {
-    return toCampaignId(localStorage.getItem(VIO_CAMPAIGN_ID_STORAGE));
+    return toCampaignId(localStorage.getItem(scopedStorageKey(VIO_CAMPAIGN_ID_STORAGE)));
   } catch {
     return null;
   }
@@ -269,7 +329,7 @@ export function announcePageCampaign(id: number | null, { persist }: { persist: 
   setRuntimeCampaignId(value);
   // localStorage only from the editor: it is how the properties panel (another
   // window) learns the page's campaign; a visitor's browser keeps nothing.
-  if (persist) writeStorage(VIO_CAMPAIGN_ID_STORAGE, value > 0 ? String(value) : null);
+  if (persist) writeStorage(scopedStorageKey(VIO_CAMPAIGN_ID_STORAGE), value > 0 ? String(value) : null);
   if (!changed) return;
   resetCatalogCache();
   if (typeof window !== "undefined") {
@@ -289,7 +349,7 @@ function installCampaignStorageSync(): void {
   if (campaignStorageSyncInstalled || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
   campaignStorageSyncInstalled = true;
   window.addEventListener("storage", (e: StorageEvent) => {
-    if (e.key !== null && e.key !== VIO_CAMPAIGN_ID_STORAGE) return;
+    if (e.key !== null && e.key !== scopedStorageKey(VIO_CAMPAIGN_ID_STORAGE)) return;
     if (!Vio.isInitialized || !resolveApiKey()) return;
     try {
       ensureVioInit();
@@ -304,7 +364,7 @@ function installCampaignStorageSync(): void {
 export function getPersistedSponsorId(): number | null {
   if (typeof localStorage === "undefined") return null;
   try {
-    const v = localStorage.getItem(VIO_SPONSOR_ID_STORAGE);
+    const v = localStorage.getItem(scopedStorageKey(VIO_SPONSOR_ID_STORAGE));
     return v ? Number(v) : null;
   } catch {
     return null;
@@ -314,7 +374,7 @@ export function getPersistedSponsorId(): number | null {
 export function persistSponsorId(id: number): void {
   if (typeof localStorage === "undefined") return;
   try {
-    localStorage.setItem(VIO_SPONSOR_ID_STORAGE, String(id));
+    localStorage.setItem(scopedStorageKey(VIO_SPONSOR_ID_STORAGE), String(id));
   } catch {
     /* noop */
   }
@@ -1112,7 +1172,7 @@ export function connectionFingerprint(key: string, environment: string): string 
 export function getStoredConnection(): string | null {
   if (typeof localStorage === "undefined") return null;
   try {
-    return localStorage.getItem(VIO_CONNECTION_STORAGE);
+    return localStorage.getItem(scopedStorageKey(VIO_CONNECTION_STORAGE));
   } catch {
     return null;
   }
@@ -1121,7 +1181,7 @@ export function getStoredConnection(): string | null {
 export function readPersistedSponsors(): SponsorListItem[] {
   if (typeof localStorage === "undefined") return [];
   try {
-    const raw = localStorage.getItem(VIO_SPONSORS_STORAGE);
+    const raw = localStorage.getItem(scopedStorageKey(VIO_SPONSORS_STORAGE));
     const list = raw ? JSON.parse(raw) : [];
     return Array.isArray(list) ? list : [];
   } catch {
@@ -1149,10 +1209,10 @@ export function forgetConnectionState({ carts }: { carts: boolean }): void {
   const g = globalThis as { __VIO_SPONSOR_ID__?: number | null; __VIO_PRIMARY_SPONSOR_ID__?: number | null };
   g.__VIO_SPONSOR_ID__ = null;
   g.__VIO_PRIMARY_SPONSOR_ID__ = null;
-  writeStorage(VIO_SPONSOR_ID_STORAGE, null);
-  writeStorage(VIO_SPONSORS_STORAGE, null);
-  writeStorage(VIO_CAMPAIGNS_STORAGE, null);
-  writeStorage(VIO_CAMPAIGN_ID_STORAGE, null);
+  writeStorage(scopedStorageKey(VIO_SPONSOR_ID_STORAGE), null);
+  writeStorage(scopedStorageKey(VIO_SPONSORS_STORAGE), null);
+  writeStorage(scopedStorageKey(VIO_CAMPAIGNS_STORAGE), null);
+  writeStorage(scopedStorageKey(VIO_CAMPAIGN_ID_STORAGE), null);
   resetCatalogCache();
   resetVippsOfferCache();
   if (carts) {
@@ -1228,10 +1288,10 @@ export function adoptConnection(
   // may sell with a sponsor the default campaign does not have.
   const droppedCarts = pruneCartsOutside(config.knownIds);
   (globalThis as { __VIO_PRIMARY_SPONSOR_ID__?: number }).__VIO_PRIMARY_SPONSOR_ID__ = config.primaryId;
-  writeStorage(VIO_CONNECTION_STORAGE, fingerprint);
-  writeStorage(VIO_SPONSORS_STORAGE, JSON.stringify(sponsors));
+  writeStorage(scopedStorageKey(VIO_CONNECTION_STORAGE), fingerprint);
+  writeStorage(scopedStorageKey(VIO_SPONSORS_STORAGE), JSON.stringify(sponsors));
   // The campaign list is for the editor's properties panel only (W6).
-  if (persistCampaigns) writeStorage(VIO_CAMPAIGNS_STORAGE, JSON.stringify(campaigns));
+  if (persistCampaigns) writeStorage(scopedStorageKey(VIO_CAMPAIGNS_STORAGE), JSON.stringify(campaigns));
   return { config, sponsors, campaigns, keyChanged, droppedCarts };
 }
 
@@ -1418,7 +1478,7 @@ export function checkHasVariants(p: any): boolean {
 export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void {
   installCampaignStorageSync();
   const key = resolveApiKey(propKey);
-  const env = resolveEnvironment(propEnv);
+  const env = resolveEnvironment(propEnv, key);
   const sdkEnv = env === "staging" ? "testing" : env;
   // The page's campaign (null = default; Vio Config sets it at runtime before
   // it inits). Another campaign re-inits exactly as another key does: the SDK
@@ -1427,7 +1487,7 @@ export function ensureVioInit(propKey?: string, propEnv?: VioEnvironment): void 
   const campaignId = resolvePageCampaignId();
   if (!Vio.isInitialized || lastInitKey !== key || lastInitEnv !== sdkEnv || lastInitCampaign !== campaignId) {
     setRuntimeEnvironment(env);
-    persistEnvironment(env);
+    persistEnvironment(env, key);
     Vio.init({
       apiKey: key,
       environment: sdkEnv as any,

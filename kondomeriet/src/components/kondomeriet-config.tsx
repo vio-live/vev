@@ -24,7 +24,7 @@ import {
   type FastChannel,
   FAST_START_MISSING_NOTICE,
 } from "./kondomeriet-helpers";
-import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest } from "./kondomeriet-perf";
+import { ensurePreconnect, preconnectCirclewise, simpleConfigRequest, setKondomerietScope } from "./kondomeriet-perf";
 import { startPhoto, startRememberedPhoto } from "./kondomeriet-photo";
 
 /**
@@ -141,6 +141,8 @@ export default function KondomerietConfig(rawProps: Props) {
   // The CDN's photo of the surface (config + products), asked for at once, in
   // parallel with everything (kondomeriet-photo.ts). Production only: it is prod's bucket.
   startPhoto((props.environment || DEFAULT_ENVIRONMENT) === "production" ? resolveConfigApiKey(props.apiKey) : null);
+  // This page's connection, for the blocks' cache and photo (kondomeriet-perf.ts).
+  setKondomerietScope(resolveConfigApiKey(props.apiKey), props.environment || DEFAULT_ENVIRONMENT);
   // ONE Config per page. A second one (a common editor slip, Alan in #491)
   // must not touch the page: its fast start, Circlewise settings and
   // environment would overwrite the first one's (whichever rendered last

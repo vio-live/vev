@@ -4,6 +4,7 @@ import { simpleConfigRequest } from "./kondomeriet-perf";
 import { cardImagesByIndex, pickKondomerietConfig } from "./kondomeriet-props";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
+import { NO_KONDOMERIET_CONFIG } from "./kondomeriet-owner";
 import { EditorNotices } from "./editor-fit";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem } from "./analytics";
@@ -92,7 +93,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
   const slot = useVioSlot({ slot: slotProp, slotName, kind, title: heading || kicker, hostRef: props.hostRef });
   const sponsorId = useActiveSponsorId(undefined, slot);
   const campaignId = sponsorId != null ? vioAttribution(slot, sponsorId).campaignId ?? null : null;
-  const { products, resolved, ids, live } = useKondomerietGroups({
+  const { products, resolved, ids, live, configMissing } = useKondomerietGroups({
     groups,
     groupsKey,
     sponsorId,
@@ -202,7 +203,7 @@ export function KondomerietList({ kind, props }: { kind: "carousel" | "grid"; pr
 
   const cardConfig = pickKondomerietConfig(props);
   // In the editor: picked products without a snapshot (see SNAPSHOT_MISSING_NOTICE).
-  const notices = groupsMissingSnapshot(filled) ? [SNAPSHOT_MISSING_NOTICE] : [];
+  const notices = [...(configMissing ? [NO_KONDOMERIET_CONFIG] : []), ...(groupsMissingSnapshot(filled) ? [SNAPSHOT_MISSING_NOTICE] : [])];
   const loading = products == null;
   // While loading: one skeleton per group, in the layout the cards will take.
   const cells: React.ReactNode[] = loading

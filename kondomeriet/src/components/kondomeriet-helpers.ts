@@ -1372,11 +1372,12 @@ const FRESH_CATALOG_QUERY = `
 export function loadFreshCatalog(): Promise<CatalogProduct[]> {
   return withRetry(
     async () => {
+      // On the page's owner Config's key and environment, whatever another
+      // Config's panel left in this window; none on this page: say so
+      // (kondomeriet-owner.ts).
+      ensureOwnerConnection();
       if (!resolveApiKey()) throw new Error("Connect a Vio API key in the Config block to list its products");
       simpleConfigRequest();
-      // On the page's owner Config's key and environment, whatever another
-      // Config's panel left in this window (kondomeriet-owner.ts).
-      ensureOwnerConnection();
       await Vio.bootstrap();
       const sponsorId = sponsorForSlot(null, getActiveSponsorId());
       if (sponsorId == null) throw new Error("Connect a Vio API key in the Config block to list its products");
