@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SilkeBox, SilkeButton, SilkeModal, SilkeText } from "@vev/silke";
 import { CatalogModal, type PickerFacts } from "./product-picker";
 import { ensureOwnerConnection } from "./kondomeriet-owner";
-import { pastedGroupsFor } from "./kondomeriet-migrate";
+import { hasGroupIds, pastedGroupsFor } from "./kondomeriet-migrate";
 import { resolveActiveSponsorId, sponsorForSlot, type CatalogProduct } from "./vio-helpers";
 import {
   deriveLabels,
@@ -531,13 +531,31 @@ function GroupsPanel({ value, onChange, multi }: { value?: GroupsValue; onChange
   );
 }
 
+/**
+ * The pasted cards (kondomeriet-migrate.ts) until the block has products of
+ * its own — and, the first time the panel opens, they are saved as its own:
+ * a block never depends on `pastedSettings` alone, so clearing those (or an
+ * empty value written over them) cannot empty it (#491, 20/11).
+ */
+function usePastedProducts(props: { value?: GroupsValue; onChange: (v: GroupsValue) => void; context?: any }, propName: "group" | "groups") {
+  const pasted = hasGroupIds(props.value) ? undefined : pastedGroupsFor(props.context, propName);
+  const value = pasted && hasGroupIds(pasted) ? pasted : props.value;
+  const saved = useRef(false);
+  useEffect(() => {
+    if (saved.current || !pasted || !hasGroupIds(pasted)) return;
+    saved.current = true;
+    props.onChange(pasted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pasted?.data]);
+  return value;
+}
+
 export function KondomerietGroupEditor(props: { value?: GroupsValue; onChange: (v: GroupsValue) => void; context?: any }) {
-  // The pasted cards (kondomeriet-migrate.ts) until the block has its own: the first edit saves them.
-  const value = props.value?.data ? props.value : pastedGroupsFor(props.context, "group") ?? props.value;
+  const value = usePastedProducts(props, "group");
   return <GroupsPanel value={value} onChange={props.onChange} multi={false} />;
 }
 
 export function KondomerietGroupsEditor(props: { value?: GroupsValue; onChange: (v: GroupsValue) => void; context?: any }) {
-  const value = props.value?.data ? props.value : pastedGroupsFor(props.context, "groups") ?? props.value;
+  const value = usePastedProducts(props, "groups");
   return <GroupsPanel value={value} onChange={props.onChange} multi />;
 }
