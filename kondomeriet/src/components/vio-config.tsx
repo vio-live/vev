@@ -143,6 +143,8 @@ type Props = {
   themeDensity?: string; // default | compact | roomy
   // Analytics.
   analytics?: boolean; // emit GA4 e-commerce events to dataLayer + vio:analytics
+  /** Also push them into window.dataLayer (default true; the Kondomeriet Config turns it off). */
+  dataLayer?: boolean;
   analyticsDebug?: boolean; // console logs + live inspector overlay (+ fires in editor)
   sendToVio?: boolean; // forward events to the Vio collector (Vio Analytics pipeline)
   /**
@@ -242,6 +244,7 @@ export default function VioConfig({
   themeCorners = "default",
   themeDensity = "default",
   analytics = true,
+  dataLayer = true,
   analyticsDebug = false,
   sendToVio = true,
   overlaysOverride,
@@ -512,8 +515,9 @@ export default function VioConfig({
       enabled: analytics && (!disabled || analyticsDebug),
       sendToVio,
       debug: analyticsDebug,
+      dataLayer,
     });
-  }, [isOwner, analytics, analyticsDebug, sendToVio, disabled]);
+  }, [isOwner, analytics, analyticsDebug, sendToVio, disabled, dataLayer]);
 
   useEffect(() => {
     if (!isOwner || !analytics) return;
