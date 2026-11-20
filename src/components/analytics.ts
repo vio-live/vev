@@ -31,8 +31,11 @@ type AnalyticsState = {
   /** Forward every tracked event to the Vio collector via Vio.analytics
    *  (F3 — the GA4/dataLayer/inspector sinks above stay untouched). */
   sendToVio: boolean;
+  /** Push GA4 e-commerce events into window.dataLayer (off for the Kondomeriet
+   *  blocks: the publisher's GA4 is no longer fed — only Vio's collector). */
+  dataLayer: boolean;
 };
-const state: AnalyticsState = { enabled: false, debug: false, sendToVio: true };
+const state: AnalyticsState = { enabled: false, debug: false, sendToVio: true, dataLayer: true };
 
 export function configureAnalytics(cfg: Partial<AnalyticsState>): void {
   Object.assign(state, cfg);
@@ -149,7 +152,7 @@ type EventParams = {
 };
 
 function pushDataLayer(name: string, ecommerce: Record<string, unknown>): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !state.dataLayer) return;
   const w = window as any;
   w.dataLayer = w.dataLayer || [];
   // GA4 best practice: clear the previous ecommerce object before each push so

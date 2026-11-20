@@ -112,7 +112,6 @@ const SCHEMA: any[] = [
         ],
       },
     },
-    { name: "analytics", title: "Analytics (GA4 / dataLayer)", type: "boolean", initialValue: true },
     { name: "sendToVio", title: "Send to Vio Analytics", type: "boolean", initialValue: true },
     { name: "analyticsDebug", title: "Analytics debug + inspector", type: "boolean", initialValue: false },
     // Advanced — Circlewise (TargetCircle): every «Kjøp med Vipps» goes through
@@ -283,7 +282,7 @@ function KondomerietConfigOwner(props: Props) {
           {FAST_START_MISSING_NOTICE}
         </div>
       ) : null}
-      <VioConfig {...configProps} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />
+      <VioConfig {...configProps} analytics dataLayer={false} cartButton="never" overlaysOverride={<KondomerietDetailHost />} />
     </>
   );
 }
