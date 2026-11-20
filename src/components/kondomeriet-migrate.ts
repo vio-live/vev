@@ -84,8 +84,20 @@ export function readPasted(value: unknown): Pasted | null {
 
 /** New block's panel: paste (clipboard, or the text when the clipboard cannot be read), then clear. */
 export function makePasteSettingsField(kind: BlockKind) {
-  return function KondomerietPasteSettingsField({ value, onChange }: { value?: { data?: string }; onChange: (v: { data: string } | undefined) => void }) {
+  return function KondomerietPasteSettingsField({
+    value,
+    onChange,
+    context,
+  }: {
+    value?: { data?: string };
+    onChange: (v: { data: string } | undefined) => void;
+    context?: { value?: Record<string, unknown> };
+  }) {
     const pasted = readPasted(value);
+    // Clearing while the pasted cards are the block's only products would empty it:
+    // the products editor saves them as the block's own first (it does on opening).
+    const productsProp = kind === "card" ? "group" : kind === "config" ? null : "groups";
+    const onlyHere = !!productsProp && !!pasted && hasGroupIds(pasted.props[productsProp]) && !hasGroupIds(context?.value?.[productsProp]);
     const [text, setText] = useState("");
     const [error, setError] = useState("");
     const apply = (raw: string) => {
@@ -113,7 +125,13 @@ export function makePasteSettingsField(kind: BlockKind) {
           null,
           `${n} settings from the old ${kind} block, pasted ${new Date(pasted.at).toLocaleString()}. Anything you change on this block wins.`
         ),
-        React.createElement("button", { type: "button", style: button, onClick: () => onChange(undefined) }, "Clear the pasted settings")
+        onlyHere
+          ? React.createElement(
+              "div",
+              { style: { color: "#b45309" } },
+              "The products of this block are still only in the pasted settings. Open «Products» once (it saves them on this block), then you can clear."
+            )
+          : React.createElement("button", { type: "button", style: button, onClick: () => onChange(undefined) }, "Clear the pasted settings")
       );
     }
     return React.createElement(
@@ -143,6 +161,23 @@ export function pasteSettingsProp(kind: BlockKind): any {
   };
 }
 
+/**
+ * A products prop (`group` / `groups`) that holds at least one product. An
+ * empty one — `[]`, `[{"ids":[]}]`, a string that does not parse — must
+ * never hide the pasted cards: that is how a card lost its products (#491,
+ * 20/11).
+ */
+export function hasGroupIds(value: unknown): boolean {
+  try {
+    const raw = (value as { data?: unknown } | null | undefined)?.data;
+    if (typeof raw !== "string" || !raw.trim()) return false;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.some((g) => Array.isArray(g?.ids) && g.ids.some((id: unknown) => Number(id) > 0));
+  } catch {
+    return false;
+  }
+}
+
 function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   try {
@@ -167,7 +202,9 @@ export function withPastedSettings<T extends Record<string, any>>(props: T, sche
   for (const [k, v] of Object.entries(pasted.props)) {
     if (SKIP.has(k) || !defaults.has(k)) continue;
     const own = props[k];
-    if (own === undefined || own === null || own === "" || same(own, defaults.get(k)) || (k === "groups" || k === "group" ? !own?.data : false)) out[k] = v;
+    const products = k === "groups" || k === "group";
+    // Products: the pasted cards until the block has products of its own.
+    if (products ? !hasGroupIds(own) && hasGroupIds(v) : own === undefined || own === null || own === "" || same(own, defaults.get(k))) out[k] = v;
   }
   return out as T;
 }
