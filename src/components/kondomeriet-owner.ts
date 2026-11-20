@@ -2,6 +2,7 @@ import {
   ensureVioInit,
   persistApiKey,
   persistEnvironment,
+  scopedStorageKey,
   setRuntimeApiKey,
   setRuntimeEnvironment,
   type VioEnvironment,
@@ -24,7 +25,12 @@ import {
  */
 
 const ROLES_KEY = "knd.configRoles.v1";
+/** Per page (vio-helpers' pageScope): a page without its own Kondomeriet Config must not use another page's (#491, 20/11). */
 const OWNER_KEY = "knd.configOwner.v1";
+const ownerKey = () => scopedStorageKey(OWNER_KEY);
+
+/** What the panel says when the page has no Kondomeriet Config of its own. */
+export const NO_KONDOMERIET_CONFIG = "This page has no Kondomeriet Config — add one (Environment: Production, the publisher's key) to list and show Kondomeriet products.";
 
 export type ConfigOwner = { model: string; apiKey: string; environment: VioEnvironment; at: number };
 
@@ -61,7 +67,7 @@ export function isDuplicateConfig(model: string | undefined): boolean {
 }
 
 export function readConfigOwner(): ConfigOwner | null {
-  const o = read<ConfigOwner>(OWNER_KEY);
+  const o = read<ConfigOwner>(ownerKey());
   return o && typeof o.apiKey === "string" && o.apiKey && o.environment ? o : null;
 }
 
@@ -72,9 +78,9 @@ export function readConfigOwner(): ConfigOwner | null {
  */
 export function imposeOwnerConnection(model: string, apiKey: string, environment: VioEnvironment): void {
   if (!apiKey) return;
-  write(OWNER_KEY, { model, apiKey, environment, at: Date.now() } satisfies ConfigOwner);
+  write(ownerKey(), { model, apiKey, environment, at: Date.now() } satisfies ConfigOwner);
   persistApiKey(apiKey);
-  persistEnvironment(environment);
+  persistEnvironment(environment, apiKey);
   setRuntimeApiKey(apiKey);
   setRuntimeEnvironment(environment);
   ensureVioInit(apiKey, environment);
@@ -83,15 +89,14 @@ export function imposeOwnerConnection(model: string, apiKey: string, environment
 /**
  * Before reading the catalog (the picker, in the panel window): the SDK of
  * this window on the owner's key and environment — re-initialised when it is
- * on another (ensureVioInit re-inits only on a change). Nothing recorded (an
- * older canvas): as before.
+ * on another (ensureVioInit re-inits only on a change). No Kondomeriet Config
+ * recorded for THIS page: an error that says so — never another page's
+ * connection, nor a Vio Config's key on the same page (its channel is not
+ * Kondomeriet's).
  */
 export function ensureOwnerConnection(): void {
   const o = readConfigOwner();
-  if (!o) {
-    ensureVioInit();
-    return;
-  }
+  if (!o) throw new Error(NO_KONDOMERIET_CONFIG);
   setRuntimeApiKey(o.apiKey);
   setRuntimeEnvironment(o.environment);
   ensureVioInit(o.apiKey, o.environment);

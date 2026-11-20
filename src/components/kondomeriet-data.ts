@@ -13,7 +13,7 @@ import {
   type KondomerietGroup,
   type ResolvedGroup,
 } from "./kondomeriet-helpers";
-import { inAppBrowser, readCachedProducts } from "./kondomeriet-perf";
+import { inAppBrowser, readCachedProducts, useKondomerietConfigMounted } from "./kondomeriet-perf";
 
 /**
  * The products of a block's groups, resolved into cards — painted at once,
@@ -49,7 +49,7 @@ export function useKondomerietGroups({
   slot: string;
   componentTemplateId: string;
   listName?: string;
-}): { products: any[] | null; resolved: ResolvedGroup[]; ids: number[]; live: boolean } {
+}): { products: any[] | null; resolved: ResolvedGroup[]; ids: number[]; live: boolean; configMissing: boolean } {
   const ids = useMemo(() => allGroupIds(groups), [groupsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const idsKey = ids.join(",");
   // The page's Config asks for every block's products in one request.
@@ -72,9 +72,23 @@ export function useKondomerietGroups({
   // server; the cached card follows in the same frame's effects.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // Only with a Kondomeriet Config on this page: its key and environment say
+  // which cache, which photo and which channel are this page's. Without one,
+  // nothing is painted from another page's (#491, 20/11) — the editor says
+  // the Config is missing (`configMissing`).
+  const hasConfig = useKondomerietConfigMounted();
+  const [configMissing, setConfigMissing] = useState(false);
+  useEffect(() => {
+    if (hasConfig || ids.length === 0) {
+      setConfigMissing(false);
+      return;
+    }
+    const t = setTimeout(() => setConfigMissing(true), 1500);
+    return () => clearTimeout(t);
+  }, [hasConfig, ids.length]);
   const initial = useMemo(() => {
     if (ids.length === 0) return [];
-    if (!mounted) return null;
+    if (!mounted || !hasConfig) return null;
     const cached = readCachedProducts(ids, marketKey()).products;
     const snaps = new Map<number, any>();
     for (const g of groups) for (const [k, s] of Object.entries(g.snap ?? {})) snaps.set(Number(k), s);
@@ -87,7 +101,7 @@ export function useKondomerietGroups({
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupsKey, photoTick, snapOk, mounted]);
+  }, [groupsKey, photoTick, snapOk, mounted, hasConfig]);
 
   // Before the bootstrap names the sponsor, the channel the Config resolved
   // in the editor (`fastStart`): the request leaves in parallel with the bootstrap.
@@ -98,7 +112,7 @@ export function useKondomerietGroups({
   const [live, setLive] = useState<any[] | null>(null);
   const liveKey = useRef("");
   useEffect(() => {
-    if (ids.length === 0 || sid == null) return;
+    if (ids.length === 0 || sid == null || !hasConfig) return;
     const key = `${idsKey}|${sid}|${cid ?? ""}`;
     if (liveKey.current !== key) setLive(null);
     liveKey.current = key;
@@ -112,7 +126,7 @@ export function useKondomerietGroups({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, sid, cid]);
+  }, [idsKey, sid, cid, hasConfig]);
 
   // `view_item_list` once per live load, when the sponsor is known (its
   // campaign comes from the bootstrap): the event's attribution is complete.
@@ -159,5 +173,5 @@ export function useKondomerietGroups({
   }, [products, groupsKey]);
 
   // `live` for the impressions: real data, and a sponsor to attribute it to.
-  return { products, resolved, ids, live: !!live && sponsorId != null };
+  return { products, resolved, ids, live: !!live && sponsorId != null, configMissing };
 }

@@ -303,11 +303,65 @@ export function useImageAllowed(bypass: boolean, node: () => Element | null): bo
 // ---------------------------------------------------------------------------
 
 const TTL_MS = 5 * 60 * 1000;
-const PRODUCTS_KEY = "knd.products.v1";
-const IDENTITY_KEY = "knd.identity.v1";
+// Per connection: the page's Kondomeriet Config's key and environment. A
+// product or a brand cached on one page (production) was painted on another
+// page of the same origin with another channel (staging) — #491, 20/11.
+const PRODUCTS_BASE = "knd.products.v2";
+const IDENTITY_BASE = "knd.identity.v2";
+
+function fnv(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+type KndScope = { key: string; environment: string; id: string };
+
+/** The page's Kondomeriet Config sets it as it renders: its key and environment. */
+export function setKondomerietScope(apiKey: string | null | undefined, environment: string | null | undefined): void {
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  const env = String(environment || "");
+  (globalThis as { __KND_SCOPE__?: KndScope | null }).__KND_SCOPE__ = key ? { key, environment: env, id: fnv(`${key}|${env}`) } : null;
+}
+
+/** The page's Kondomeriet connection, or null when no Kondomeriet Config has rendered in this window. */
+export function kondomerietScope(): KndScope | null {
+  return (globalThis as { __KND_SCOPE__?: KndScope | null }).__KND_SCOPE__ ?? null;
+}
+
+const productsKey = () => {
+  const s = kondomerietScope();
+  return s ? `${PRODUCTS_BASE}:${s.id}` : null;
+};
+const identityKey = () => {
+  const s = kondomerietScope();
+  return s ? `${IDENTITY_BASE}:${s.id}` : null;
+};
+
+/** Whether a Kondomeriet Config is mounted in this window (kondomeriet-config.tsx keeps the set). */
+export function kondomerietConfigMounted(): boolean {
+  const alive = (globalThis as any).__KND_CONFIGS_ALIVE__;
+  return alive instanceof Set && alive.size > 0;
+}
+
+/** `kondomerietConfigMounted()`, following the Configs as they mount and unmount. */
+export function useKondomerietConfigMounted(): boolean {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const sync = () => setOn(kondomerietConfigMounted());
+    sync();
+    window.addEventListener("knd:configs-changed", sync);
+    return () => window.removeEventListener("knd:configs-changed", sync);
+  }, []);
+  return on;
+}
 const MAX_PRODUCTS = 200;
 
-function readJson<T>(key: string): T | null {
+function readJson<T>(key: string | null): T | null {
+  if (!key) return null;
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
     return raw ? (JSON.parse(raw) as T) : null;
@@ -316,7 +370,8 @@ function readJson<T>(key: string): T | null {
   }
 }
 
-function writeJson(key: string, value: unknown): void {
+function writeJson(key: string | null, value: unknown): void {
+  if (!key) return;
   try {
     if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(value));
   } catch {
@@ -328,7 +383,7 @@ type ProductsStore = Record<string, { t: number; p: any }>;
 
 /** Cached products for `ids` in `market` (currency|country): fresh (< 5 min) or stale, never older than a day. */
 export function readCachedProducts(ids: number[], market: string): { products: Map<number, any>; fresh: boolean } {
-  const store = readJson<ProductsStore>(PRODUCTS_KEY) ?? {};
+  const store = readJson<ProductsStore>(productsKey()) ?? {};
   const now = Date.now();
   const products = new Map<number, any>();
   let fresh = ids.length > 0;
@@ -346,28 +401,28 @@ export function readCachedProducts(ids: number[], market: string): { products: M
 
 export function writeCachedProducts(products: any[], market: string): void {
   if (!products.length) return;
-  const store = readJson<ProductsStore>(PRODUCTS_KEY) ?? {};
+  const store = readJson<ProductsStore>(productsKey()) ?? {};
   const now = Date.now();
   for (const p of products) {
     const id = Number(p?.id);
     if (Number.isInteger(id)) store[`${market}|${id}`] = { t: now, p };
   }
   const entries = Object.entries(store).sort((a, b) => b[1].t - a[1].t).slice(0, MAX_PRODUCTS);
-  writeJson(PRODUCTS_KEY, Object.fromEntries(entries));
+  writeJson(productsKey(), Object.fromEntries(entries));
 }
 
 /** The last brand identity this browser saw (logo, name, promises) — for a card painted before the bootstrap. */
 export function readCachedIdentity(): { sponsorId: number; identity: any } | null {
-  const e = readJson<{ t: number; sponsorId: number; identity: any }>(IDENTITY_KEY);
+  const e = readJson<{ t: number; sponsorId: number; identity: any }>(identityKey());
   if (!e || Date.now() - e.t > 24 * 3600 * 1000) return null;
   return { sponsorId: e.sponsorId, identity: e.identity };
 }
 
 export function writeCachedIdentity(sponsorId: number, identity: any): void {
   if (!identity) return;
-  const prev = readJson<{ t: number; sponsorId: number; identity: any }>(IDENTITY_KEY);
+  const prev = readJson<{ t: number; sponsorId: number; identity: any }>(identityKey());
   if (prev && prev.sponsorId === sponsorId && JSON.stringify(prev.identity) === JSON.stringify(identity) && Date.now() - prev.t < TTL_MS) return;
-  writeJson(IDENTITY_KEY, { t: Date.now(), sponsorId, identity });
+  writeJson(identityKey(), { t: Date.now(), sponsorId, identity });
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import { SLOT_PROPS } from "./slot-props";
 import { pasteSettingsProp, withPastedSettings } from "./kondomeriet-migrate";
 import { useKondomerietGroups } from "./kondomeriet-data";
 import { SNAPSHOT_MISSING_NOTICE, groupsMissingSnapshot, parseGroups, type GroupsValue } from "./kondomeriet-helpers";
+import { NO_KONDOMERIET_CONFIG } from "./kondomeriet-owner";
 import { COMPONENT_TEMPLATE_ID, useActiveSponsorId, useVioSlot, useVioSlotId, vioAttribution } from "./vio-helpers";
 import { observeVioImpression, productToItem } from "./analytics";
 
@@ -47,7 +48,7 @@ export default function KondomerietProductCard(rawProps: Props) {
   // assigned to this card's slot — the same rule as the Vio card.
   const sponsorId = useActiveSponsorId(undefined, slotId);
   const campaignId = sponsorId != null ? vioAttribution(slotId, sponsorId).campaignId ?? null : null;
-  const { products, resolved, ids, live } = useKondomerietGroups({
+  const { products, resolved, ids, live, configMissing } = useKondomerietGroups({
     groups,
     groupsKey,
     sponsorId,
@@ -92,7 +93,7 @@ export default function KondomerietProductCard(rawProps: Props) {
       rootRef={rootRef}
       imageOverride={imageUrlOf(props.image)}
       pending={groups[0] ? { options: groups[0].ids.length, buyOnCard: groups[0].buyOnCard, offerEnd: groups[0].offerEnd } : undefined}
-      editorNotices={groupsMissingSnapshot(groups) ? [SNAPSHOT_MISSING_NOTICE] : []}
+      editorNotices={[...(configMissing ? [NO_KONDOMERIET_CONFIG] : []), ...(groupsMissingSnapshot(groups) ? [SNAPSHOT_MISSING_NOTICE] : [])]}
     />
   );
 }
