@@ -9,6 +9,7 @@ import {
   brandIdentityOrCached,
   cardRating,
   circlewiseFor,
+  fetchKondomerietProducts,
   trustLineFor,
   offerEndText,
   resolveBuyOnCard,
@@ -28,6 +29,7 @@ import { directImage, ensurePreconnect, holdImageGate, inAppBrowser, preconnectC
 ensurePreconnect();
 import { SEE_MORE_CTA, buyWithHurtigkasse, trackOpenInfo, trackOptionSelect } from "./kondomeriet-track";
 import { KondomerietDetailHost } from "./kondomeriet-detail";
+import { splitPlainRating } from "./kondomeriet-description";
 import { OptionSelector, SellerLogo, badgeFor, cardPrice, classRef, injectKondomerietStyles, plainText } from "./kondomeriet-ui";
 
 const InfoIcon = () => (
@@ -215,6 +217,30 @@ export function KondomerietCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stockKey]);
 
+  // «Show description» with no own text: the card data is kept light (no
+  // description; the snapshot keeps only the rating line), so the card reads
+  // the full product once, after mounting (the server HTML has no description).
+  const descProduct = group ? group.options[Math.min(Math.max(0, index), group.options.length - 1)]?.product : null;
+  const wantsFullDescription = showDescription && !descriptionText.trim() && sponsorId != null && descProduct?.id != null;
+  const [fullDescription, setFullDescription] = useState<{ id: string; text: string } | null>(null);
+  useEffect(() => {
+    if (!wantsFullDescription) return;
+    const id = String(descProduct.id);
+    let cancelled = false;
+    const campaignId = vioAttribution(slot, sponsorId, componentTemplateId).campaignId ?? null;
+    fetchKondomerietProducts([Number(id)], sponsorId, campaignId, { full: true })
+      .then((list) => {
+        if (cancelled) return;
+        const raw = typeof list[0]?.description === "string" ? list[0].description : "";
+        setFullDescription({ id, text: splitPlainRating(plainText(raw)).rest.replace(/\s*\n+\s*/g, " ").trim() });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsFullDescription, descProduct?.id, sponsorId]);
+
   // Until mounted the card renders what a server renders — a published Vev
   // page is hydrated over its server HTML, and that HTML must match: no brand
   // identity from this browser's cache, no in-app browser test, no offer
@@ -396,7 +422,8 @@ export function KondomerietCardView({
   const sellerName = identity?.name?.trim() || KONDOMERIET_NAME;
   const name = group.title;
   const ownDescription = descriptionText.trim();
-  const description = ownDescription || (showDescription ? plainText(p?.description).replace(/\n+/g, " ") : "");
+  const description =
+    ownDescription || (showDescription && fullDescription && fullDescription.id === String(p?.id) ? fullDescription.text : "");
   const attribution = (): VioAttribution => vioAttribution(slot, sponsorId, componentTemplateId);
 
   const select = (i: number) => {
