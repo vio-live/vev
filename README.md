@@ -7,6 +7,10 @@ by the [`vio-web-sdk`](https://github.com/vio-live/vio-web-sdk) core.
 
 This repo is the source of the Vev **component package `cq1lXld-TA9`**.
 
+> **Kondomeriet × VG (Partner Studio):** to install the Kondomeriet blocks in your own Vev
+> account, download the latest [`kondomeriet-v*` release](https://github.com/vio-live/vev/releases)
+> and follow [`kondomeriet/README.md`](./kondomeriet/README.md) (Norwegian, step by step).
+
 ---
 
 ## How component installation works in Vev
