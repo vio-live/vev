@@ -328,10 +328,10 @@ throw into the editor — so with an older bundle they behave as before.
 
 ## Kondomeriet package (`kondomeriet/`, no Vio SDK)
 
-The Kondomeriet blocks also live in a Vev package of their own, `kondomeriet/` (its own `vev.json`), built
+The Kondomeriet blocks live only in their own Vev package, `kondomeriet/` (its own `vev.json`), built
 without the Vio web SDK bundle: ~242 KB uncompressed / ~75 KB gzip against the shared package's ~808 KB /
-~218 KB (the published file of a page carries the package twice today, so double those). Same blocks
-(Kondomeriet Config, Product Card, Grid, Carousel), same props, same behaviour.
+~218 KB. Blocks: Kondomeriet Config, Product Card, Grid, Carousel. Their «(old)» copies in the shared package
+were removed on 2026-11-23.
 
 - **What replaces the SDK.** `kondomeriet/vio-sdk/index.ts` is a facade with the calls the blocks make on
   `Vio` (init, bootstrap, sponsors, campaigns, attribution, slots, analytics), built on the SDK's own code for
@@ -341,16 +341,15 @@ without the Vio web SDK bundle: ~242 KB uncompressed / ~75 KB gzip against the s
   button helper; price and image formatters) and `vio-sdk/detail-css.js` is the SDK product detail's
   stylesheet. No cart, checkout, payments or `<vio-*>` elements: these blocks never used them. Rebuild both
   from an SDK checkout with `node kondomeriet/scripts/build-sdk-lite.mjs <path to vio-web-sdk>`.
-- **The rest is the same code** as `src/components/` — the Kondomeriet files and the shared ones they use
+- **Shared files, copied.** `kondomeriet/src/components/` carries its own copies of the shared files it uses
   (`vio-helpers`, `vio-config` without its block registration, `analytics`, `card-view`, `card-props`,
-  `product-picker`, `editor-fit`, `slot-props`), copied. New Kondomeriet work goes into `kondomeriet/`; the
-  Kondomeriet blocks of the shared package stay as they are until no page uses them.
-- **Moving a page.** The old blocks have «Copy settings for the Kondomeriet package» in their panel; the new
-  ones «Paste settings from the old block» (`kondomeriet-migrate.ts`): the pasted values fill every prop still
-  at its default, and the products editor shows the pasted cards until they are edited. Re-place the Config
-  and each block (the block ids carry the package key), paste, publish.
+  `product-picker`, `editor-fit`, `slot-props`). All Kondomeriet work goes into `kondomeriet/` only.
+- **Pages from before 18/11** used the shared package's blocks, now removed: re-place the Config and each
+  block from the Kondomeriet package. «Paste settings from the old block» (`kondomeriet-migrate.ts`) still
+  accepts settings copied earlier.
 - **Build / check:** `cd kondomeriet && vev build --analyze` and `npx -p typescript@5 tsc --noEmit -p .`.
-  Its key is created once with `vev init` in `kondomeriet/` (see the PR). Not deployed until Angelo says so.
+  Deployed with `cd kondomeriet && vev deploy`. For other Vev accounts (Partner Studio):
+  `kondomeriet/scripts/release.sh <version> <notes> [pdf]` publishes a `kondomeriet-vX.Y.Z` release (see `kondomeriet/README.md`).
 
 ## Kondomeriet blocks (Vipps Hurtigkasse)
 
@@ -611,10 +610,6 @@ src/components/
   vio-helpers.ts          # SDK init, catalog fetch, retry, DOM events (DEBUG flag),
                           # slots: useVioSlot / sponsorForSlot / vioAttribution,
                           # page identity: useVevPage / declareVevPage
-  kondomeriet-*.tsx/.ts   # Kondomeriet blocks (see above): config, card, carousel, grid
-                          # (registered); helpers (groups, labels, Hurtigkasse,
-                          # fetch with origin_url), detail drawer, group editor,
-                          # shared UI, props, analytics
 vio-sdk/                  # vendored SDK bundle (see above) — do not edit by hand
 vev.json                  # package key — never delete
 ```
